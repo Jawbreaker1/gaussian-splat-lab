@@ -4,7 +4,7 @@ This lab must progress through small, validated phases. Do not build a later pha
 
 ## Phase 0: Repository and Isolation
 
-Status: complete.
+Status: local validation passed; Windows RTX worker smoke pending.
 
 Purpose:
 
@@ -23,6 +23,7 @@ Exit criteria:
 
 - repo clones independently
 - Mac smoke command passes
+- Windows RTX worker smoke command passes or records clear setup gaps
 - heavy artifact paths are ignored
 - no runtime dependency exists on `blender-ai-poc`
 

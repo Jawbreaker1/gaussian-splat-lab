@@ -60,6 +60,12 @@ On the Mac development machine:
 ./scripts/smoke-mac.sh
 ```
 
+Full local Phase 0 validation on the Mac:
+
+```bash
+./scripts/validate-phase-0.sh
+```
+
 On the Windows RTX worker, from PowerShell:
 
 ```powershell
