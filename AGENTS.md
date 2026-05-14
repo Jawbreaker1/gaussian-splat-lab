@@ -24,7 +24,9 @@ Use manifests to describe local artifacts instead.
 
 ## Development Order
 
-Follow the staged plan:
+Follow the staged plan in `docs/phases.md`.
+
+Stage summary:
 
 1. isolated workspace and smoke commands
 2. known-good input manifest

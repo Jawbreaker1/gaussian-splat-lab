@@ -67,3 +67,7 @@ On the Windows RTX worker, from PowerShell:
 ```
 
 The RTX smoke script is intentionally lightweight for Stage 0. Later stages will add explicit CUDA, PyTorch and gsplat kernel checks.
+
+## Implementation Phases
+
+The staged implementation plan is maintained in [docs/phases.md](docs/phases.md). Each phase has explicit outputs and exit criteria; later phases should not depend on unvalidated earlier phases.
