@@ -27,6 +27,7 @@ required_files=(
   "docs/stage-0.md"
   "scripts/smoke-mac.sh"
   "scripts/smoke-rtx-worker.ps1"
+  "scripts/validate-phase-0-rtx-worker.ps1"
   "data/manifests/.gitkeep"
 )
 
@@ -69,4 +70,4 @@ fi
 
 echo "phase0_validation=local_passed"
 echo "rtx_worker_validation=manual_pending"
-echo "next_required_command_on_windows=.\\scripts\\smoke-rtx-worker.ps1"
+echo "next_required_command_on_windows=.\\scripts\\validate-phase-0-rtx-worker.ps1"

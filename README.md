@@ -72,6 +72,12 @@ On the Windows RTX worker, from PowerShell:
 .\scripts\smoke-rtx-worker.ps1
 ```
 
+Evidence-producing Phase 0 validation on the Windows RTX worker:
+
+```powershell
+.\scripts\validate-phase-0-rtx-worker.ps1
+```
+
 The RTX smoke script is intentionally lightweight for Stage 0. Later stages will add explicit CUDA, PyTorch and gsplat kernel checks.
 
 ## Implementation Phases

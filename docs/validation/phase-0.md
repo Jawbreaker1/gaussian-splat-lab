@@ -36,6 +36,7 @@ scripts/smoke-mac.sh syntax: passed
 scripts/validate-phase-0.sh syntax: passed
 phase0_validation=local_passed
 rtx_worker_validation=manual_pending
+next_required_command_on_windows=.\scripts\validate-phase-0-rtx-worker.ps1
 ```
 
 ## Manual RTX Worker Validation
@@ -44,6 +45,18 @@ This must be run on the Windows RTX 5090 machine from a clone or copied checkout
 
 ```powershell
 .\scripts\smoke-rtx-worker.ps1
+```
+
+Preferred evidence-producing command:
+
+```powershell
+.\scripts\validate-phase-0-rtx-worker.ps1
+```
+
+That command writes:
+
+```text
+docs\validation\phase-0-rtx-worker-output.md
 ```
 
 Expected Stage 0 result:

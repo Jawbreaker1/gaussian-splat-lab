@@ -37,6 +37,14 @@ Windows RTX 5090 worker:
 - CUDA/PyTorch/COLMAP/gsplat smoke checks
 - reconstruction jobs and generated artifacts
 
+Run this first on the Windows RTX worker:
+
+```powershell
+.\scripts\validate-phase-0-rtx-worker.ps1
+```
+
+The generated `docs\validation\phase-0-rtx-worker-output.md` file is the evidence needed to close Phase 0.
+
 ## Artifact Layout
 
 Ignored local directories:
