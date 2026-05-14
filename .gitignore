@@ -1,0 +1,35 @@
+# Local environment
+.DS_Store
+.env
+.env.*
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Node/viewer experiments
+node_modules/
+dist/
+build/
+.vite/
+
+# Heavy lab inputs and generated artifacts
+data/videos/
+data/frames/
+data/sfm/
+data/checkpoints/
+data/splats/
+data/tmp/
+artifacts/
+outputs/
+logs/
+
+# Generated reports; commit curated reports elsewhere when useful
+reports/generated/
+
+# Keep manifest directory tracked
+!data/
+!data/manifests/
+!data/manifests/.gitkeep
