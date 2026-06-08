@@ -36,6 +36,16 @@ Readiness check:
 Manual next step when ready:
 
 1. Download the chosen Pexels quality manually from the source page.
-2. Place it at `data/videos/pexels-empty-coffee-shop-interior-14227022.mp4`.
-3. Run `intake` and `frame_sampling`.
+2. Import it through the provenance-aware CLI command:
+
+```bash
+.venv/bin/python scripts/lab-pipeline.py import-video \
+  --capture-manifest data/manifests/captures.example.json \
+  --capture-id pexels-empty-coffee-shop-interior-14227022 \
+  --input /path/to/downloaded-video.mp4 \
+  --accept-warning \
+  --overwrite
+```
+
+3. Run `list-captures`, then create a job and run `framework_license`, `environment`, `intake` and `frame_sampling`.
 4. Do not run `sfm`, training or viewer validation until the workstation power issue is resolved and `--allow-heavy` is intentionally supplied.

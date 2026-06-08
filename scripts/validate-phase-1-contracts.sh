@@ -13,6 +13,54 @@ python3 -m json.tool /tmp/gaussian-splat-lab-phase-1-captures.txt >/dev/null
 grep -q "pexels-empty-coffee-shop-interior-14227022" /tmp/gaussian-splat-lab-phase-1-captures.txt
 python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --dry-run   >/dev/null
 
+import_manifest="$(mktemp)"
+import_source="$(mktemp)"
+python3 - <<'PYCODE' "${import_manifest}" "${import_source}"
+from pathlib import Path
+import json
+import sys
+manifest_path = Path(sys.argv[1])
+source_path = Path(sys.argv[2])
+source_path.write_bytes(bytes([103, 97, 117, 115, 115, 105, 97, 110, 45, 115, 112, 108, 97, 116, 45, 108, 97, 98, 32, 105, 109, 112, 111, 114, 116, 32, 99, 111, 110, 116, 114, 97, 99, 116, 32, 102, 105, 120, 116, 117, 114, 101, 10]))
+manifest = {
+    "schemaVersion": 1,
+    "captures": [
+        {
+            "id": "phase-1-import-contract",
+            "displayName": "Phase 1 import contract",
+            "source": {
+                "kind": "local_file",
+                "path": "data/tmp/phase-1-import-contract/imported.mp4",
+                "sourceUrl": None,
+                "license": "self-captured-test",
+                "licenseNotes": "Synthetic contract fixture; not a real video.",
+            },
+            "capture": {
+                "subject": "synthetic import contract fixture",
+                "motion": "none",
+                "expectedDurationSeconds": None,
+                "expectedResolution": None,
+            },
+            "pipeline": {
+                "frameSampling": {"targetFps": 1, "maxFrames": 1},
+                "sfm": {"backend": "colmap"},
+                "training": {"backend": "gsplat", "targetWorker": "windows-rtx-5090"},
+                "packaging": {"preferredFormats": ["ply", "ksplat", "splat"]},
+            },
+            "status": "contract-fixture",
+        }
+    ],
+}
+manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+PYCODE
+python3 "${repo_root}/scripts/lab-pipeline.py" import-video   --capture-manifest "${import_manifest}"   --capture-id phase-1-import-contract   --input "${import_source}"   --overwrite   >/tmp/gaussian-splat-lab-phase-1-import-video.txt
+grep -q "import_video_status=pass" /tmp/gaussian-splat-lab-phase-1-import-video.txt
+import_report="$(sed -n 's/^import_video_report=//p' /tmp/gaussian-splat-lab-phase-1-import-video.txt)"
+python3 -m json.tool "${import_report}" >/dev/null
+
+python3 "${repo_root}/scripts/lab-pipeline.py" import-video   --capture-manifest data/manifests/captures.example.json   --capture-id pexels-empty-coffee-shop-interior-14227022   --input "${import_source}"   --dry-run   >/tmp/gaussian-splat-lab-phase-1-import-warning.txt || true
+grep -q "import_video_status=blocked_license" /tmp/gaussian-splat-lab-phase-1-import-warning.txt
+
 tmp_jobs_dir="$(mktemp -d)"
 python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --jobs-dir "${tmp_jobs_dir}"   >/tmp/gaussian-splat-lab-phase-1-contracts.txt
 

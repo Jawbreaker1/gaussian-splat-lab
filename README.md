@@ -1,6 +1,6 @@
 # Gaussian Splat Lab
 
-Status: Stage 0 scaffold
+Status: Phase 1 gated local pipeline scaffold
 
 This repository is an isolated lab for local video-to-Gaussian-Splat reconstruction.
 
@@ -104,6 +104,13 @@ Architecture contract validation for framework decisions and pipeline gates:
 
 ```bash
 ./scripts/validate-architecture-contracts.sh
+```
+
+Capture readiness and local video import:
+
+```bash
+.venv/bin/python scripts/lab-pipeline.py list-captures --capture-manifest data/manifests/captures.example.json
+.venv/bin/python scripts/lab-pipeline.py import-video --capture-id <capture-id> --input <local-video> --accept-warning --overwrite
 ```
 
 

@@ -421,6 +421,141 @@ def capture_readiness_report(manifest_path: Path, repo_root: Path) -> dict[str, 
     }
 
 
+def resolve_input_path(raw_path: str, repo_root: Path) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = repo_root / path
+    return path
+
+
+def ensure_repo_target(path: Path, repo_root: Path) -> Path:
+    resolved = path.resolve()
+    resolved.relative_to(repo_root.resolve())
+    return resolved
+
+
+def capture_import_report_path(target_path: Path) -> Path:
+    return target_path.parent / ".provenance" / f"{target_path.name}.import.json"
+
+
+def build_video_import_report(
+    manifest_path: Path,
+    selection: CaptureSelection,
+    input_path: Path,
+    target_path: Path | None,
+    accept_warning: bool,
+    overwrite: bool,
+    dry_run: bool,
+    repo_root: Path,
+) -> dict[str, Any]:
+    source = selection.capture.get("source", {}) if isinstance(selection.capture.get("source"), dict) else {}
+    license_status, license_summary, commercial_posture = classify_capture_license(source)
+    checks: list[dict[str, Any]] = []
+    report: dict[str, Any] = {
+        "schemaVersion": 1,
+        "command": "import-video",
+        "status": "pending",
+        "generatedAt": utc_now(),
+        "captureManifestPath": str(manifest_path),
+        "captureId": selection.capture.get("id"),
+        "dryRun": dry_run,
+        "acceptedLicenseWarning": accept_warning,
+        "overwrite": overwrite,
+        "commercialPosture": commercial_posture,
+        "source": {
+            "path": str(input_path),
+            "exists": input_path.exists(),
+            "sizeBytes": input_path.stat().st_size if input_path.exists() and input_path.is_file() else None,
+            "sha256": file_sha256(input_path) if input_path.exists() and input_path.is_file() else None,
+        },
+        "target": {
+            "path": str(target_path) if target_path else None,
+            "existsBefore": target_path.exists() if target_path else False,
+        },
+        "license": {
+            "status": license_status,
+            "summary": license_summary,
+            "value": source.get("license"),
+            "sourceUrl": source.get("sourceUrl"),
+            "licenseSourceUrl": source.get("licenseSourceUrl"),
+            "termsUrl": source.get("termsUrl"),
+            "licenseVerifiedAt": source.get("licenseVerifiedAt"),
+        },
+        "checks": checks,
+    }
+
+    if target_path is None:
+        checks.append({"id": "target_path", "status": "fail", "summary": "capture source.path is missing"})
+        report["status"] = "fail"
+        return report
+
+    try:
+        ensure_repo_target(target_path, repo_root)
+        checks.append({"id": "target_path", "status": "pass", "summary": "target path is inside repository", "path": str(target_path)})
+    except ValueError:
+        checks.append({"id": "target_path", "status": "fail", "summary": "target path must stay inside repository", "path": str(target_path)})
+        report["status"] = "fail"
+        return report
+
+    if not input_path.exists() or not input_path.is_file():
+        checks.append({"id": "source_file", "status": "fail", "summary": "input video file does not exist", "path": str(input_path)})
+        report["status"] = "fail"
+        return report
+    checks.append({"id": "source_file", "status": "pass", "summary": "input file exists", "path": str(input_path)})
+
+    if license_status == "fail":
+        checks.append({"id": "source_license", "status": "blocked_license", "summary": license_summary})
+        report["status"] = "blocked_license"
+        return report
+    if license_status == "warning" and not accept_warning:
+        checks.append(
+            {
+                "id": "source_license",
+                "status": "blocked_license",
+                "summary": "license warning must be explicitly accepted with --accept-warning before importing this capture",
+                "licenseSummary": license_summary,
+            }
+        )
+        report["status"] = "blocked_license"
+        return report
+    checks.append({"id": "source_license", "status": license_status, "summary": license_summary})
+
+    if target_path.exists() and not overwrite:
+        checks.append(
+            {
+                "id": "overwrite_policy",
+                "status": "setup_gap",
+                "summary": "target file already exists; rerun with --overwrite to replace it intentionally",
+                "path": str(target_path),
+            }
+        )
+        report["status"] = "setup_gap"
+        return report
+    checks.append({"id": "overwrite_policy", "status": "pass", "summary": "target can be written"})
+
+    if dry_run:
+        report["status"] = "pass"
+        report["target"].update({"wouldWrite": True, "reportPath": str(capture_import_report_path(target_path))})
+        checks.append({"id": "dry_run", "status": "pass", "summary": "import plan validated without copying"})
+        return report
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    if input_path.resolve() != target_path.resolve():
+        shutil.copy2(input_path, target_path)
+    report_path = capture_import_report_path(target_path)
+    report["status"] = "pass"
+    report["target"].update(
+        {
+            "existsAfter": target_path.exists(),
+            "sizeBytes": target_path.stat().st_size,
+            "sha256": file_sha256(target_path),
+            "reportPath": str(report_path),
+        }
+    )
+    checks.append({"id": "copy", "status": "pass", "summary": "input file copied to capture target path"})
+    return report
+
+
 def stage_definition(stage_id: str) -> dict[str, str]:
     for stage in STAGES:
         if stage["id"] == stage_id:
@@ -1909,6 +2044,41 @@ def command_list_captures(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_import_video(args: argparse.Namespace) -> int:
+    repo_root = repo_root_from_script()
+    manifest_path = Path(args.capture_manifest)
+    if not manifest_path.is_absolute():
+        manifest_path = repo_root / manifest_path
+
+    selection = select_capture(manifest_path, args.capture_id)
+    input_path = resolve_input_path(args.input, repo_root)
+    target_path = capture_source_path(selection.capture, repo_root)
+    report = build_video_import_report(
+        manifest_path=manifest_path,
+        selection=selection,
+        input_path=input_path,
+        target_path=target_path,
+        accept_warning=args.accept_warning,
+        overwrite=args.overwrite,
+        dry_run=args.dry_run,
+        repo_root=repo_root,
+    )
+
+    report_path = None
+    if target_path is not None:
+        report_path = capture_import_report_path(target_path)
+        if not args.dry_run and report["status"] == "pass":
+            write_json(report_path, report)
+
+    print(f"import_video_status={report['status']}")
+    print(f"import_video_target={target_path}")
+    if report_path is not None:
+        print(f"import_video_report={report_path}")
+    if args.dry_run or report["status"] != "pass":
+        print(json.dumps(report, indent=2))
+    return 0 if report["status"] in {"pass", "warning", "setup_gap"} else 1
+
+
 def command_describe(_args: argparse.Namespace) -> int:
     stages = [
         {**stage, "workload": "heavy" if stage["id"] in HEAVY_STAGES else "normal"}
@@ -1978,6 +2148,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the job manifest instead of writing it.",
     )
     init_job.set_defaults(func=command_init_job)
+
+    import_video = subparsers.add_parser(
+        "import-video",
+        help="Copy a manually obtained capture video into the manifest target path and record provenance.",
+    )
+    import_video.add_argument(
+        "--capture-manifest",
+        default="data/manifests/captures.example.json",
+        help="Path to a capture manifest JSON file.",
+    )
+    import_video.add_argument("--capture-id", required=True, help="Capture id to import video for.")
+    import_video.add_argument("--input", required=True, help="Path to the manually obtained local video file.")
+    import_video.add_argument(
+        "--accept-warning",
+        action="store_true",
+        help="Explicitly allow import when the capture license posture is warning/technical-validation-only.",
+    )
+    import_video.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace an existing target video intentionally.",
+    )
+    import_video.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the import plan without copying the input file.",
+    )
+    import_video.set_defaults(func=command_import_video)
 
     run_stage = subparsers.add_parser(
         "run-stage", help="Run one validated pipeline stage for a job."

@@ -83,11 +83,14 @@ function renderCaptureMeta() {
   els.captureMeta.append(
     row('Capture ID', capture.id),
     row('File', readiness?.status ?? 'unknown'),
+    row('Target', readiness?.sourcePath),
+    row('Source', capture.source?.sourceUrl),
     row('Posture', readiness?.commercialPosture),
+    row('License', capture.source?.license),
+    row('Verified', capture.source?.licenseVerifiedAt),
     row('Motion', capture.capture?.motion),
     row('Duration', capture.capture?.expectedDurationSeconds ? `${capture.capture.expectedDurationSeconds}s` : null),
     row('Resolution', capture.capture?.expectedResolution),
-    row('License', capture.source?.license),
     row('Pipeline', capture.pipeline?.training?.backend ?? 'planned'),
   );
 }

@@ -274,18 +274,16 @@ Do not start with:
 
 Those are valuable later, after one known-good capture works end to end.
 
-## First Concrete Implementation Ticket
+## Current Concrete Implementation Ticket
 
-Build `environment` stage support into `scripts/lab-pipeline.py`:
+Import one known-good local capture through the provenance-aware CLI, then make `intake` and `frame_sampling` pass before any heavy stage is considered.
 
-- add a `run-stage environment` command
-- write `outputs/jobs/<job_id>/reports/environment.json`
-- record `nvidia-smi`
-- record Python version
-- if PyTorch is installed, run a minimal CUDA tensor test
-- if PyTorch is missing, write `setup_gap` with install guidance
-- if COLMAP/gsplat are missing, write `setup_gap` entries without pretending reconstruction failed
-- make the UI show the environment report status for the active job
+- download or self-record a static-scene orbit video outside git
+- run `import-video` so the file lands at the manifest target path with a local hash/provenance report
+- run `list-captures` and confirm the source file check changes from `setup_gap` to `pass`
+- create a job for that capture
+- run `framework_license`, `environment`, `intake` and `frame_sampling`
+- stop before `sfm`, training or viewer validation unless heavy workload is explicitly approved in that turn
 
 Acceptance:
 
@@ -293,6 +291,11 @@ Acceptance:
 ./scripts/validate-architecture-contracts.sh
 ./scripts/validate-phase-1-contracts.sh
 ./scripts/validate-ui-contracts.sh
-python3 scripts/lab-pipeline.py init-job --capture-id static-room-orbit-001
-python3 scripts/lab-pipeline.py run-stage environment --job outputs/jobs/<job_id>/job.json
+.venv/bin/python scripts/lab-pipeline.py list-captures --capture-manifest data/manifests/captures.example.json
+.venv/bin/python scripts/lab-pipeline.py import-video --capture-id <capture-id> --input <local-video> --accept-warning --overwrite
+.venv/bin/python scripts/lab-pipeline.py init-job --capture-id <capture-id>
+.venv/bin/python scripts/lab-pipeline.py run-stage framework_license --job outputs/jobs/<job_id>/job.json
+.venv/bin/python scripts/lab-pipeline.py run-stage environment --job outputs/jobs/<job_id>/job.json
+.venv/bin/python scripts/lab-pipeline.py run-stage intake --job outputs/jobs/<job_id>/job.json
+.venv/bin/python scripts/lab-pipeline.py run-stage frame_sampling --job outputs/jobs/<job_id>/job.json --accept-warning
 ```
