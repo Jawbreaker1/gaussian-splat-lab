@@ -325,6 +325,92 @@ def capture_video_path(job: dict[str, Any], repo_root: Path) -> Path:
     return video_path
 
 
+def capture_source_path(capture: dict[str, Any], repo_root: Path) -> Path | None:
+    source = capture.get("source", {}) if isinstance(capture.get("source"), dict) else {}
+    raw_path = source.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = repo_root / path
+    return path
+
+
+def classify_capture_license(source: dict[str, Any]) -> tuple[str, str, str]:
+    license_value = str(source.get("license") or "").strip()
+    source_url = source.get("sourceUrl")
+    if not license_value:
+        return "fail", "missing license", "blocked_license"
+    if license_value in {"unknown", "placeholder"}:
+        return "fail", f"license is {license_value}", "blocked_license"
+    if license_value == "local-test-only":
+        return "warning", "local test only; replace before product evidence", "technical_validation_only"
+    if license_value == "pexels-license":
+        return "warning", "Pexels candidate; verify current terms and avoid commercial showcase use without review", "technical_validation_only"
+    if source_url:
+        return "warning", "external source; keep license evidence with the capture", "needs_review_before_showcase"
+    return "pass", "license/provenance recorded", "candidate_for_golden_path"
+
+
+def capture_readiness(capture: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    source = capture.get("source", {}) if isinstance(capture.get("source"), dict) else {}
+    source_path = capture_source_path(capture, repo_root)
+    license_status, license_summary, commercial_posture = classify_capture_license(source)
+    file_exists = bool(source_path and source_path.exists())
+    file_status = "pass" if file_exists else "setup_gap"
+    checks = [
+        {
+            "id": "source_file",
+            "status": file_status,
+            "summary": "source file exists" if file_exists else "source file is not present locally",
+            "path": str(source_path) if source_path else None,
+            "sizeBytes": source_path.stat().st_size if file_exists and source_path else None,
+        },
+        {
+            "id": "source_license",
+            "status": license_status,
+            "summary": license_summary,
+            "license": source.get("license"),
+            "sourceUrl": source.get("sourceUrl"),
+        },
+    ]
+    statuses = [check["status"] for check in checks]
+    if any(status == "fail" for status in statuses):
+        status = "fail"
+    elif any(status == "setup_gap" for status in statuses):
+        status = "setup_gap"
+    elif any(status == "warning" for status in statuses):
+        status = "warning"
+    else:
+        status = "pass"
+    return {
+        "id": capture.get("id"),
+        "displayName": capture.get("displayName"),
+        "status": status,
+        "commercialPosture": commercial_posture,
+        "sourcePath": str(source_path) if source_path else None,
+        "sourceUrl": source.get("sourceUrl"),
+        "checks": checks,
+    }
+
+
+def capture_readiness_report(manifest_path: Path, repo_root: Path) -> dict[str, Any]:
+    manifest = read_json(manifest_path)
+    captures = manifest.get("captures")
+    if not isinstance(captures, list):
+        raise ValueError(f"{manifest_path} must contain a captures array")
+    return {
+        "schemaVersion": 1,
+        "manifestPath": str(manifest_path),
+        "generatedAt": utc_now(),
+        "captures": [
+            capture_readiness(capture, repo_root)
+            for capture in captures
+            if isinstance(capture, dict)
+        ],
+    }
+
+
 def stage_definition(stage_id: str) -> dict[str, str]:
     for stage in STAGES:
         if stage["id"] == stage_id:
@@ -1395,6 +1481,15 @@ def command_run_stage(args: argparse.Namespace) -> int:
     return 0 if report["stage"]["status"] in {"pass", "warning", "setup_gap"} else 1
 
 
+def command_list_captures(args: argparse.Namespace) -> int:
+    repo_root = repo_root_from_script()
+    manifest_path = Path(args.capture_manifest)
+    if not manifest_path.is_absolute():
+        manifest_path = repo_root / manifest_path
+    print(json.dumps(capture_readiness_report(manifest_path, repo_root), indent=2))
+    return 0
+
+
 def command_describe(_args: argparse.Namespace) -> int:
     stages = [
         {**stage, "workload": "heavy" if stage["id"] in HEAVY_STAGES else "normal"}
@@ -1435,6 +1530,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     describe = subparsers.add_parser("describe", help="Print pipeline stages as JSON.")
     describe.set_defaults(func=command_describe)
+
+    list_captures = subparsers.add_parser("list-captures", help="Print capture readiness as JSON.")
+    list_captures.add_argument(
+        "--capture-manifest",
+        default="data/manifests/captures.example.json",
+        help="Path to a capture manifest JSON file.",
+    )
+    list_captures.set_defaults(func=command_list_captures)
 
     init_job = subparsers.add_parser(
         "init-job", help="Create a planned job from a capture manifest."

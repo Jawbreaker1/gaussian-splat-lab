@@ -43,6 +43,11 @@ function selectedCapture() {
   return state?.captures?.find((capture) => capture.id === id) ?? null;
 }
 
+function selectedCaptureReadiness() {
+  const id = els.captureSelect.value;
+  return state?.captureReadiness?.find((capture) => capture.id === id) ?? null;
+}
+
 function renderStatus() {
   els.statusStrip.replaceChildren();
   const validation = state?.validation ?? {};
@@ -74,8 +79,11 @@ function renderCaptureMeta() {
     return;
   }
 
+  const readiness = selectedCaptureReadiness();
   els.captureMeta.append(
     row('Capture ID', capture.id),
+    row('File', readiness?.status ?? 'unknown'),
+    row('Posture', readiness?.commercialPosture),
     row('Motion', capture.capture?.motion),
     row('Duration', capture.capture?.expectedDurationSeconds ? `${capture.capture.expectedDurationSeconds}s` : null),
     row('Resolution', capture.capture?.expectedResolution),

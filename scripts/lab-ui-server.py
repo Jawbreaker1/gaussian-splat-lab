@@ -72,11 +72,14 @@ def build_state() -> dict[str, Any]:
     captures = read_json(CAPTURE_MANIFEST).get("captures", [])
     frameworks = read_json(FRAMEWORK_MANIFEST).get("frameworks", [])
     gates = read_json(GATES_MANIFEST).get("gates", [])
+    pipeline = load_pipeline_module()
+    capture_readiness = pipeline.capture_readiness_report(CAPTURE_MANIFEST, REPO_ROOT).get("captures", [])
     evidence = RTX_EVIDENCE.read_text(encoding="utf-8") if RTX_EVIDENCE.exists() else ""
     return {
         "schemaVersion": 1,
         "machineLabel": "Windows RTX 5090 workstation / WSL2",
         "captures": captures,
+        "captureReadiness": capture_readiness,
         "frameworks": frameworks,
         "gates": gates,
         "latestJob": latest_job(),

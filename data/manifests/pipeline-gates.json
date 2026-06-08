@@ -1,12 +1,13 @@
 {
   "schemaVersion": 1,
-  "verifiedAt": "2026-06-07",
+  "verifiedAt": "2026-06-08",
   "statusValues": [
     "pass",
     "warning",
     "setup_gap",
     "fail",
-    "blocked_license"
+    "blocked_license",
+    "blocked_workload"
   ],
   "gates": [
     {

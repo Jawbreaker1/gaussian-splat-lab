@@ -8,6 +8,9 @@ python3 -m json.tool "${repo_root}/data/manifests/viewer-assets.example.json" >/
 python3 -m py_compile "${repo_root}/scripts/lab-pipeline.py"
 
 python3 "${repo_root}/scripts/lab-pipeline.py" describe >/dev/null
+python3 "${repo_root}/scripts/lab-pipeline.py" list-captures   --capture-manifest data/manifests/captures.example.json   >/tmp/gaussian-splat-lab-phase-1-captures.txt
+python3 -m json.tool /tmp/gaussian-splat-lab-phase-1-captures.txt >/dev/null
+grep -q "pexels-empty-coffee-shop-interior-14227022" /tmp/gaussian-splat-lab-phase-1-captures.txt
 python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --dry-run   >/dev/null
 
 tmp_jobs_dir="$(mktemp -d)"

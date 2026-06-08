@@ -22,6 +22,7 @@ Already in place:
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
 - placeholder capture and viewer asset manifests
+- capture readiness reporting for local file/provenance status before intake
 
 Not yet real:
 

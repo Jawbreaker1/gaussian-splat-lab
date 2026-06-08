@@ -92,6 +92,17 @@ actual_gate_ids = [gate.get("id") for gate in gates.get("gates", [])]
 if actual_gate_ids != expected_gate_ids:
     raise SystemExit(f"pipeline gates out of order: {actual_gate_ids}")
 
+expected_status_values = [
+    "pass",
+    "warning",
+    "setup_gap",
+    "fail",
+    "blocked_license",
+    "blocked_workload",
+]
+if gates.get("statusValues") != expected_status_values:
+    raise SystemExit(f"pipeline status values out of sync: {gates.get('statusValues')}")
+
 for gate in gates.get("gates", []):
     for key in ["inputContract", "outputContract", "validation"]:
         if not gate.get(key):

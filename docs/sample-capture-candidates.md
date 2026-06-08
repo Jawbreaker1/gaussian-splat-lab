@@ -24,6 +24,12 @@ License posture:
 - Pexels also restricts uses such as selling unaltered copies, implying endorsement, redistribution on stock platforms, and trademark/service-mark use.
 - Treat this as acceptable for local technical validation only. For product demos, marketing or commercial evidence, use self-captured footage or obtain a separately reviewed asset.
 
+Readiness check:
+
+```bash
+.venv/bin/python scripts/lab-pipeline.py list-captures --capture-manifest data/manifests/captures.example.json
+```
+
 Manual next step when ready:
 
 1. Download the chosen Pexels quality manually from the source page.
