@@ -85,6 +85,12 @@ Use these documents as the source of truth:
 - `docs/phases.md`: long-range phase plan
 - `docs/validation/`: recorded validation evidence
 
+## Workload Safety
+
+The workstation currently has a known power-supply/load stability concern. Do not run heavy stages such as SfM, splat training, viewer rendering or long GPU/CPU stress tasks without explicit user approval in that turn.
+
+Pipeline stages that can sustain high CPU/GPU load must expose a guard and report `blocked_workload` unless deliberately launched with the documented heavy-workload flag.
+
 ## Development Order
 
 Follow the staged plan. Do not build later stages on unvalidated earlier stages.

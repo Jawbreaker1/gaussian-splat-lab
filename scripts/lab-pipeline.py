@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import math
 import importlib.util
+import math
 import json
 import platform
 import re
@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+
+HEAVY_STAGES = {"sfm", "splat_training", "viewer"}
 
 
 STAGES = [
@@ -141,6 +144,7 @@ def build_job(selection: CaptureSelection, repo_root: Path) -> dict[str, Any]:
                 "status": "pending",
                 "reads": stage["reads"],
                 "writes": stage["writes"],
+                "workload": "heavy" if stage["id"] in HEAVY_STAGES else "normal",
                 "reportPath": f"reports/{stage['id']}.json",
             }
             for stage in STAGES
@@ -332,6 +336,8 @@ def derive_job_status(stages: list[dict[str, Any]]) -> str:
     statuses = [stage.get("status") for stage in stages if isinstance(stage, dict)]
     if any(status == "blocked_license" for status in statuses):
         return "blocked_license"
+    if any(status == "blocked_workload" for status in statuses):
+        return "blocked_workload"
     if any(status == "fail" for status in statuses):
         return "fail"
     if any(status == "setup_gap" for status in statuses):
@@ -1027,7 +1033,7 @@ def validate_sfm_output(
     return "pass", checks
 
 
-def build_sfm_report(job_path: Path, accept_warning: bool = False) -> dict[str, Any]:
+def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: bool = False) -> dict[str, Any]:
     frame_sampling_path = stage_report_path(job_path, "frame_sampling")
     base = {
         "schemaVersion": 1,
@@ -1073,6 +1079,23 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False) -> dict[str, 
                 "summary": f"frame_sampling must pass before sfm; current status is {frame_sampling_status}",
             }
         )
+        return base
+
+    if not allow_heavy:
+        base["stage"]["status"] = "blocked_workload"
+        base["checks"].append(
+            {
+                "id": "heavy_workload_ack_required",
+                "status": "blocked_workload",
+                "summary": "SfM can be CPU/GPU intensive; rerun with --allow-heavy only after confirming the workstation can take sustained load.",
+            }
+        )
+        base["workload"] = {
+            "classification": "heavy",
+            "requiresExplicitApproval": True,
+            "approvalFlag": "--allow-heavy",
+            "reason": "COLMAP feature extraction, matching and mapping can sustain high CPU load.",
+        }
         return base
 
     frame_manifest_path_raw = frame_sampling_report.get("frameManifestPath")
@@ -1360,7 +1383,7 @@ def command_run_stage(args: argparse.Namespace) -> int:
     elif args.stage == "frame_sampling":
         report = build_frame_sampling_report(job_path, accept_warning=args.accept_warning)
     elif args.stage == "sfm":
-        report = build_sfm_report(job_path, accept_warning=args.accept_warning)
+        report = build_sfm_report(job_path, accept_warning=args.accept_warning, allow_heavy=args.allow_heavy)
     else:
         raise ValueError(f"unsupported stage {args.stage!r}")
 
@@ -1373,7 +1396,11 @@ def command_run_stage(args: argparse.Namespace) -> int:
 
 
 def command_describe(_args: argparse.Namespace) -> int:
-    print(json.dumps({"schemaVersion": 1, "stages": STAGES}, indent=2))
+    stages = [
+        {**stage, "workload": "heavy" if stage["id"] in HEAVY_STAGES else "normal"}
+        for stage in STAGES
+    ]
+    print(json.dumps({"schemaVersion": 1, "stages": stages}, indent=2))
     return 0
 
 
@@ -1439,6 +1466,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--accept-warning",
         action="store_true",
         help="Explicitly allow downstream work after an upstream warning report.",
+    )
+    run_stage.add_argument(
+        "--allow-heavy",
+        action="store_true",
+        help="Permit stages that can place sustained load on CPU/GPU. Required for SfM and future training/rendering stages.",
     )
     run_stage.set_defaults(func=command_run_stage)
 

@@ -37,6 +37,7 @@ Generated artifacts stay out of git. Only manifests, small reports, docs and rep
 - `setup_gap`: stop for environment/setup work; not a capture or algorithm failure.
 - `fail`: stop; downstream stages must not run.
 - `blocked_license`: stop; dependency or input license is incompatible or unknown.
+- `blocked_workload`: stop; the stage may place sustained load on CPU/GPU and needs explicit operator approval.
 
 ## Job Folder Layout
 
@@ -75,7 +76,7 @@ Every stage follows the same loop:
 2. Run the smallest deterministic operation for this stage.
 3. Write output manifest/report atomically.
 4. Validate output locally.
-5. Stop immediately on `fail`, `setup_gap` or `blocked_license`.
+5. Stop immediately on `fail`, `setup_gap`, `blocked_license` or `blocked_workload`.
 6. Allow the next stage only on `pass` or explicit `warning`.
 
 ## MVP Gate Thresholds

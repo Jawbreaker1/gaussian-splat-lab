@@ -18,6 +18,7 @@ let activeJob = null;
 let runningStage = null;
 
 const runnableStages = new Set(['environment', 'intake', 'frame_sampling', 'sfm']);
+const heavyStages = new Set(['sfm']);
 
 function pill(text, type = 'neutral') {
   const span = document.createElement('span');
@@ -112,9 +113,9 @@ function renderStages() {
       const action = document.createElement('button');
       action.className = 'stage-action';
       action.type = 'button';
-      action.textContent = runningStage === gate.id ? 'Running' : 'Run';
+      action.textContent = runningStage === gate.id ? 'Running' : heavyStages.has(gate.id) ? 'Guarded' : 'Run';
       action.disabled = !activeJob || Boolean(runningStage);
-      action.title = `Run ${gate.id.replaceAll('_', ' ')}`;
+      action.title = heavyStages.has(gate.id) ? `${gate.id.replaceAll('_', ' ')} requires explicit heavy-workload approval in CLI` : `Run ${gate.id.replaceAll('_', ' ')}`;
       action.addEventListener('click', () => runStage(gate.id));
       item.append(number, body, status, action);
     } else {
@@ -218,7 +219,7 @@ async function runStage(stage) {
     const response = await fetch('/api/jobs/run-stage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobPath: activeJob.jobPath, stage, acceptWarning: false }),
+      body: JSON.stringify({ jobPath: activeJob.jobPath, stage, acceptWarning: false, allowHeavy: false }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `stage ${response.status}`);

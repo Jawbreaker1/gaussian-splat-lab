@@ -43,6 +43,12 @@ As of 2026-06-08, the repo-local `.venv` and workstation validate:
 - frame sampling passed a synthetic CLI smoke test; evidence is recorded in `docs/validation/phase-1-frame-sampling-smoke.md`
 - SfM now has a runnable COLMAP stage wrapper; successful reconstruction awaits real frame input
 
+## Workload Safety
+
+Heavy stages are currently guarded because the workstation has a known power-supply/load stability concern. `sfm`, future training and viewer/render validation must not run accidentally. The CLI writes `blocked_workload` unless a heavy stage is explicitly run with `--allow-heavy`.
+
+The UI intentionally sends `allowHeavy=false`; use CLI approval only after confirming the machine can sustain the load.
+
 ## Next Build Step
 
 Provide a known-good local capture and make the video intake stage pass.

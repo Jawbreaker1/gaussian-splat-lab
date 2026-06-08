@@ -116,12 +116,14 @@ def resolve_job_path(raw_path: Any) -> Path:
     return resolved
 
 
-def run_job_stage(job_path: Path, stage: str, accept_warning: bool = False) -> dict[str, Any]:
+def run_job_stage(job_path: Path, stage: str, accept_warning: bool = False, allow_heavy: bool = False) -> dict[str, Any]:
     if stage not in RUNNABLE_STAGES:
         raise ValueError(f"stage {stage!r} is not runnable from the UI yet")
     command = [pipeline_python(), str(PIPELINE_SCRIPT), "run-stage", stage, "--job", str(job_path)]
     if accept_warning:
         command.append("--accept-warning")
+    if allow_heavy:
+        command.append("--allow-heavy")
     result = subprocess.run(
         command,
         cwd=REPO_ROOT,
@@ -243,10 +245,11 @@ class LabUiHandler(BaseHTTPRequestHandler):
             job_path = resolve_job_path(payload.get("jobPath"))
             stage = payload.get("stage")
             accept_warning = bool(payload.get("acceptWarning", False))
+            allow_heavy = bool(payload.get("allowHeavy", False))
             if not isinstance(stage, str) or not stage:
                 self.send_json({"error": "stage is required"}, HTTPStatus.BAD_REQUEST)
                 return
-            result = run_job_stage(job_path, stage, accept_warning=accept_warning)
+            result = run_job_stage(job_path, stage, accept_warning=accept_warning, allow_heavy=allow_heavy)
             self.send_json(result)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)

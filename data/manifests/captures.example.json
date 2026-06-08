@@ -30,10 +30,54 @@
           "targetWorker": "windows-rtx-5090"
         },
         "packaging": {
-          "preferredFormats": ["ply", "ksplat", "splat"]
+          "preferredFormats": [
+            "ply",
+            "ksplat",
+            "splat"
+          ]
         }
       },
       "status": "placeholder"
+    },
+    {
+      "id": "pexels-empty-coffee-shop-interior-14227022",
+      "displayName": "Pexels empty coffee shop interior candidate",
+      "source": {
+        "kind": "local_file",
+        "path": "data/videos/pexels-empty-coffee-shop-interior-14227022.mp4",
+        "sourceUrl": "https://www.pexels.com/video/an-empty-coffee-shop-interior-14227022/",
+        "license": "pexels-license",
+        "licenseNotes": "Candidate for technical pipeline validation only. Pexels marks the page Free to use and No People; verify current Pexels license/terms and avoid commercial showcase use without review. Prefer self-captured footage for production evidence."
+      },
+      "capture": {
+        "subject": "empty cafe interior",
+        "motion": "unknown stock video camera motion; verify with intake before SfM",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "4K or HD download, exact file chosen manually"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "targetFps": 2,
+          "maxFrames": 180
+        },
+        "sfm": {
+          "backend": "colmap",
+          "requiresExplicitHeavyApproval": true
+        },
+        "training": {
+          "backend": "gsplat",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "ksplat",
+            "splat"
+          ]
+        }
+      },
+      "status": "external-candidate"
     }
   ]
 }

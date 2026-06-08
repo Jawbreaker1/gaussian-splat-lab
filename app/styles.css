@@ -324,6 +324,7 @@ select {
 }
 
 .pill.blocked,
+.pill.blocked_workload,
 .pill.fail {
   color: var(--red);
   background: var(--red-soft);
