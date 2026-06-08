@@ -77,20 +77,20 @@ opensplat = next((item for item in frameworks["frameworks"] if item["id"] == "op
 if opensplat is None or opensplat.get("commercialUse") != "blocked_by_policy":
     raise SystemExit("OpenSplat must remain blocked by policy unless AGPL is explicitly accepted")
 
-expected_gate_ids = [
-    "framework_license",
-    "environment",
-    "intake",
-    "frame_sampling",
-    "sfm",
-    "splat_training",
-    "packaging",
-    "viewer",
-    "quality_report",
+expected_gate_groups = [
+    ("framework_license", "preflight"),
+    ("environment", "preflight"),
+    ("intake", "media_pipeline"),
+    ("frame_sampling", "media_pipeline"),
+    ("sfm", "media_pipeline"),
+    ("splat_training", "media_pipeline"),
+    ("packaging", "media_pipeline"),
+    ("viewer", "media_pipeline"),
+    ("quality_report", "media_pipeline"),
 ]
-actual_gate_ids = [gate.get("id") for gate in gates.get("gates", [])]
-if actual_gate_ids != expected_gate_ids:
-    raise SystemExit(f"pipeline gates out of order: {actual_gate_ids}")
+actual_gate_groups = [(gate.get("id"), gate.get("group")) for gate in gates.get("gates", [])]
+if actual_gate_groups != expected_gate_groups:
+    raise SystemExit(f"pipeline gates out of order or group: {actual_gate_groups}")
 
 expected_status_values = [
     "pass",
@@ -104,7 +104,7 @@ if gates.get("statusValues") != expected_status_values:
     raise SystemExit(f"pipeline status values out of sync: {gates.get('statusValues')}")
 
 for gate in gates.get("gates", []):
-    for key in ["inputContract", "outputContract", "validation"]:
+    for key in ["group", "displayName", "inputContract", "outputContract", "validation"]:
         if not gate.get(key):
             raise SystemExit(f"gate {gate.get('id')} missing {key}")
 

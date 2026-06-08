@@ -13,6 +13,8 @@
     {
       "order": 0,
       "id": "framework_license",
+      "group": "preflight",
+      "displayName": "Dependency Review",
       "inputContract": "FrameworkEvaluation",
       "outputContract": "FrameworkDecisionReport",
       "validation": "All runtime dependencies are accepted or conditional with conditions; blocked dependencies are absent from runtime."
@@ -20,6 +22,8 @@
     {
       "order": 1,
       "id": "environment",
+      "group": "preflight",
+      "displayName": "Workstation Check",
       "inputContract": "MachineRuntime",
       "outputContract": "EnvironmentReport",
       "validation": "Record OS, tool versions, RTX visibility and CUDA/PyTorch/gsplat smoke before training."
@@ -27,6 +31,8 @@
     {
       "order": 2,
       "id": "intake",
+      "group": "media_pipeline",
+      "displayName": "Video Intake",
       "inputContract": "CaptureInput",
       "outputContract": "CaptureMetadata",
       "validation": "Local file exists, provenance/license is recorded and video metadata is parsed."
@@ -34,6 +40,8 @@
     {
       "order": 3,
       "id": "frame_sampling",
+      "group": "media_pipeline",
+      "displayName": "Frame Sampling",
       "inputContract": "CaptureMetadata",
       "outputContract": "FrameManifest",
       "validation": "Frame count, timestamps, hashes and contact sheet are validated."
@@ -41,6 +49,8 @@
     {
       "order": 4,
       "id": "sfm",
+      "group": "media_pipeline",
+      "displayName": "SfM Camera Solve",
       "inputContract": "FrameManifest",
       "outputContract": "CameraSolveReport",
       "validation": "Enough frames are registered and SfM quality metrics are recorded."
@@ -48,6 +58,8 @@
     {
       "order": 5,
       "id": "splat_training",
+      "group": "media_pipeline",
+      "displayName": "Splat Training",
       "inputContract": "CameraSolveReport",
       "outputContract": "TrainingRunReport",
       "validation": "Training produces a checkpoint/export and sample render evidence."
@@ -55,6 +67,8 @@
     {
       "order": 6,
       "id": "packaging",
+      "group": "media_pipeline",
+      "displayName": "Artifact Packaging",
       "inputContract": "TrainingRunReport",
       "outputContract": "SplatArtifact",
       "validation": "Artifact exists, hash/size/format are recorded and selected viewer can parse it."
@@ -62,6 +76,8 @@
     {
       "order": 7,
       "id": "viewer",
+      "group": "media_pipeline",
+      "displayName": "Viewer Validation",
       "inputContract": "SplatArtifact",
       "outputContract": "ViewerValidationReport",
       "validation": "Browser canvas is nonblank and orbit/pan/zoom/reset are verified."
@@ -69,6 +85,8 @@
     {
       "order": 8,
       "id": "quality_report",
+      "group": "media_pipeline",
+      "displayName": "Quality Report",
       "inputContract": "StageReports",
       "outputContract": "CaptureQualityReport",
       "validation": "Result is classified as usable, weak or failed with failure boundary."

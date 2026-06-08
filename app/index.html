@@ -39,10 +39,25 @@
 
         <section class="pipeline-panel panel" aria-labelledby="pipelineTitle">
           <div class="panel-head">
-            <h2 id="pipelineTitle">Pipeline</h2>
-            <span class="pill neutral" id="gateCount">0 gates</span>
+            <h2 id="pipelineTitle">Preflight & Pipeline</h2>
+            <span class="pill neutral" id="gateCount">0 checks</span>
           </div>
-          <div class="stage-list" id="stageList"></div>
+
+          <div class="stage-section">
+            <div class="stage-section-head">
+              <h3>Preflight</h3>
+              <span>Project readiness</span>
+            </div>
+            <div class="stage-list" id="preflightList"></div>
+          </div>
+
+          <div class="stage-section">
+            <div class="stage-section-head">
+              <h3>Media Pipeline</h3>
+              <span>Video to splat</span>
+            </div>
+            <div class="stage-list" id="pipelineList"></div>
+          </div>
         </section>
 
         <aside class="side-panel">

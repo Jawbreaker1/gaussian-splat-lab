@@ -61,6 +61,7 @@ select {
 
 h1,
 h2,
+h3,
 p {
   margin: 0;
 }
@@ -75,6 +76,13 @@ h2 {
   font-size: 15px;
   line-height: 1.2;
   font-weight: 720;
+}
+
+h3 {
+  font-size: 12px;
+  line-height: 1.2;
+  font-weight: 760;
+  text-transform: uppercase;
 }
 
 .machine,
@@ -249,6 +257,30 @@ select {
 
 .stage-list {
   grid-auto-rows: minmax(72px, auto);
+}
+
+.stage-section {
+  display: grid;
+  gap: 10px;
+}
+
+.stage-section + .stage-section {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.stage-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.stage-section-head span {
+  font-size: 12px;
+  font-weight: 680;
 }
 
 .stage-item {

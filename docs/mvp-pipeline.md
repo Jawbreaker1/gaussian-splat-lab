@@ -4,6 +4,8 @@ Goal: turn a local video capture into a browser-viewable Gaussian Splat artifact
 
 This lab should first prove one known-good input end to end. The app can stay simple as long as every boundary is explicit and inspectable.
 
+Dependency review and workstation checks are preflight gates. They protect commercial and runtime assumptions, but the media pipeline itself begins at video intake.
+
 ## User Flow
 
 1. User selects or imports a local video capture.

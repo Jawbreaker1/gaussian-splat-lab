@@ -6,7 +6,8 @@ const els = {
   planJobButton: document.querySelector('#planJobButton'),
   refreshButton: document.querySelector('#refreshButton'),
   jobBox: document.querySelector('#jobBox'),
-  stageList: document.querySelector('#stageList'),
+  preflightList: document.querySelector('#preflightList'),
+  pipelineList: document.querySelector('#pipelineList'),
   gateCount: document.querySelector('#gateCount'),
   blockedCount: document.querySelector('#blockedCount'),
   complianceGrid: document.querySelector('#complianceGrid'),
@@ -19,6 +20,17 @@ let runningStage = null;
 
 const runnableStages = new Set(['framework_license', 'environment', 'intake', 'frame_sampling', 'sfm', 'splat_training', 'packaging', 'viewer', 'quality_report']);
 const heavyStages = new Set(['sfm', 'splat_training', 'viewer']);
+const fallbackStageNames = {
+  framework_license: 'Dependency Review',
+  environment: 'Workstation Check',
+  intake: 'Video Intake',
+  frame_sampling: 'Frame Sampling',
+  sfm: 'SfM Camera Solve',
+  splat_training: 'Splat Training',
+  packaging: 'Artifact Packaging',
+  viewer: 'Viewer Validation',
+  quality_report: 'Quality Report',
+};
 
 function pill(text, type = 'neutral') {
   const span = document.createElement('span');
@@ -95,44 +107,63 @@ function renderCaptureMeta() {
   );
 }
 
+function stageDisplayName(gate) {
+  return gate.displayName || fallbackStageNames[gate.id] || gate.id.replaceAll('_', ' ');
+}
+
+function stageGroup(gate) {
+  if (gate.group) return gate.group;
+  return gate.id === 'framework_license' || gate.id === 'environment' ? 'preflight' : 'media_pipeline';
+}
+
+function buildStageItem(gate, index, jobStages) {
+  const stage = jobStages.find((item) => item.id === gate.id);
+  const item = document.createElement('article');
+  item.className = 'stage-item';
+
+  const number = document.createElement('div');
+  number.className = 'stage-index';
+  number.textContent = String(index);
+
+  const body = document.createElement('div');
+  const title = document.createElement('div');
+  title.className = 'stage-title';
+  title.textContent = stageDisplayName(gate);
+  const contract = document.createElement('div');
+  contract.className = 'stage-contract';
+  contract.textContent = `${gate.inputContract} → ${gate.outputContract}`;
+  body.append(title, contract);
+
+  const status = pill(stage?.status ?? 'gate', stage?.status ?? 'neutral');
+  if (runnableStages.has(gate.id)) {
+    const action = document.createElement('button');
+    action.className = 'stage-action';
+    action.type = 'button';
+    action.textContent = runningStage === gate.id ? 'Running' : heavyStages.has(gate.id) ? 'Guarded' : 'Run';
+    action.disabled = !activeJob || Boolean(runningStage);
+    action.title = heavyStages.has(gate.id) ? `${stageDisplayName(gate)} requires explicit heavy-workload approval in CLI` : `Run ${stageDisplayName(gate)}`;
+    action.addEventListener('click', () => runStage(gate.id));
+    item.append(number, body, status, action);
+  } else {
+    item.append(number, body, status);
+  }
+  return item;
+}
+
 function renderStages() {
   const gates = state?.gates ?? [];
   const jobStages = activeJob?.stages ?? [];
-  els.stageList.replaceChildren();
-  els.gateCount.textContent = `${gates.length} gates`;
+  const preflight = gates.filter((gate) => stageGroup(gate) === 'preflight');
+  const pipeline = gates.filter((gate) => stageGroup(gate) !== 'preflight');
+  els.preflightList.replaceChildren();
+  els.pipelineList.replaceChildren();
+  els.gateCount.textContent = `${preflight.length} preflight / ${pipeline.length} pipeline`;
 
-  gates.forEach((gate, index) => {
-    const stage = jobStages.find((item) => item.id === gate.id);
-    const item = document.createElement('article');
-    item.className = 'stage-item';
-
-    const number = document.createElement('div');
-    number.className = 'stage-index';
-    number.textContent = String(index);
-
-    const body = document.createElement('div');
-    const title = document.createElement('div');
-    title.className = 'stage-title';
-    title.textContent = gate.id.replaceAll('_', ' ');
-    const contract = document.createElement('div');
-    contract.className = 'stage-contract';
-    contract.textContent = `${gate.inputContract} → ${gate.outputContract}`;
-    body.append(title, contract);
-
-    const status = pill(stage?.status ?? 'gate', stage?.status ?? 'neutral');
-    if (runnableStages.has(gate.id)) {
-      const action = document.createElement('button');
-      action.className = 'stage-action';
-      action.type = 'button';
-      action.textContent = runningStage === gate.id ? 'Running' : heavyStages.has(gate.id) ? 'Guarded' : 'Run';
-      action.disabled = !activeJob || Boolean(runningStage);
-      action.title = heavyStages.has(gate.id) ? `${gate.id.replaceAll('_', ' ')} requires explicit heavy-workload approval in CLI` : `Run ${gate.id.replaceAll('_', ' ')}`;
-      action.addEventListener('click', () => runStage(gate.id));
-      item.append(number, body, status, action);
-    } else {
-      item.append(number, body, status);
-    }
-    els.stageList.append(item);
+  preflight.forEach((gate, index) => {
+    els.preflightList.append(buildStageItem(gate, index + 1, jobStages));
+  });
+  pipeline.forEach((gate, index) => {
+    els.pipelineList.append(buildStageItem(gate, index + 1, jobStages));
   });
 }
 

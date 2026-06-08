@@ -12,9 +12,9 @@ Already in place:
 
 - dependency-free local UI for job planning
 - manifest-driven pipeline skeleton
-- framework/license evaluation gate
+- dependency/license preflight gate
 - commercial compliance gate
-- pipeline gate manifest
+- preflight and media pipeline gate manifest
 - RTX 5090 visibility from WSL via `nvidia-smi`
 - COLMAP install/version validation
 - FFmpeg/ffprobe install/version validation
@@ -87,12 +87,14 @@ Stop condition:
 
 ## Golden Path Implementation Sequence
 
-### 1. Environment Gate
+### 0. Preflight Checks
+
+Preflight checks protect project and workstation assumptions before the media pipeline starts.
 
 Inputs:
 
-- job manifest
 - framework evaluation manifest
+- job manifest
 - local machine runtime
 
 Components:
@@ -103,18 +105,20 @@ Components:
 - COLMAP when installed
 - gsplat when installed
 
-Output:
+Outputs:
 
+- `FrameworkDecisionReport`
 - `EnvironmentReport`
 
 Validation:
 
+- runtime dependencies are accepted, conditional or blocked explicitly
 - RTX 5090 visible
 - PyTorch CUDA smoke passes
 - COLMAP version recorded or setup gap recorded
 - gsplat smoke passes or setup gap recorded
 
-### 2. Video Intake
+### 1. Video Intake
 
 Inputs:
 
@@ -136,7 +140,7 @@ Validation:
 - duration, resolution, fps, codec and bitrate recorded
 - video falls inside MVP limits
 
-### 3. Frame Sampling
+### 2. Frame Sampling
 
 Inputs:
 
@@ -159,7 +163,7 @@ Validation:
 - files exist
 - hashes recorded
 
-### 4. SfM / Camera Solve
+### 3. SfM / Camera Solve
 
 Inputs:
 
@@ -181,7 +185,7 @@ Validation:
 - reprojection metrics recorded
 - failure boundary is clear if solve fails
 
-### 5. Splat Training
+### 4. Splat Training
 
 Inputs:
 
@@ -204,7 +208,7 @@ Validation:
 - loss samples and wall time recorded
 - sample render evidence saved where practical
 
-### 6. Packaging
+### 5. Packaging
 
 Inputs:
 
@@ -224,7 +228,7 @@ Validation:
 - format, byte size and hash recorded
 - selected viewer supports the format
 
-### 7. Viewer Validation
+### 6. Viewer Validation
 
 Inputs:
 
@@ -245,7 +249,7 @@ Validation:
 - orbit, pan, zoom and reset work
 - screenshot evidence saved
 
-### 8. Quality Report
+### 7. Quality Report
 
 Inputs:
 
@@ -282,7 +286,7 @@ Import one known-good local capture through the provenance-aware CLI, then make 
 - run `import-video` so the file lands at the manifest target path with a local hash/provenance report
 - run `list-captures` and confirm the source file check changes from `setup_gap` to `pass`
 - create a job for that capture
-- run `framework_license`, `environment`, `intake` and `frame_sampling`
+- run preflight checks (`framework_license`, `environment`), then media stages (`intake`, `frame_sampling`)
 - stop before `sfm`, training or viewer validation unless heavy workload is explicitly approved in that turn
 
 Acceptance:

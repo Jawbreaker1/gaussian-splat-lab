@@ -2,7 +2,7 @@
 
 Verified: 2026-06-08
 
-The pipeline must be stage-based and self-validating. A downstream stage may only read an upstream output after that output has a passing validation report.
+The media pipeline must be stage-based and self-validating. Preflight gates use the same report/status mechanics, but they are project and workstation readiness checks rather than media-processing stages. A downstream stage may only read an upstream output after that output has a passing validation report.
 
 ## Core Rule
 
@@ -16,19 +16,28 @@ Each stage has:
 
 Generated artifacts stay out of git. Only manifests, small reports, docs and reproducible configuration belong in git.
 
-## Stage Gates
+## Preflight Gates
+
+These checks run before or alongside a job, but they are not part of the media-processing pipeline.
+
+| Order | Gate | Input Contract | Output Contract | Validation Before Media Pipeline |
+| --- | --- | --- | --- | --- |
+| 0 | Dependency review | `FrameworkEvaluation` | `FrameworkDecisionReport` | All runtime dependencies are accepted or conditional with documented conditions; blocked dependencies are absent. |
+| 1 | Workstation check | machine runtime | `EnvironmentReport` | Required tools visible; versions recorded; RTX workstation has `nvidia-smi`, Python, CUDA-compatible PyTorch and gsplat smoke when training starts. |
+
+## Media Pipeline Gates
+
+This is the actual video-to-splat chain.
 
 | Order | Stage | Input Contract | Output Contract | Validation Before Next Stage |
 | --- | --- | --- | --- | --- |
-| 0 | Framework/license gate | `FrameworkEvaluation` | `FrameworkDecisionReport` | All runtime dependencies are accepted or conditional with documented conditions; blocked dependencies are absent. |
-| 1 | Environment gate | machine runtime | `EnvironmentReport` | Required tools visible; versions recorded; RTX workstation has `nvidia-smi`, Python, CUDA-compatible PyTorch and gsplat smoke when training starts. |
-| 2 | Capture intake | `CaptureInput` | `CaptureMetadata` | Video exists locally, provenance/license recorded, `ffprobe` metadata parsed, duration/resolution/frame rate within configured limits. |
-| 3 | Frame sampling | `CaptureMetadata` | `FrameManifest` | Frame count matches plan, timestamps are monotonic, files exist, hashes recorded, contact sheet generated. |
-| 4 | SfM/camera solve | `FrameManifest` | `CameraSolveReport` | COLMAP exits cleanly, sparse model exists, enough frames are registered, sparse point count and reprojection error are recorded. |
-| 5 | Splat training | `CameraSolveReport` | `TrainingRunReport` | Training completes or checkpoints cleanly, nonzero splats exported, loss trend and sample renders recorded. |
-| 6 | Packaging | `TrainingRunReport` | `SplatArtifact` | Artifact file exists, format is declared, byte size/hash recorded, viewer loader can parse it. |
-| 7 | Viewer | `SplatArtifact` | `ViewerValidationReport` | Browser opens, canvas is nonblank, orbit/pan/zoom/reset work, screenshot evidence saved. |
-| 8 | Quality report | all stage reports | `CaptureQualityReport` | Result classified as `usable`, `weak` or `failed` with failure boundary identified. |
+| 1 | Capture intake | `CaptureInput` | `CaptureMetadata` | Video exists locally, provenance/license recorded, `ffprobe` metadata parsed, duration/resolution/frame rate within configured limits. |
+| 2 | Frame sampling | `CaptureMetadata` | `FrameManifest` | Frame count matches plan, timestamps are monotonic, files exist, hashes recorded, contact sheet generated. |
+| 3 | SfM/camera solve | `FrameManifest` | `CameraSolveReport` | COLMAP exits cleanly, sparse model exists, enough frames are registered, sparse point count and reprojection error are recorded. |
+| 4 | Splat training | `CameraSolveReport` | `TrainingRunReport` | Training completes or checkpoints cleanly, nonzero splats exported, loss trend and sample renders recorded. |
+| 5 | Packaging | `TrainingRunReport` | `SplatArtifact` | Artifact file exists, format is declared, byte size/hash recorded, viewer loader can parse it. |
+| 6 | Viewer | `SplatArtifact` | `ViewerValidationReport` | Browser opens, canvas is nonblank, orbit/pan/zoom/reset work, screenshot evidence saved. |
+| 7 | Quality report | all stage reports | `CaptureQualityReport` | Result classified as `usable`, `weak` or `failed` with failure boundary identified. |
 
 ## Validation Status Values
 
@@ -46,7 +55,7 @@ A job folder under `outputs/jobs/<job_id>/` should use this shape:
 ```text
 job.json
 reports/
-  framework.json
+  framework_license.json
   environment.json
   intake.json
   frame_sampling.json

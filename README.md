@@ -23,6 +23,7 @@ Framework/license decisions are tracked in [docs/framework-evaluation.md](docs/f
 Commercial-readiness rules are tracked in [docs/commercial-compliance.md](docs/commercial-compliance.md).
 Installation and rollback notes are tracked in [docs/installation-and-revert-ledger.md](docs/installation-and-revert-ledger.md).
 RTX workstation setup notes are tracked in [docs/rtx-workstation-setup.md](docs/rtx-workstation-setup.md).
+The first post-PSU heavy test sequence is tracked in [docs/psu-replacement-test-runbook.md](docs/psu-replacement-test-runbook.md).
 
 ## Boundaries
 
@@ -100,7 +101,7 @@ Evidence-producing Phase 0 validation on the Windows RTX workstation:
 The RTX smoke script is intentionally lightweight for Stage 0. Later stages will add explicit CUDA, PyTorch and gsplat kernel checks.
 
 
-Architecture contract validation for framework decisions and pipeline gates:
+Architecture contract validation for dependency decisions, preflight gates and media pipeline gates:
 
 ```bash
 ./scripts/validate-architecture-contracts.sh

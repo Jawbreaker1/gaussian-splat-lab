@@ -47,5 +47,5 @@ Manual next step when ready:
   --overwrite
 ```
 
-3. Run `list-captures`, then create a job and run `framework_license`, `environment`, `intake` and `frame_sampling`.
+3. Run `list-captures`, then create a job and run preflight checks (`framework_license`, `environment`) followed by media stages (`intake`, `frame_sampling`).
 4. Do not run `sfm`, training or viewer validation until the workstation power issue is resolved and `--allow-heavy` is intentionally supplied.
