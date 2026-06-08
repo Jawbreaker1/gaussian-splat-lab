@@ -1,0 +1,1114 @@
+#!/usr/bin/env python3
+"""Small manifest-driven skeleton for the Gaussian Splat lab pipeline."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import math
+import importlib.util
+import json
+import platform
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+STAGES = [
+    {
+        "id": "framework_license",
+        "label": "Framework and license gate",
+        "reads": "FrameworkEvaluation",
+        "writes": "FrameworkDecisionReport",
+    },
+    {
+        "id": "environment",
+        "label": "RTX workstation environment",
+        "reads": "MachineRuntime",
+        "writes": "EnvironmentReport",
+    },
+    {
+        "id": "intake",
+        "label": "Video intake",
+        "reads": "CaptureInput",
+        "writes": "CaptureMetadata",
+    },
+    {
+        "id": "frame_sampling",
+        "label": "Frame sampling",
+        "reads": "CaptureMetadata",
+        "writes": "FrameManifest",
+    },
+    {
+        "id": "sfm",
+        "label": "SfM camera solve",
+        "reads": "FrameManifest",
+        "writes": "CameraSolveReport",
+    },
+    {
+        "id": "splat_training",
+        "label": "Splat training",
+        "reads": "CameraSolveReport",
+        "writes": "TrainingRunReport",
+    },
+    {
+        "id": "packaging",
+        "label": "Artifact packaging",
+        "reads": "TrainingRunReport",
+        "writes": "SplatArtifact",
+    },
+    {
+        "id": "viewer",
+        "label": "Viewer validation",
+        "reads": "SplatArtifact",
+        "writes": "ViewerValidationReport",
+    },
+    {
+        "id": "quality_report",
+        "label": "Quality report",
+        "reads": "StageReports",
+        "writes": "CaptureQualityReport",
+    },
+]
+
+
+@dataclass(frozen=True)
+class CaptureSelection:
+    manifest_path: Path
+    capture: dict[str, Any]
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    with path.open("r", encoding="utf-8") as handle:
+        value = json.load(handle)
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
+def write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=2)
+        handle.write("\n")
+
+
+def select_capture(manifest_path: Path, capture_id: str) -> CaptureSelection:
+    manifest = read_json(manifest_path)
+    captures = manifest.get("captures")
+    if not isinstance(captures, list):
+        raise ValueError(f"{manifest_path} must contain a captures array")
+
+    for capture in captures:
+        if isinstance(capture, dict) and capture.get("id") == capture_id:
+            return CaptureSelection(manifest_path=manifest_path, capture=capture)
+
+    available = sorted(
+        capture.get("id", "<missing-id>")
+        for capture in captures
+        if isinstance(capture, dict)
+    )
+    raise ValueError(f"capture id {capture_id!r} not found; available: {available}")
+
+
+def build_job(selection: CaptureSelection, repo_root: Path) -> dict[str, Any]:
+    capture = selection.capture
+    capture_id = str(capture["id"])
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    created_at = now.isoformat()
+    job_id = f"{capture_id}-{now.strftime('%Y%m%dT%H%M%SZ')}"
+
+    return {
+        "schemaVersion": 1,
+        "job": {
+            "id": job_id,
+            "createdAt": created_at,
+            "repoRoot": str(repo_root),
+            "captureManifest": str(selection.manifest_path),
+            "captureId": capture_id,
+            "status": "planned",
+        },
+        "capture": capture,
+        "stages": [
+            {
+                "id": stage["id"],
+                "label": stage["label"],
+                "status": "pending",
+                "reads": stage["reads"],
+                "writes": stage["writes"],
+                "reportPath": f"reports/{stage['id']}.json",
+            }
+            for stage in STAGES
+        ],
+    }
+
+
+def repo_root_from_script() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def run_command(command: list[str], timeout_seconds: int = 20) -> dict[str, Any]:
+    executable = shutil.which(command[0])
+    if executable is None:
+        return {
+            "name": command[0],
+            "command": command,
+            "status": "setup_gap",
+            "exitCode": None,
+            "stdout": "",
+            "stderr": f"{command[0]} not found on PATH",
+        }
+
+    try:
+        result = subprocess.run(
+            command,
+            cwd=repo_root_from_script(),
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "name": command[0],
+            "command": command,
+            "status": "fail",
+            "exitCode": None,
+            "stdout": exc.stdout or "",
+            "stderr": f"command timed out after {timeout_seconds}s",
+        }
+
+    return {
+        "name": command[0],
+        "command": command,
+        "status": "pass" if result.returncode == 0 else "fail",
+        "exitCode": result.returncode,
+        "stdout": result.stdout.strip(),
+        "stderr": result.stderr.strip(),
+    }
+
+
+def command_summary(command_result: dict[str, Any], max_lines: int = 8) -> str:
+    text = command_result.get("stdout") or command_result.get("stderr") or ""
+    lines = [line for line in str(text).splitlines() if line.strip()]
+    return "\n".join(lines[:max_lines])
+
+
+def check_torch_cuda() -> dict[str, Any]:
+    if importlib.util.find_spec("torch") is None:
+        return {
+            "status": "setup_gap",
+            "package": "torch",
+            "message": "PyTorch is not installed in this Python environment.",
+            "installNeeded": True,
+        }
+
+    try:
+        import torch  # type: ignore[import-not-found]
+
+        cuda_available = bool(torch.cuda.is_available())
+        result: dict[str, Any] = {
+            "status": "pass" if cuda_available else "setup_gap",
+            "package": "torch",
+            "version": getattr(torch, "__version__", None),
+            "cudaAvailable": cuda_available,
+            "torchCudaVersion": getattr(torch.version, "cuda", None),
+            "deviceCount": int(torch.cuda.device_count()) if cuda_available else 0,
+            "installNeeded": False,
+        }
+        if cuda_available:
+            device_index = torch.cuda.current_device()
+            tensor = torch.tensor([1.0, 2.0], device="cuda") * 2
+            result.update(
+                {
+                    "deviceName": torch.cuda.get_device_name(device_index),
+                    "tensorSmoke": [float(value) for value in tensor.cpu().tolist()],
+                }
+            )
+        else:
+            result["message"] = "PyTorch is installed, but CUDA is not available."
+        return result
+    except Exception as exc:  # noqa: BLE001 - environment boundary should report exact failure
+        return {
+            "status": "fail",
+            "package": "torch",
+            "message": str(exc),
+            "installNeeded": False,
+        }
+
+
+def check_python_import(module_name: str) -> dict[str, Any]:
+    if importlib.util.find_spec(module_name) is None:
+        return {
+            "status": "setup_gap",
+            "package": module_name,
+            "message": f"{module_name} is not installed in this Python environment.",
+            "installNeeded": True,
+        }
+
+    try:
+        module = __import__(module_name)
+        return {
+            "status": "pass",
+            "package": module_name,
+            "version": getattr(module, "__version__", None),
+            "installNeeded": False,
+        }
+    except Exception as exc:  # noqa: BLE001 - environment boundary should report exact failure
+        return {
+            "status": "fail",
+            "package": module_name,
+            "message": str(exc),
+            "installNeeded": False,
+        }
+
+
+def report_status(checks: list[dict[str, Any]]) -> str:
+    statuses = [check.get("status") for check in checks]
+    if any(status == "fail" for status in statuses):
+        return "fail"
+    if any(status == "setup_gap" for status in statuses):
+        return "setup_gap"
+    return "pass"
+
+
+def parse_fraction(value: str | None) -> float | None:
+    if not value or value == "0/0":
+        return None
+    if "/" not in value:
+        try:
+            return float(value)
+        except ValueError:
+            return None
+    numerator, denominator = value.split("/", 1)
+    try:
+        denominator_value = float(denominator)
+        if denominator_value == 0:
+            return None
+        return float(numerator) / denominator_value
+    except ValueError:
+        return None
+
+
+def stage_report_path(job_path: Path, stage_id: str) -> Path:
+    return job_path.parent / "reports" / f"{stage_id}.json"
+
+
+def stage_status_from_job(job: dict[str, Any], stage_id: str) -> str | None:
+    for stage in job.get("stages", []):
+        if isinstance(stage, dict) and stage.get("id") == stage_id:
+            return stage.get("status")
+    return None
+
+
+def capture_video_path(job: dict[str, Any], repo_root: Path) -> Path:
+    source = job.get("capture", {}).get("source", {})
+    raw_path = source.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        raise ValueError("capture source.path is required")
+    video_path = Path(raw_path)
+    if not video_path.is_absolute():
+        video_path = repo_root / video_path
+    return video_path
+
+
+def stage_definition(stage_id: str) -> dict[str, str]:
+    for stage in STAGES:
+        if stage["id"] == stage_id:
+            return stage
+    return {"id": stage_id, "label": stage_id, "reads": "Unknown", "writes": "Unknown"}
+
+
+def derive_job_status(stages: list[dict[str, Any]]) -> str:
+    statuses = [stage.get("status") for stage in stages if isinstance(stage, dict)]
+    if any(status == "blocked_license" for status in statuses):
+        return "blocked_license"
+    if any(status == "fail" for status in statuses):
+        return "fail"
+    if any(status == "setup_gap" for status in statuses):
+        return "setup_gap"
+    if statuses and all(status in {"pass", "warning"} for status in statuses):
+        return "complete"
+    return "planned"
+
+
+def update_job_stage(job_path: Path, stage_id: str, status: str, report_path: Path) -> None:
+    job = read_json(job_path)
+    rel_report = report_path.relative_to(job_path.parent).as_posix()
+    for stage in job.get("stages", []):
+        if isinstance(stage, dict) and stage.get("id") == stage_id:
+            stage["status"] = status
+            stage["reportPath"] = rel_report
+            break
+    else:
+        definition = stage_definition(stage_id)
+        job.setdefault("stages", []).append(
+            {
+                "id": stage_id,
+                "label": definition["label"],
+                "status": status,
+                "reads": definition["reads"],
+                "writes": definition["writes"],
+                "reportPath": rel_report,
+            }
+        )
+    job["job"]["status"] = derive_job_status(job.get("stages", []))
+    write_json(job_path, job)
+
+
+def build_environment_report(job_path: Path) -> dict[str, Any]:
+    nvidia_query = run_command(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,driver_version,memory.total",
+            "--format=csv,noheader",
+        ]
+    )
+    if nvidia_query["status"] == "fail":
+        nvidia_query = run_command(["nvidia-smi"])
+
+    colmap = run_command(["colmap", "--help"], timeout_seconds=10)
+    ffmpeg = run_command(["ffmpeg", "-version"], timeout_seconds=10)
+    ffprobe = run_command(["ffprobe", "-version"], timeout_seconds=10)
+    torch_cuda = check_torch_cuda()
+    gsplat = check_python_import("gsplat")
+
+    checks = [
+        {
+            "id": "nvidia_smi",
+            "status": nvidia_query["status"],
+            "summary": command_summary(nvidia_query),
+            "details": nvidia_query,
+        },
+        {
+            "id": "python",
+            "status": "pass",
+            "summary": sys.version.split()[0],
+            "details": {
+                "executable": sys.executable,
+                "version": sys.version,
+                "platform": platform.platform(),
+                "uname": platform.uname()._asdict(),
+            },
+        },
+        {
+            "id": "pytorch_cuda",
+            "status": torch_cuda["status"],
+            "summary": torch_cuda.get("deviceName") or torch_cuda.get("message") or torch_cuda.get("version"),
+            "details": torch_cuda,
+        },
+        {
+            "id": "colmap",
+            "status": "setup_gap" if colmap["status"] == "setup_gap" else colmap["status"],
+            "summary": command_summary(colmap, max_lines=4),
+            "details": colmap,
+        },
+        {
+            "id": "ffmpeg",
+            "status": "setup_gap" if ffmpeg["status"] == "setup_gap" else ffmpeg["status"],
+            "summary": command_summary(ffmpeg, max_lines=1),
+            "details": ffmpeg,
+            "commercialPolicy": "conditional_external_tool_only; do not bundle or redistribute until build flags are reviewed",
+        },
+        {
+            "id": "ffprobe",
+            "status": "setup_gap" if ffprobe["status"] == "setup_gap" else ffprobe["status"],
+            "summary": command_summary(ffprobe, max_lines=1),
+            "details": ffprobe,
+            "commercialPolicy": "conditional_external_tool_only; do not bundle or redistribute until build flags are reviewed",
+        },
+        {
+            "id": "gsplat",
+            "status": gsplat["status"],
+            "summary": gsplat.get("version") or gsplat.get("message"),
+            "details": gsplat,
+        },
+    ]
+    status = report_status(checks)
+    return {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "environment",
+            "status": status,
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "policy": {
+            "installsPerformed": [],
+            "installPolicy": "This stage only detects environment state. Missing tools are reported as setup_gap and must be installed through the installation ledger.",
+        },
+        "checks": checks,
+    }
+
+
+def ffprobe_metadata(video_path: Path) -> dict[str, Any]:
+    ffprobe = run_command(["ffprobe", "-version"], timeout_seconds=10)
+    if ffprobe["status"] == "setup_gap":
+        return {
+            "status": "setup_gap",
+            "ffprobe": ffprobe,
+            "message": "ffprobe not found on PATH",
+        }
+    if ffprobe["status"] != "pass":
+        return {
+            "status": "fail",
+            "ffprobe": ffprobe,
+            "message": "ffprobe -version failed",
+        }
+
+    probe = run_command(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
+            str(video_path),
+        ],
+        timeout_seconds=60,
+    )
+    if probe["status"] != "pass":
+        return {
+            "status": probe["status"],
+            "ffprobe": ffprobe,
+            "probe": probe,
+            "message": "ffprobe metadata extraction failed",
+        }
+
+    try:
+        metadata = json.loads(probe["stdout"])
+    except json.JSONDecodeError as exc:
+        return {
+            "status": "fail",
+            "ffprobe": ffprobe,
+            "probe": probe,
+            "message": f"ffprobe returned invalid JSON: {exc}",
+        }
+
+    return {
+        "status": "pass",
+        "ffprobe": ffprobe,
+        "probe": probe,
+        "metadata": metadata,
+    }
+
+
+def summarize_video_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    streams = metadata.get("streams", [])
+    video_stream = next(
+        (stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "video"),
+        None,
+    )
+    audio_streams = [stream for stream in streams if isinstance(stream, dict) and stream.get("codec_type") == "audio"]
+    fmt = metadata.get("format", {}) if isinstance(metadata.get("format"), dict) else {}
+    if video_stream is None:
+        return {"hasVideo": False}
+
+    duration_raw = fmt.get("duration") or video_stream.get("duration")
+    bitrate_raw = fmt.get("bit_rate") or video_stream.get("bit_rate")
+    fps = parse_fraction(video_stream.get("avg_frame_rate") or video_stream.get("r_frame_rate"))
+
+    def as_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def as_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "hasVideo": True,
+        "container": fmt.get("format_name"),
+        "durationSeconds": as_float(duration_raw),
+        "bitRate": as_int(bitrate_raw),
+        "sizeBytes": as_int(fmt.get("size")),
+        "video": {
+            "codec": video_stream.get("codec_name"),
+            "width": as_int(video_stream.get("width")),
+            "height": as_int(video_stream.get("height")),
+            "fps": fps,
+            "pixelFormat": video_stream.get("pix_fmt"),
+            "nbFrames": as_int(video_stream.get("nb_frames")),
+        },
+        "audioStreamCount": len(audio_streams),
+        "streamCount": len(streams),
+    }
+
+
+def validate_intake_summary(summary: dict[str, Any], source: dict[str, Any]) -> tuple[str, list[str]]:
+    issues: list[str] = []
+    warnings: list[str] = []
+    if not summary.get("hasVideo"):
+        return "fail", ["no video stream found"]
+
+    license_value = source.get("license")
+    if not license_value:
+        issues.append("capture source license is missing")
+    elif license_value in {"local-test-only", "unknown", "placeholder"}:
+        warnings.append(f"capture source license is {license_value}; not product-ready")
+
+    duration = summary.get("durationSeconds")
+    if duration is None:
+        warnings.append("duration is unknown")
+    elif duration < 10:
+        warnings.append("duration is below initial MVP threshold of 10 seconds")
+    elif duration > 120:
+        warnings.append("duration is above initial MVP threshold of 120 seconds")
+
+    video = summary.get("video", {}) if isinstance(summary.get("video"), dict) else {}
+    height = video.get("height")
+    if height is None:
+        warnings.append("video height is unknown")
+    elif height < 720:
+        warnings.append("video height is below initial MVP threshold of 720p")
+
+    fps = video.get("fps")
+    if fps is None:
+        warnings.append("frame rate is unknown")
+    elif fps < 10:
+        warnings.append("frame rate is below initial MVP threshold of 10 fps")
+
+    if issues:
+        return "fail", issues + warnings
+    if warnings:
+        return "warning", warnings
+    return "pass", []
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def frame_sampling_settings(job: dict[str, Any]) -> tuple[float, int]:
+    settings = job.get("capture", {}).get("pipeline", {}).get("frameSampling", {})
+    target_fps = settings.get("targetFps", 2)
+    max_frames = settings.get("maxFrames", 180)
+    try:
+        target_fps_value = float(target_fps)
+        max_frames_value = int(max_frames)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("frameSampling.targetFps and frameSampling.maxFrames must be numeric") from exc
+    if target_fps_value <= 0:
+        raise ValueError("frameSampling.targetFps must be greater than zero")
+    if max_frames_value <= 0:
+        raise ValueError("frameSampling.maxFrames must be greater than zero")
+    return target_fps_value, max_frames_value
+
+
+def format_fps(value: float) -> str:
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+def frame_run_directory(job_path: Path) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return job_path.parent / "frames" / stamp
+
+
+def build_frame_manifest(
+    job_path: Path,
+    intake_report: dict[str, Any],
+    frame_dir: Path,
+    contact_sheet_path: Path,
+    target_fps: float,
+    max_frames: int,
+) -> dict[str, Any]:
+    frames = sorted(frame_dir.glob("frame_*.jpg"))
+    frame_entries = []
+    for index, frame_path in enumerate(frames):
+        frame_entries.append(
+            {
+                "index": index,
+                "path": str(frame_path),
+                "timestampSeconds": round(index / target_fps, 6),
+                "sizeBytes": frame_path.stat().st_size,
+                "sha256": file_sha256(frame_path),
+            }
+        )
+
+    metadata = intake_report.get("metadata", {}) if isinstance(intake_report.get("metadata"), dict) else {}
+    return {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "frame_sampling",
+            "status": "pending",
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "source": {
+            "intakeReportPath": str(stage_report_path(job_path, "intake")),
+            "videoPath": intake_report.get("videoPath"),
+            "durationSeconds": metadata.get("durationSeconds"),
+            "sourceFps": (metadata.get("video") or {}).get("fps") if isinstance(metadata.get("video"), dict) else None,
+        },
+        "sampling": {
+            "targetFps": target_fps,
+            "maxFrames": max_frames,
+            "actualFrameCount": len(frame_entries),
+        },
+        "frameDirectory": str(frame_dir),
+        "contactSheetPath": str(contact_sheet_path),
+        "frames": frame_entries,
+    }
+
+
+def validate_frame_manifest(frame_manifest: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    frames = frame_manifest.get("frames", [])
+    checks: list[dict[str, Any]] = []
+    if not isinstance(frames, list) or not frames:
+        return "fail", [
+            {
+                "id": "frame_count",
+                "status": "fail",
+                "summary": "no frames were extracted",
+            }
+        ]
+
+    missing = [frame for frame in frames if not Path(str(frame.get("path"))).exists()]
+    checks.append(
+        {
+            "id": "frame_files",
+            "status": "pass" if not missing else "fail",
+            "summary": "all sampled frame files exist" if not missing else f"{len(missing)} sampled frame files are missing",
+        }
+    )
+
+    timestamps = [frame.get("timestampSeconds") for frame in frames]
+    monotonic = all(
+        isinstance(current, (int, float)) and isinstance(previous, (int, float)) and current > previous
+        for previous, current in zip(timestamps, timestamps[1:])
+    ) or len(timestamps) == 1
+    checks.append(
+        {
+            "id": "monotonic_timestamps",
+            "status": "pass" if monotonic else "fail",
+            "summary": "planned frame timestamps are monotonic" if monotonic else "planned frame timestamps are not monotonic",
+        }
+    )
+
+    frame_count = len(frames)
+    count_status = "pass"
+    count_summary = "frame count is inside initial MVP threshold"
+    if frame_count < 50:
+        count_status = "warning"
+        count_summary = "frame count is below initial MVP threshold of 50"
+    elif frame_count > 250:
+        count_status = "warning"
+        count_summary = "frame count is above initial MVP threshold of 250"
+    checks.append(
+        {
+            "id": "frame_count",
+            "status": count_status,
+            "summary": count_summary,
+            "actualFrameCount": frame_count,
+        }
+    )
+
+    contact_sheet = Path(str(frame_manifest.get("contactSheetPath", "")))
+    checks.append(
+        {
+            "id": "contact_sheet",
+            "status": "pass" if contact_sheet.exists() and contact_sheet.stat().st_size > 0 else "fail",
+            "summary": "contact sheet generated" if contact_sheet.exists() and contact_sheet.stat().st_size > 0 else "contact sheet missing",
+            "path": str(contact_sheet),
+        }
+    )
+
+    statuses = [check["status"] for check in checks]
+    if any(status == "fail" for status in statuses):
+        return "fail", checks
+    if any(status == "warning" for status in statuses):
+        return "warning", checks
+    return "pass", checks
+
+
+def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) -> dict[str, Any]:
+    job = read_json(job_path)
+    intake_path = stage_report_path(job_path, "intake")
+    base = {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "frame_sampling",
+            "status": "pending",
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "checks": [],
+        "acceptedUpstreamWarnings": accept_warning,
+    }
+
+    if not intake_path.exists():
+        base["stage"]["status"] = "setup_gap"
+        base["checks"].append(
+            {
+                "id": "intake_required",
+                "status": "setup_gap",
+                "summary": "intake report is missing; run intake before frame_sampling",
+            }
+        )
+        return base
+
+    intake_report = read_json(intake_path)
+    intake_status = intake_report.get("stage", {}).get("status")
+    if intake_status == "warning" and not accept_warning:
+        base["stage"]["status"] = "blocked_license"
+        base["checks"].append(
+            {
+                "id": "intake_warning_acceptance",
+                "status": "blocked_license",
+                "summary": "intake warning must be explicitly accepted with --accept-warning before sampling frames",
+            }
+        )
+        return base
+    if intake_status not in {"pass", "warning"}:
+        base["stage"]["status"] = "setup_gap" if intake_status in {None, "pending", "setup_gap"} else "fail"
+        base["checks"].append(
+            {
+                "id": "intake_required",
+                "status": base["stage"]["status"],
+                "summary": f"intake must pass before frame_sampling; current status is {intake_status}",
+            }
+        )
+        return base
+
+    try:
+        target_fps, max_frames = frame_sampling_settings(job)
+    except ValueError as exc:
+        base["stage"]["status"] = "fail"
+        base["checks"].append({"id": "sampling_plan", "status": "fail", "summary": str(exc)})
+        return base
+
+    video_path_raw = intake_report.get("videoPath")
+    video_path = Path(str(video_path_raw)) if video_path_raw else capture_video_path(job, repo_root_from_script())
+    if not video_path.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "video_file",
+                "status": "fail",
+                "summary": "source video file no longer exists",
+                "path": str(video_path),
+            }
+        )
+        return base
+
+    ffmpeg = run_command(["ffmpeg", "-version"], timeout_seconds=10)
+    if ffmpeg["status"] != "pass":
+        base["stage"]["status"] = ffmpeg["status"]
+        base["checks"].append(
+            {
+                "id": "ffmpeg",
+                "status": ffmpeg["status"],
+                "summary": command_summary(ffmpeg, max_lines=1) or "ffmpeg is not available",
+                "details": ffmpeg,
+            }
+        )
+        return base
+
+    frame_dir = frame_run_directory(job_path)
+    frame_dir.mkdir(parents=True, exist_ok=True)
+    output_pattern = frame_dir / "frame_%06d.jpg"
+    fps_filter = f"fps={format_fps(target_fps)}"
+    extract = run_command(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            fps_filter,
+            "-frames:v",
+            str(max_frames),
+            "-q:v",
+            "2",
+            str(output_pattern),
+        ],
+        timeout_seconds=600,
+    )
+    base["ffmpeg"] = {
+        "versionSummary": command_summary(ffmpeg, max_lines=1),
+        "configuration": ffmpeg.get("stdout", ""),
+        "commercialPolicy": "conditional_external_tool_only; do not bundle or redistribute until build flags are reviewed",
+    }
+    base["commands"] = {"extractFrames": extract}
+    if extract["status"] != "pass":
+        base["stage"]["status"] = extract["status"]
+        base["checks"].append(
+            {
+                "id": "ffmpeg_extract",
+                "status": extract["status"],
+                "summary": command_summary(extract, max_lines=4) or "ffmpeg frame extraction failed",
+                "details": extract,
+            }
+        )
+        return base
+
+    contact_sheet_path = frame_dir / "contact_sheet.jpg"
+    contact_sheet = run_command(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-pattern_type",
+            "glob",
+            "-i",
+            str(frame_dir / "frame_*.jpg"),
+            "-vf",
+            "scale=160:-1,tile=5x5",
+            "-frames:v",
+            "1",
+            str(contact_sheet_path),
+        ],
+        timeout_seconds=120,
+    )
+    base["commands"]["contactSheet"] = contact_sheet
+
+    frame_manifest = build_frame_manifest(job_path, intake_report, frame_dir, contact_sheet_path, target_fps, max_frames)
+    status, checks = validate_frame_manifest(frame_manifest)
+    frame_manifest["stage"]["status"] = status
+    frame_manifest_path = frame_dir / "frame_manifest.json"
+    write_json(frame_manifest_path, frame_manifest)
+
+    base["stage"]["status"] = status
+    base["frameManifestPath"] = str(frame_manifest_path)
+    base["frameDirectory"] = str(frame_dir)
+    base["contactSheetPath"] = str(contact_sheet_path)
+    base["sampling"] = frame_manifest["sampling"]
+    base["checks"].append(
+        {
+            "id": "ffmpeg_extract",
+            "status": "pass",
+            "summary": "frames extracted",
+        }
+    )
+    base["checks"].extend(checks)
+    return base
+
+
+def build_intake_report(job_path: Path) -> dict[str, Any]:
+    repo_root = repo_root_from_script()
+    job = read_json(job_path)
+    environment_status = stage_status_from_job(job, "environment")
+    source = job.get("capture", {}).get("source", {})
+
+    base = {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "intake",
+            "status": "pending",
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "source": source,
+        "checks": [],
+    }
+
+    if environment_status != "pass":
+        base["stage"]["status"] = "setup_gap"
+        base["checks"].append(
+            {
+                "id": "environment_required",
+                "status": "setup_gap",
+                "summary": f"environment stage must pass before intake; current status is {environment_status}",
+            }
+        )
+        return base
+
+    try:
+        video_path = capture_video_path(job, repo_root)
+    except ValueError as exc:
+        base["stage"]["status"] = "fail"
+        base["checks"].append({"id": "source_path", "status": "fail", "summary": str(exc)})
+        return base
+
+    base["videoPath"] = str(video_path)
+    if not video_path.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "video_file",
+                "status": "fail",
+                "summary": "source video file does not exist",
+                "path": str(video_path),
+            }
+        )
+        return base
+
+    base["checks"].append(
+        {
+            "id": "video_file",
+            "status": "pass",
+            "summary": "source video file exists",
+            "path": str(video_path),
+            "sizeBytes": video_path.stat().st_size,
+        }
+    )
+
+    probe_result = ffprobe_metadata(video_path)
+    if probe_result["status"] != "pass":
+        base["stage"]["status"] = probe_result["status"]
+        base["checks"].append(
+            {
+                "id": "ffprobe",
+                "status": probe_result["status"],
+                "summary": probe_result.get("message"),
+                "details": probe_result,
+            }
+        )
+        return base
+
+    summary = summarize_video_metadata(probe_result["metadata"])
+    status, messages = validate_intake_summary(summary, source)
+    base["stage"]["status"] = status
+    base["ffprobe"] = {
+        "versionSummary": command_summary(probe_result["ffprobe"], max_lines=3),
+        "configuration": probe_result["ffprobe"].get("stdout", ""),
+    }
+    base["metadata"] = summary
+    base["checks"].append(
+        {
+            "id": "ffprobe",
+            "status": "pass",
+            "summary": "metadata extracted",
+        }
+    )
+    base["checks"].append(
+        {
+            "id": "mvp_thresholds",
+            "status": status,
+            "summary": "; ".join(messages) if messages else "input satisfies initial MVP intake thresholds",
+            "messages": messages,
+        }
+    )
+    return base
+
+
+def command_run_stage(args: argparse.Namespace) -> int:
+    job_path = Path(args.job)
+    if not job_path.is_absolute():
+        job_path = repo_root_from_script() / job_path
+    if not job_path.exists():
+        raise FileNotFoundError(f"job manifest not found: {job_path}")
+
+    if args.stage == "environment":
+        report = build_environment_report(job_path)
+    elif args.stage == "intake":
+        report = build_intake_report(job_path)
+    elif args.stage == "frame_sampling":
+        report = build_frame_sampling_report(job_path, accept_warning=args.accept_warning)
+    else:
+        raise ValueError(f"unsupported stage {args.stage!r}")
+
+    report_path = stage_report_path(job_path, args.stage)
+    write_json(report_path, report)
+    update_job_stage(job_path, args.stage, report["stage"]["status"], report_path)
+    print(f"{args.stage}_status={report['stage']['status']}")
+    print(f"{args.stage}_report={report_path}")
+    return 0 if report["stage"]["status"] in {"pass", "warning", "setup_gap"} else 1
+
+
+def command_describe(_args: argparse.Namespace) -> int:
+    print(json.dumps({"schemaVersion": 1, "stages": STAGES}, indent=2))
+    return 0
+
+
+def command_init_job(args: argparse.Namespace) -> int:
+    repo_root = repo_root_from_script()
+    manifest_path = Path(args.capture_manifest)
+    if not manifest_path.is_absolute():
+        manifest_path = repo_root / manifest_path
+
+    selection = select_capture(manifest_path, args.capture_id)
+    job = build_job(selection, repo_root)
+
+    if args.dry_run:
+        print(json.dumps(job, indent=2))
+        return 0
+
+    jobs_dir = Path(args.jobs_dir)
+    if not jobs_dir.is_absolute():
+        jobs_dir = repo_root / jobs_dir
+    job_dir = jobs_dir / job["job"]["id"]
+    job_path = job_dir / "job.json"
+    write_json(job_path, job)
+    print(f"job_manifest={job_path}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Manifest-driven skeleton for video-to-Gaussian-Splat jobs."
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    describe = subparsers.add_parser("describe", help="Print pipeline stages as JSON.")
+    describe.set_defaults(func=command_describe)
+
+    init_job = subparsers.add_parser(
+        "init-job", help="Create a planned job from a capture manifest."
+    )
+    init_job.add_argument(
+        "--capture-manifest",
+        default="data/manifests/captures.example.json",
+        help="Path to a capture manifest JSON file.",
+    )
+    init_job.add_argument("--capture-id", required=True, help="Capture id to plan.")
+    init_job.add_argument(
+        "--jobs-dir",
+        default="outputs/jobs",
+        help="Directory for generated job folders.",
+    )
+    init_job.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the job manifest instead of writing it.",
+    )
+    init_job.set_defaults(func=command_init_job)
+
+    run_stage = subparsers.add_parser(
+        "run-stage", help="Run one validated pipeline stage for a job."
+    )
+    run_stage.add_argument("stage", choices=["environment", "intake", "frame_sampling"], help="Stage id to run.")
+    run_stage.add_argument("--job", required=True, help="Path to a job.json manifest.")
+    run_stage.add_argument(
+        "--accept-warning",
+        action="store_true",
+        help="Explicitly allow downstream work after an upstream warning report.",
+    )
+    run_stage.set_defaults(func=command_run_stage)
+
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

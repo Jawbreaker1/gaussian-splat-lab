@@ -7,9 +7,9 @@ Create a separate, disposable lab workspace for video-to-Gaussian-Splat evaluati
 This stage is complete when:
 
 - the repo can be cloned independently
-- basic smoke commands run on the Mac and the Windows RTX worker
+- basic smoke commands run in WSL/Linux and on the Windows RTX workstation
 - artifact locations are ignored by git
-- the two-machine topology is documented
+- the local RTX workstation topology is documented
 - no runtime dependency exists on the main Blender/3D project
 
 ## Local Layout
@@ -22,22 +22,19 @@ Recommended checkout layout:
   gaussian-splat-lab/
 ```
 
-## Machine Roles
+## Machine Role
 
-Mac:
+Windows RTX 5090 workstation:
 
-- docs
-- manifests
-- lightweight scripting
-- optional browser viewer development
-
-Windows RTX 5090 worker:
-
-- WSL2/Linux-first reconstruction runtime
-- CUDA/PyTorch/COLMAP/gsplat smoke checks
+- primary local lab host
+- WSL2/Linux-first reconstruction runtime where practical
+- Windows/PowerShell checks for driver, `nvidia-smi` and WSL status
+- CUDA/PyTorch/COLMAP/Nerfstudio/gsplat smoke checks
 - reconstruction jobs and generated artifacts
 
-Run this first on the Windows RTX worker:
+Mac is now optional for docs or lightweight editing only. It is not the assumed runtime machine for the Gaussian Splat pipeline.
+
+Run this first on the Windows RTX workstation:
 
 ```powershell
 .\scripts\validate-phase-0-rtx-worker.ps1

@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-06-07",
+  "statusValues": [
+    "pass",
+    "warning",
+    "setup_gap",
+    "fail",
+    "blocked_license"
+  ],
+  "gates": [
+    {
+      "order": 0,
+      "id": "framework_license",
+      "inputContract": "FrameworkEvaluation",
+      "outputContract": "FrameworkDecisionReport",
+      "validation": "All runtime dependencies are accepted or conditional with conditions; blocked dependencies are absent from runtime."
+    },
+    {
+      "order": 1,
+      "id": "environment",
+      "inputContract": "MachineRuntime",
+      "outputContract": "EnvironmentReport",
+      "validation": "Record OS, tool versions, RTX visibility and CUDA/PyTorch/gsplat smoke before training."
+    },
+    {
+      "order": 2,
+      "id": "intake",
+      "inputContract": "CaptureInput",
+      "outputContract": "CaptureMetadata",
+      "validation": "Local file exists, provenance/license is recorded and video metadata is parsed."
+    },
+    {
+      "order": 3,
+      "id": "frame_sampling",
+      "inputContract": "CaptureMetadata",
+      "outputContract": "FrameManifest",
+      "validation": "Frame count, timestamps, hashes and contact sheet are validated."
+    },
+    {
+      "order": 4,
+      "id": "sfm",
+      "inputContract": "FrameManifest",
+      "outputContract": "CameraSolveReport",
+      "validation": "Enough frames are registered and SfM quality metrics are recorded."
+    },
+    {
+      "order": 5,
+      "id": "splat_training",
+      "inputContract": "CameraSolveReport",
+      "outputContract": "TrainingRunReport",
+      "validation": "Training produces a checkpoint/export and sample render evidence."
+    },
+    {
+      "order": 6,
+      "id": "packaging",
+      "inputContract": "TrainingRunReport",
+      "outputContract": "SplatArtifact",
+      "validation": "Artifact exists, hash/size/format are recorded and selected viewer can parse it."
+    },
+    {
+      "order": 7,
+      "id": "viewer",
+      "inputContract": "SplatArtifact",
+      "outputContract": "ViewerValidationReport",
+      "validation": "Browser canvas is nonblank and orbit/pan/zoom/reset are verified."
+    },
+    {
+      "order": 8,
+      "id": "quality_report",
+      "inputContract": "StageReports",
+      "outputContract": "CaptureQualityReport",
+      "validation": "Result is classified as usable, weak or failed with failure boundary."
+    }
+  ]
+}

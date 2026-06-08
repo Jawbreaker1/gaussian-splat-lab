@@ -4,26 +4,26 @@ This lab must progress through small, validated phases. Do not build a later pha
 
 ## Phase 0: Repository and Isolation
 
-Status: local validation passed; Windows RTX worker smoke pending.
+Status: local validation passed; Windows RTX workstation GPU smoke pending.
 
 Purpose:
 
 - keep the Gaussian Splat lab disposable and separate from `blender-ai-poc`
-- define machine roles for Mac development and Windows RTX 5090 reconstruction
+- define the local Windows RTX 5090 workstation as the primary reconstruction host
 - prevent large generated artifacts from entering git
 
 Outputs:
 
 - private `gaussian-splat-lab` repository
 - `README.md`, `AGENTS.md`, `.gitignore`
-- Mac and RTX worker smoke scripts
+- WSL/Linux and Windows RTX smoke scripts
 - `docs/stage-0.md`
 
 Exit criteria:
 
 - repo clones independently
-- Mac smoke command passes
-- Windows RTX worker smoke command passes or records clear setup gaps
+- WSL/Linux smoke command passes on the RTX workstation
+- Windows RTX workstation smoke command passes or records clear setup gaps
 - heavy artifact paths are ignored
 - no runtime dependency exists on `blender-ai-poc`
 
@@ -46,6 +46,7 @@ Outputs:
 - license notes for each source
 - expected pipeline path per test case
 - viewer asset examples
+- manifest-driven pipeline job skeleton
 
 Exit criteria:
 
@@ -78,11 +79,11 @@ Exit criteria:
 - orbit, pan, zoom and reset work
 - viewer failure modes are documented
 
-## Phase 3: RTX Worker Environment Gate
+## Phase 3: RTX Workstation Environment Gate
 
 Purpose:
 
-- prove the Windows RTX 5090 worker can run the required GPU stack
+- prove the local Windows RTX 5090 workstation can run the required GPU stack
 - avoid confusing CUDA/toolchain failures with reconstruction quality failures
 
 Stages:
@@ -159,28 +160,35 @@ Exit criteria:
 - failed stages preserve enough evidence for diagnosis
 - reruns can resume from stable intermediate artifacts
 
-## Phase 6: Capture Preflight
+## Phase 6: Input Quality Experiments and Capture Preflight
 
 Purpose:
 
-- only after the known-good chain works, add early rejection/warning for bad captures
+- only after the known-good chain works, measure how input video degradation affects each pipeline boundary
+- convert experiment evidence into early rejection/warning for bad captures
 
 Stages:
 
-1. evaluate duration, resolution and frame count
-2. evaluate blur, exposure and motion risk
-3. evaluate rough parallax and coverage risk
-4. return `CapturePreflightReport`
+1. define a high-quality baseline capture with commercial rights
+2. generate controlled degraded variants one axis at a time
+3. run each variant through the same pipeline config
+4. compare stage reports against the baseline
+5. derive preflight thresholds for duration, resolution, frame count, blur, exposure, motion, parallax and coverage
+6. return `CapturePreflightReport`
 
 Outputs:
 
+- input quality experiment manifest and summary
+- per-variant quality report with failure boundary
 - preflight report with `ready`, `warning` or `blocked`
 - user-facing capture guidance
 
 Exit criteria:
 
-- known-good inputs are not blocked
+- baseline known-good input still passes end to end
+- each tested degradation has a recorded source, transform and result
 - intentionally bad samples produce useful warnings or blocks
+- preflight thresholds are backed by experiment evidence
 - preflight failures are not used to hide reconstruction bugs
 
 ## Phase 7: Isolated Capture UI
@@ -218,7 +226,7 @@ Promotion requires:
 
 - known-good video to browser-visible splat works
 - selected stack is commercially compatible enough for product evaluation
-- RTX 5090 worker setup is reproducible
+- RTX 5090 workstation setup is reproducible
 - failure modes are classified by pipeline boundary
 - browser viewer consumes a narrow manifest equivalent to `ViewerAsset(assetType=gaussian_splat)`
 - integration can happen through an adapter/viewer boundary without importing reconstruction dependencies into the main app

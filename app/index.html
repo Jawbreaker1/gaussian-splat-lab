@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gaussian Splat Lab</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Gaussian Splat Lab</h1>
+          <div class="machine" id="machineLabel">RTX workstation</div>
+        </div>
+        <div class="status-strip" id="statusStrip" aria-label="Validation status"></div>
+      </header>
+
+      <main class="workspace">
+        <section class="capture-panel panel" aria-labelledby="captureTitle">
+          <div class="panel-head">
+            <h2 id="captureTitle">Capture</h2>
+            <button class="icon-button" id="refreshButton" title="Refresh" aria-label="Refresh">↻</button>
+          </div>
+
+          <label class="field">
+            <span>Source</span>
+            <select id="captureSelect"></select>
+          </label>
+
+          <div class="capture-meta" id="captureMeta"></div>
+
+          <button class="primary-action" id="planJobButton">Plan job</button>
+
+          <div class="job-box" id="jobBox">
+            <div class="muted">No active job</div>
+          </div>
+        </section>
+
+        <section class="pipeline-panel panel" aria-labelledby="pipelineTitle">
+          <div class="panel-head">
+            <h2 id="pipelineTitle">Pipeline</h2>
+            <span class="pill neutral" id="gateCount">0 gates</span>
+          </div>
+          <div class="stage-list" id="stageList"></div>
+        </section>
+
+        <aside class="side-panel">
+          <section class="panel preview-panel" aria-labelledby="previewTitle">
+            <div class="panel-head">
+              <h2 id="previewTitle">Splat Preview</h2>
+              <span class="pill neutral">simulated</span>
+            </div>
+            <canvas id="splatCanvas" width="480" height="320" aria-label="Gaussian splat preview"></canvas>
+          </section>
+
+          <section class="panel compliance-panel" aria-labelledby="complianceTitle">
+            <div class="panel-head">
+              <h2 id="complianceTitle">Compliance</h2>
+              <span class="pill" id="blockedCount">0 blocked</span>
+            </div>
+            <div class="compliance-grid" id="complianceGrid"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

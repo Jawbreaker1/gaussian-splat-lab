@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "viewerAssets": [
+    {
+      "id": "static-room-orbit-001-splat",
+      "assetType": "gaussian_splat",
+      "displayName": "Static room orbit splat",
+      "sourceCaptureId": "static-room-orbit-001",
+      "artifact": {
+        "path": "data/splats/static-room-orbit-001/scene.ksplat",
+        "format": "ksplat",
+        "byteSize": null,
+        "generatedByJobId": null
+      },
+      "viewer": {
+        "initialCamera": {
+          "position": [0, 0, 3],
+          "target": [0, 0, 0],
+          "fovDegrees": 50
+        },
+        "controls": {
+          "orbit": true,
+          "pan": true,
+          "zoom": true,
+          "reset": true
+        }
+      },
+      "status": "placeholder"
+    }
+  ]
+}

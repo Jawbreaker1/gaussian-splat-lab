@@ -1,0 +1,333 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-06-07",
+  "licensePolicy": {
+    "preferredSpdx": [
+      "MIT",
+      "Apache-2.0",
+      "BSD-2-Clause",
+      "BSD-3-Clause"
+    ],
+    "conditional": [
+      "LGPL-2.1-or-later",
+      "Proprietary SDK/EULA"
+    ],
+    "blockedByDefault": [
+      "Non-commercial",
+      "Research-only",
+      "GPL",
+      "AGPL",
+      "Unknown"
+    ]
+  },
+  "frameworks": [
+    {
+      "id": "graphdeco-inria-gaussian-splatting",
+      "name": "Original GraphDeco/Inria gaussian-splatting",
+      "role": "reference implementation only",
+      "license": "Non-commercial research/evaluation custom license",
+      "decision": "blocked",
+      "reason": "License restricts use to non-commercial research/evaluation unless explicit consent is granted.",
+      "officialSources": [
+        "https://github.com/graphdeco-inria/gaussian-splatting/blob/main/LICENSE.md"
+      ],
+      "commercialUse": "blocked",
+      "commercialConditions": [
+        "Do not import, vendor, run, train with, or derive product runtime code from this implementation without explicit commercial permission from the licensors."
+      ],
+      "distributionRisk": "high",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "nerfstudio-gsplat",
+      "name": "gsplat",
+      "role": "CUDA Gaussian rasterization/training backend",
+      "license": "Apache-2.0",
+      "decision": "accepted",
+      "reason": "Permissive license and suitable low-level backend for Gaussian splatting experiments.",
+      "officialSources": [
+        "https://github.com/nerfstudio-project/gsplat"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep Apache-2.0 license text and notices when distributing code/binaries.",
+        "Review transitive Python/CUDA dependencies before product packaging."
+      ],
+      "distributionRisk": "low",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "nerfstudio-splatfacto",
+      "name": "Nerfstudio Splatfacto",
+      "role": "first end-to-end training orchestrator",
+      "license": "Apache-2.0",
+      "decision": "accepted",
+      "reason": "Good first training path that uses gsplat and can export Gaussian splats.",
+      "officialSources": [
+        "https://github.com/nerfstudio-project/nerfstudio",
+        "https://docs.nerf.studio/nerfology/methods/splat.html",
+        "https://docs.nerf.studio/reference/cli/ns_export.html"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep Apache-2.0 license text and notices when distributing code/binaries.",
+        "Record exact Nerfstudio version and export path used for production artifacts.",
+        "Review transitive dependencies before packaging."
+      ],
+      "distributionRisk": "medium",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "colmap",
+      "name": "COLMAP",
+      "role": "SfM/camera solve",
+      "license": "BSD-style/new BSD for COLMAP itself",
+      "decision": "accepted",
+      "reason": "Mature SfM command-line tool; third-party dependency licenses must be recorded per install/build.",
+      "officialSources": [
+        "https://github.com/colmap/colmap"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep COLMAP license and copyright notices.",
+        "Record install/build source and third-party dependency license set for the exact binary used."
+      ],
+      "distributionRisk": "medium",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "ffmpeg",
+      "name": "FFmpeg / ffprobe",
+      "role": "video metadata and frame extraction",
+      "license": "LGPL-2.1-or-later, GPL if GPL components are enabled, nonfree if nonfree components are enabled",
+      "decision": "conditional",
+      "condition": "Use system binary for lab; record `ffmpeg -version`; do not bundle or ship until build flags and codec/patent concerns are reviewed.",
+      "officialSources": [
+        "https://www.ffmpeg.org/legal.html"
+      ],
+      "commercialUse": "conditional_external_tool_only",
+      "commercialConditions": [
+        "Use system-installed ffmpeg/ffprobe for lab and local RTX workstation runs.",
+        "Record ffmpeg -version and configure flags in every environment report.",
+        "Do not bundle or redistribute FFmpeg until LGPL/GPL/nonfree build flags and codec patent exposure are reviewed.",
+        "If distributed, provide required notices and source-offer/compliance material."
+      ],
+      "distributionRisk": "high",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "pytorch",
+      "name": "PyTorch",
+      "role": "tensor/GPU runtime for training stack",
+      "license": "BSD-style",
+      "decision": "accepted",
+      "reason": "Permissive-style license; required by gsplat/Nerfstudio stack.",
+      "officialSources": [
+        "https://github.com/pytorch/pytorch/blob/main/LICENSE"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep license and notices when distributing.",
+        "Review binary package dependency notices for the exact wheel/container used."
+      ],
+      "distributionRisk": "medium",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "torchvision",
+      "name": "TorchVision",
+      "role": "PyTorch vision utilities; installed with the CUDA smoke environment for compatibility with later training/viewer tooling",
+      "license": "BSD-style",
+      "decision": "accepted",
+      "reason": "PyTorch ecosystem package installed from the official PyTorch CUDA wheel index; keep notices and review transitive dependencies before packaging.",
+      "officialSources": [
+        "https://github.com/pytorch/vision"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep license and notices when distributing.",
+        "Review binary package dependency notices for the exact wheel/container used.",
+        "Do not use bundled sample datasets or model weights unless their separate licenses allow the intended use."
+      ],
+      "distributionRisk": "medium",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "nvidia-cuda",
+      "name": "NVIDIA CUDA Toolkit/driver",
+      "role": "RTX workstation GPU runtime",
+      "license": "Proprietary NVIDIA SDK/EULA",
+      "decision": "conditional",
+      "condition": "Allowed on the local RTX workstation; do not redistribute CUDA components unless NVIDIA terms explicitly allow the intended distribution.",
+      "officialSources": [
+        "https://docs.nvidia.com/cuda/eula/index.html?bag_track=login&type=1"
+      ],
+      "commercialUse": "conditional_local_worker_only",
+      "commercialConditions": [
+        "Allowed for local RTX workstation use under NVIDIA terms.",
+        "Do not redistribute CUDA Toolkit, driver files, or CUDA runtime components unless the current NVIDIA EULA permits the exact redistribution path.",
+        "Record driver, CUDA toolkit and container versions in environment reports."
+      ],
+      "distributionRisk": "high",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "sparkjsdev-spark",
+      "name": "Spark",
+      "role": "preferred browser Gaussian Splat viewer spike",
+      "license": "MIT",
+      "decision": "preferred",
+      "reason": "Active Three.js-based renderer with support for PLY, SPZ, SPLAT, KSPLAT and SOG formats.",
+      "officialSources": [
+        "https://github.com/sparkjsdev/spark"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep MIT license and copyright notice in distributed app or notices bundle.",
+        "Review transitive npm dependency licenses before shipping."
+      ],
+      "distributionRisk": "low",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "threejs",
+      "name": "Three.js",
+      "role": "browser 3D foundation",
+      "license": "MIT",
+      "decision": "accepted",
+      "reason": "Permissive license and broad browser 3D ecosystem support.",
+      "officialSources": [
+        "https://github.com/mrdoob/three.js/blob/dev/LICENSE"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep MIT license and copyright notice in distributed app or notices bundle."
+      ],
+      "distributionRisk": "low",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "playcanvas-supersplat",
+      "name": "SuperSplat open-source components",
+      "role": "viewer/editor/conversion fallback",
+      "license": "MIT for Editor, Viewer and splat-transform; hosted platform proprietary",
+      "decision": "accepted",
+      "reason": "Self-hosted open-source components are permissive; hosted publishing platform stays outside the core pipeline.",
+      "officialSources": [
+        "https://developer.playcanvas.com/user-manual/supersplat/",
+        "https://github.com/playcanvas/supersplat"
+      ],
+      "commercialUse": "allowed_self_hosted_components_only",
+      "commercialConditions": [
+        "Use only open-source MIT components that are present in the repo/license review.",
+        "Do not depend on hosted PlayCanvas publishing/platform terms for the core pipeline unless separately approved.",
+        "Keep MIT notices for distributed components."
+      ],
+      "distributionRisk": "medium",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "mkkellogg-gaussian-splats-3d",
+      "name": "GaussianSplats3D",
+      "role": "legacy viewer fallback",
+      "license": "MIT",
+      "decision": "deferred",
+      "reason": "Permissive, but maintainer notes the repo is no longer active. Keep as fallback, not first choice.",
+      "officialSources": [
+        "https://github.com/mkkellogg/GaussianSplats3D"
+      ],
+      "commercialUse": "allowed_with_notice_deferred",
+      "commercialConditions": [
+        "Keep MIT license and copyright notice.",
+        "Use only as fallback because the project is not active."
+      ],
+      "distributionRisk": "medium",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "opensplat",
+      "name": "OpenSplat",
+      "role": "alternative C++ training implementation",
+      "license": "AGPL-3.0",
+      "decision": "blocked",
+      "reason": "Commercial use is possible under AGPL, but AGPL obligations are not accepted for this product path by default.",
+      "officialSources": [
+        "https://github.com/pierotofy/opensplat"
+      ],
+      "commercialUse": "blocked_by_policy",
+      "commercialConditions": [
+        "Do not use in this product path unless AGPL obligations are explicitly accepted or a separate commercial license is obtained."
+      ],
+      "distributionRisk": "high",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "react",
+      "name": "React",
+      "role": "future local app UI",
+      "license": "MIT",
+      "decision": "accepted",
+      "reason": "Permissive license and familiar frontend stack.",
+      "officialSources": [
+        "https://github.com/facebook/react/blob/main/LICENSE"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep MIT license and copyright notice in distributed app or notices bundle.",
+        "Review npm dependency tree before shipping."
+      ],
+      "distributionRisk": "low",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "vite",
+      "name": "Vite",
+      "role": "future local frontend tooling",
+      "license": "MIT",
+      "decision": "accepted",
+      "reason": "Permissive license and simple local dev/build workflow.",
+      "officialSources": [
+        "https://github.com/vitejs/vite"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep MIT license and copyright notice if distributed.",
+        "Review npm dependency tree before shipping."
+      ],
+      "distributionRisk": "low",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "fastapi",
+      "name": "FastAPI",
+      "role": "future local API server if CLI is not enough",
+      "license": "MIT",
+      "decision": "deferred",
+      "reason": "Useful later, but not needed until the first CLI pipeline stages are real.",
+      "officialSources": [
+        "https://github.com/fastapi/fastapi"
+      ],
+      "commercialUse": "allowed_with_notice_deferred",
+      "commercialConditions": [
+        "Keep MIT license and copyright notice if distributed.",
+        "Review Python dependency tree before shipping."
+      ],
+      "distributionRisk": "low",
+      "reviewRequiredBeforeProduction": true
+    }
+  ],
+  "commercialUsePolicy": {
+    "goal": "Pipeline candidates must be usable for possible commercial product evaluation before they can become product runtime dependencies.",
+    "allowedStatuses": [
+      "allowed_with_notice",
+      "allowed_with_notice_deferred",
+      "allowed_self_hosted_components_only",
+      "conditional_external_tool_only",
+      "conditional_local_worker_only",
+      "blocked",
+      "blocked_by_policy"
+    ],
+    "productionRule": "No framework is production-ready until commercialUse is non-blocked, conditions are satisfied, exact version/source is recorded, license text/notices are collected, and transitive dependencies are reviewed.",
+    "artifactRule": "Generated splats inherit obligations from the input media and any model/tool license terms that apply to generated output; every production candidate must record source rights for the video and resulting artifact."
+  }
+}

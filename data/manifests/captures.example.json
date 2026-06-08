@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "captures": [
+    {
+      "id": "static-room-orbit-001",
+      "displayName": "Static room orbit sample",
+      "source": {
+        "kind": "local_file",
+        "path": "data/videos/static-room-orbit-001.mp4",
+        "sourceUrl": null,
+        "license": "local-test-only",
+        "licenseNotes": "Replace with a known-good capture that has documented commercial compatibility before using as Phase 1 evidence."
+      },
+      "capture": {
+        "subject": "small static indoor scene",
+        "motion": "slow orbit",
+        "expectedDurationSeconds": 30,
+        "expectedResolution": "1920x1080"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "targetFps": 2,
+          "maxFrames": 180
+        },
+        "sfm": {
+          "backend": "colmap"
+        },
+        "training": {
+          "backend": "gsplat",
+          "targetWorker": "windows-rtx-5090"
+        },
+        "packaging": {
+          "preferredFormats": ["ply", "ksplat", "splat"]
+        }
+      },
+      "status": "placeholder"
+    }
+  ]
+}
