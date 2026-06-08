@@ -36,7 +36,7 @@ Readiness check:
 Manual next step when ready:
 
 1. Download the chosen Pexels quality manually from the source page.
-2. Import it through the provenance-aware CLI command:
+2. Import it through the GUI `Import video` control, or through the provenance-aware CLI command:
 
 ```bash
 .venv/bin/python scripts/lab-pipeline.py import-video \

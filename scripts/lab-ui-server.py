@@ -9,10 +9,13 @@ import json
 import mimetypes
 import subprocess
 import sys
+import tempfile
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -147,6 +150,59 @@ def run_job_stage(job_path: Path, stage: str, accept_warning: bool = False, allo
     }
 
 
+def parse_bool_query(value: str | None) -> bool:
+    return str(value or "").lower() in {"1", "true", "yes", "on"}
+
+
+def save_capture_upload(
+    capture_id: str,
+    stream: Any,
+    content_length: int,
+    upload_name: str | None,
+    accept_warning: bool,
+    overwrite: bool,
+) -> dict[str, Any]:
+    if content_length <= 0:
+        raise ValueError("uploaded video is empty")
+
+    pipeline = load_pipeline_module()
+    selection = pipeline.select_capture(CAPTURE_MANIFEST, capture_id)
+    target_path = pipeline.capture_source_path(selection.capture, REPO_ROOT)
+    tmp_path = Path(tempfile.gettempdir()) / f"gaussian-splat-lab-upload-{uuid.uuid4().hex}.video"
+
+    remaining = content_length
+    with tmp_path.open("wb") as handle:
+        while remaining > 0:
+            chunk = stream.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            handle.write(chunk)
+            remaining -= len(chunk)
+
+    if remaining != 0:
+        tmp_path.unlink(missing_ok=True)
+        raise ValueError("uploaded video stream ended before Content-Length bytes were read")
+
+    try:
+        report = pipeline.build_video_import_report(
+            manifest_path=CAPTURE_MANIFEST,
+            selection=selection,
+            input_path=tmp_path,
+            target_path=target_path,
+            accept_warning=accept_warning,
+            overwrite=overwrite,
+            dry_run=False,
+            repo_root=REPO_ROOT,
+        )
+        report["source"]["uploadedFileName"] = upload_name
+        if target_path is not None and report["status"] == "pass":
+            pipeline.write_json(pipeline.capture_import_report_path(target_path), report)
+        readiness = pipeline.capture_readiness_report(CAPTURE_MANIFEST, REPO_ROOT).get("captures", [])
+        return {"report": report, "captureReadiness": readiness}
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def validate_ui_contracts() -> None:
     required_files = [
         APP_ROOT / "index.html",
@@ -225,13 +281,33 @@ class LabUiHandler(BaseHTTPRequestHandler):
         self.send_static(APP_ROOT / route.lstrip("/"))
 
     def do_POST(self) -> None:
-        route = self.path.split("?", 1)[0]
-        if route not in {"/api/jobs", "/api/jobs/run-stage"}:
+        parsed = urlparse(self.path)
+        route = parsed.path
+        if route not in {"/api/jobs", "/api/jobs/run-stage", "/api/captures/import-video"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if route == "/api/captures/import-video":
+                query = parse_qs(parsed.query)
+                capture_id = query.get("captureId", [""])[0]
+                if not capture_id:
+                    self.send_json({"error": "captureId is required"}, HTTPStatus.BAD_REQUEST)
+                    return
+                result = save_capture_upload(
+                    capture_id=capture_id,
+                    stream=self.rfile,
+                    content_length=length,
+                    upload_name=self.headers.get("X-Filename"),
+                    accept_warning=parse_bool_query(query.get("acceptWarning", [""])[0]),
+                    overwrite=parse_bool_query(query.get("overwrite", [""])[0]),
+                )
+                status = result.get("report", {}).get("status")
+                http_status = HTTPStatus.CREATED if status == "pass" else HTTPStatus.CONFLICT
+                self.send_json(result, http_status)
+                return
+
             payload = json.loads(self.rfile.read(length) or b"{}")
             if route == "/api/jobs":
                 capture_id = payload.get("captureId")

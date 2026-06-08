@@ -3,6 +3,11 @@ const els = {
   statusStrip: document.querySelector('#statusStrip'),
   captureSelect: document.querySelector('#captureSelect'),
   captureMeta: document.querySelector('#captureMeta'),
+  videoFileInput: document.querySelector('#videoFileInput'),
+  acceptCaptureWarning: document.querySelector('#acceptCaptureWarning'),
+  acceptCaptureWarningRow: document.querySelector('#acceptCaptureWarningRow'),
+  importVideoButton: document.querySelector('#importVideoButton'),
+  importStatus: document.querySelector('#importStatus'),
   planJobButton: document.querySelector('#planJobButton'),
   refreshButton: document.querySelector('#refreshButton'),
   jobBox: document.querySelector('#jobBox'),
@@ -17,6 +22,7 @@ const els = {
 let state = null;
 let activeJob = null;
 let runningStage = null;
+let importingVideo = false;
 
 const runnableStages = new Set(['framework_license', 'environment', 'intake', 'frame_sampling', 'sfm', 'splat_training', 'packaging', 'viewer', 'quality_report']);
 const heavyStages = new Set(['sfm', 'splat_training', 'viewer']);
@@ -60,6 +66,20 @@ function selectedCaptureReadiness() {
   return state?.captureReadiness?.find((capture) => capture.id === id) ?? null;
 }
 
+function selectedLicenseCheck() {
+  return selectedCaptureReadiness()?.checks?.find((check) => check.id === 'source_license') ?? null;
+}
+
+function updateImportControls() {
+  const capture = selectedCapture();
+  const file = els.videoFileInput.files?.[0] ?? null;
+  const licenseStatus = selectedLicenseCheck()?.status;
+  const needsWarningAcceptance = licenseStatus === 'warning';
+  els.acceptCaptureWarningRow.hidden = !needsWarningAcceptance;
+  els.importVideoButton.disabled = !capture || !file || importingVideo || (needsWarningAcceptance && !els.acceptCaptureWarning.checked);
+  els.importVideoButton.textContent = importingVideo ? 'Importing' : 'Import video';
+}
+
 function renderStatus() {
   els.statusStrip.replaceChildren();
   const validation = state?.validation ?? {};
@@ -92,6 +112,7 @@ function renderCaptureMeta() {
   }
 
   const readiness = selectedCaptureReadiness();
+  updateImportControls();
   els.captureMeta.append(
     row('Capture ID', capture.id),
     row('File', readiness?.status ?? 'unknown'),
@@ -227,6 +248,40 @@ async function loadState() {
   renderAll();
 }
 
+async function importVideo() {
+  const capture = selectedCapture();
+  const file = els.videoFileInput.files?.[0] ?? null;
+  if (!capture || !file || importingVideo) return;
+  importingVideo = true;
+  els.importStatus.textContent = '';
+  updateImportControls();
+  try {
+    const params = new URLSearchParams({
+      captureId: capture.id,
+      acceptWarning: String(els.acceptCaptureWarning.checked),
+      overwrite: 'true',
+    });
+    const response = await fetch(`/api/captures/import-video?${params.toString()}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'X-Filename': file.name,
+      },
+      body: file,
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || payload.report?.checks?.[0]?.summary || `import ${response.status}`);
+    els.videoFileInput.value = '';
+    els.importStatus.textContent = `Imported ${file.name}`;
+    await loadState();
+  } catch (error) {
+    els.importStatus.textContent = error.message;
+  } finally {
+    importingVideo = false;
+    updateImportControls();
+  }
+}
+
 async function createJob() {
   const capture = selectedCapture();
   if (!capture) return;
@@ -332,7 +387,14 @@ function drawPreview() {
   requestAnimationFrame(frame);
 }
 
-els.captureSelect.addEventListener('change', renderCaptureMeta);
+els.captureSelect.addEventListener('change', () => {
+  els.acceptCaptureWarning.checked = false;
+  els.importStatus.textContent = '';
+  renderCaptureMeta();
+});
+els.videoFileInput.addEventListener('change', updateImportControls);
+els.acceptCaptureWarning.addEventListener('change', updateImportControls);
+els.importVideoButton.addEventListener('click', importVideo);
 els.planJobButton.addEventListener('click', createJob);
 els.refreshButton.addEventListener('click', loadState);
 

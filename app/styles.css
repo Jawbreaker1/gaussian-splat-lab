@@ -163,7 +163,8 @@ h3 {
 }
 
 .icon-button:hover,
-.primary-action:hover {
+.primary-action:hover,
+.secondary-action:hover {
   filter: brightness(0.98);
 }
 
@@ -189,6 +190,48 @@ select {
   padding: 0 11px;
 }
 
+.file-input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  padding: 8px 10px;
+}
+
+.checkline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.checkline input {
+  margin-top: 2px;
+}
+
+.secondary-action {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--ink);
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.import-status {
+  min-height: 20px;
+  margin: 8px 0 12px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .primary-action {
   width: 100%;
   min-height: 42px;
@@ -201,6 +244,7 @@ select {
 }
 
 .primary-action:disabled,
+.secondary-action:disabled,
 .stage-action:disabled {
   cursor: not-allowed;
   opacity: 0.55;

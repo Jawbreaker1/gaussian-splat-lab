@@ -30,6 +30,19 @@
 
           <div class="capture-meta" id="captureMeta"></div>
 
+          <label class="field">
+            <span>Video file</span>
+            <input class="file-input" id="videoFileInput" type="file" accept="video/*" />
+          </label>
+
+          <label class="checkline" id="acceptCaptureWarningRow">
+            <input id="acceptCaptureWarning" type="checkbox" />
+            <span>Accept capture warning for technical validation</span>
+          </label>
+
+          <button class="secondary-action" id="importVideoButton">Import video</button>
+          <div class="import-status muted" id="importStatus"></div>
+
           <button class="primary-action" id="planJobButton">Plan job</button>
 
           <div class="job-box" id="jobBox">

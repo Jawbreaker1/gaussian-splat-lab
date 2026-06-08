@@ -12,6 +12,7 @@ Build a simple local application that can take a video capture through an inspec
 
 The first app shape is intentionally small:
 
+- import a local video into a tracked capture manifest target path
 - create a lab job from a local video capture manifest
 - run or resume clear pipeline stages
 - preserve stage reports and generated artifacts outside git

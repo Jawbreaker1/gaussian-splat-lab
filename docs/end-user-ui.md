@@ -1,16 +1,17 @@
 # End-User Interface
 
-Verified: 2026-06-07
+Verified: 2026-06-08
 
-The first user interface is a local, dependency-free lab console. It is intentionally small: it lets a user select a capture, create a planned pipeline job, inspect stage gates and see commercial/compliance status before heavy reconstruction work starts.
+The first user interface is a local, dependency-free lab console. It is intentionally small: it lets a user select a capture, import a local video into the manifest target path, create a planned job, inspect preflight/media pipeline gates and see commercial/compliance status before heavy reconstruction work starts.
 
 ## Scope
 
 The UI owns:
 
 - capture selection from tracked manifests
+- local video import with the same provenance-aware path/hash report as the CLI
 - job planning through the existing pipeline contract
-- pipeline gate visibility
+- preflight and media pipeline gate visibility
 - commercial/compliance visibility
 - local RTX workstation status evidence
 
@@ -53,6 +54,15 @@ Default local URL:
 ```text
 http://127.0.0.1:8765
 ```
+
+Local video import:
+
+1. Select the capture manifest entry.
+2. Choose a local video file.
+3. Accept the capture warning when the source is technical-validation-only.
+4. Press `Import video`.
+
+The server writes the video under the ignored manifest target path and records a provenance report next to it. It does not download videos automatically.
 
 ## Promotion Rule
 
