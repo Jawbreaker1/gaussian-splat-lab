@@ -346,6 +346,13 @@ def classify_capture_license(source: dict[str, Any]) -> tuple[str, str, str]:
     if license_value == "local-test-only":
         return "warning", "local test only; replace before product evidence", "technical_validation_only"
     if license_value == "pexels-license":
+        verified_at = source.get("licenseVerifiedAt")
+        if verified_at:
+            return (
+                "warning",
+                f"Pexels candidate; license/terms verified {verified_at}; avoid commercial showcase use without review",
+                "technical_validation_only",
+            )
         return "warning", "Pexels candidate; verify current terms and avoid commercial showcase use without review", "technical_validation_only"
     if source_url:
         return "warning", "external source; keep license evidence with the capture", "needs_review_before_showcase"
@@ -372,6 +379,9 @@ def capture_readiness(capture: dict[str, Any], repo_root: Path) -> dict[str, Any
             "summary": license_summary,
             "license": source.get("license"),
             "sourceUrl": source.get("sourceUrl"),
+            "licenseSourceUrl": source.get("licenseSourceUrl"),
+            "termsUrl": source.get("termsUrl"),
+            "licenseVerifiedAt": source.get("licenseVerifiedAt"),
         },
     ]
     statuses = [check["status"] for check in checks]

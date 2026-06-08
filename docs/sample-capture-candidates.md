@@ -8,6 +8,8 @@ The preferred golden-path input is still self-captured footage: 20-40 seconds, s
 
 - Capture id: `pexels-empty-coffee-shop-interior-14227022`
 - Source page: https://www.pexels.com/video/an-empty-coffee-shop-interior-14227022/
+- License page: https://www.pexels.com/license/
+- Terms page: https://www.pexels.com/terms-of-service/
 - Author shown on Pexels: Connor Scott McManus
 - Local target path: `data/videos/pexels-empty-coffee-shop-interior-14227022.mp4`
 - Intended use: technical pipeline validation only, not commercial showcase material.
@@ -21,7 +23,8 @@ Why it is a reasonable technical candidate:
 License posture:
 
 - Pexels says photos and videos can be downloaded and used for free, attribution is not required, and modification is allowed.
-- Pexels also restricts uses such as selling unaltered copies, implying endorsement, redistribution on stock platforms, and trademark/service-mark use.
+- Pexels Terms describe a non-exclusive, royalty-free license for commercial and non-commercial use, subject to prohibited uses.
+- Pexels also restricts uses such as standalone resale/distribution, implying endorsement, redistribution on stock platforms, and trademark/service-mark use.
 - Treat this as acceptable for local technical validation only. For product demos, marketing or commercial evidence, use self-captured footage or obtain a separately reviewed asset.
 
 Readiness check:

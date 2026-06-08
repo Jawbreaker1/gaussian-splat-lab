@@ -47,7 +47,10 @@
         "path": "data/videos/pexels-empty-coffee-shop-interior-14227022.mp4",
         "sourceUrl": "https://www.pexels.com/video/an-empty-coffee-shop-interior-14227022/",
         "license": "pexels-license",
-        "licenseNotes": "Candidate for technical pipeline validation only. Pexels marks the page Free to use and No People; verify current Pexels license/terms and avoid commercial showcase use without review. Prefer self-captured footage for production evidence."
+        "licenseNotes": "Candidate for technical pipeline validation only. Pexels marks the page Free to use and No People; current Pexels license/terms allow free commercial and non-commercial use with restrictions on standalone resale, endorsement, stock redistribution and marks. Avoid commercial showcase use without review. Prefer self-captured footage for production evidence.",
+        "licenseSourceUrl": "https://www.pexels.com/license/",
+        "termsUrl": "https://www.pexels.com/terms-of-service/",
+        "licenseVerifiedAt": "2026-06-08"
       },
       "capture": {
         "subject": "empty cafe interior",
