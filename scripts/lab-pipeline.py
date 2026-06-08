@@ -457,6 +457,92 @@ def update_job_stage(job_path: Path, stage_id: str, status: str, report_path: Pa
     write_json(job_path, job)
 
 
+def build_framework_license_report(job_path: Path) -> dict[str, Any]:
+    repo_root = repo_root_from_script()
+    frameworks_path = repo_root / "data/manifests/framework-evaluation.json"
+    frameworks_manifest = read_json(frameworks_path)
+    frameworks = frameworks_manifest.get("frameworks", [])
+    checks: list[dict[str, Any]] = []
+    if not isinstance(frameworks, list) or not frameworks:
+        status = "fail"
+        checks.append(
+            {
+                "id": "framework_manifest",
+                "status": "fail",
+                "summary": "framework evaluation manifest has no frameworks",
+            }
+        )
+        frameworks = []
+    else:
+        checks.append(
+            {
+                "id": "framework_manifest",
+                "status": "pass",
+                "summary": "framework evaluation manifest loaded",
+                "path": str(frameworks_path),
+            }
+        )
+
+    invalid = []
+    decision_counts: dict[str, int] = {}
+    for item in frameworks:
+        if not isinstance(item, dict):
+            invalid.append("framework entry is not an object")
+            continue
+        decision = item.get("decision")
+        decision_counts[str(decision)] = decision_counts.get(str(decision), 0) + 1
+        if decision in {"preferred", "accepted"} and item.get("commercialUse") in {"blocked", "blocked_by_policy"}:
+            invalid.append(f"{item.get('id')} is accepted/preferred but commercially blocked")
+        if decision in {"preferred", "accepted", "conditional"} and not item.get("officialSources"):
+            invalid.append(f"{item.get('id')} is missing official source URLs")
+
+    blocked_items = [item.get("id") for item in frameworks if isinstance(item, dict) and item.get("decision") == "blocked"]
+    conditional_items = [item.get("id") for item in frameworks if isinstance(item, dict) and item.get("decision") == "conditional"]
+    checks.append(
+        {
+            "id": "blocked_dependencies",
+            "status": "pass",
+            "summary": f"{len(blocked_items)} blocked decisions are documented",
+            "blocked": blocked_items,
+        }
+    )
+    checks.append(
+        {
+            "id": "conditional_dependencies",
+            "status": "warning" if conditional_items else "pass",
+            "summary": f"{len(conditional_items)} conditional decisions require review before product packaging",
+            "conditional": conditional_items,
+        }
+    )
+    if invalid:
+        checks.append(
+            {
+                "id": "commercial_consistency",
+                "status": "fail",
+                "summary": "; ".join(invalid),
+                "messages": invalid,
+            }
+        )
+        status = "fail"
+    elif conditional_items:
+        status = "warning"
+    else:
+        status = "pass"
+
+    return {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "framework_license",
+            "status": status,
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "frameworkManifestPath": str(frameworks_path),
+        "decisionCounts": decision_counts,
+        "checks": checks,
+    }
+
+
 def build_environment_report(job_path: Path) -> dict[str, Any]:
     nvidia_query = run_command(
         [
@@ -1357,6 +1443,319 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
     return base
 
 
+def upstream_gate_status(upstream_status: str | None) -> str:
+    if upstream_status in {None, "pending", "setup_gap"}:
+        return "setup_gap"
+    if upstream_status == "blocked_workload":
+        return "blocked_workload"
+    if upstream_status == "blocked_license":
+        return "blocked_license"
+    return "fail"
+
+
+def missing_or_blocked_upstream_report(
+    job_path: Path,
+    stage_id: str,
+    upstream_stage_id: str,
+    upstream_report_path: Path,
+) -> dict[str, Any] | None:
+    base = {
+        "schemaVersion": 1,
+        "stage": {
+            "id": stage_id,
+            "status": "pending",
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "checks": [],
+    }
+    if not upstream_report_path.exists():
+        base["stage"]["status"] = "setup_gap"
+        base["checks"].append(
+            {
+                "id": f"{upstream_stage_id}_required",
+                "status": "setup_gap",
+                "summary": f"{upstream_stage_id} report is missing; run {upstream_stage_id} before {stage_id}",
+            }
+        )
+        return base
+
+    upstream_report = read_json(upstream_report_path)
+    upstream_status = upstream_report.get("stage", {}).get("status")
+    if upstream_status not in {"pass", "warning"}:
+        status = upstream_gate_status(upstream_status)
+        base["stage"]["status"] = status
+        base["checks"].append(
+            {
+                "id": f"{upstream_stage_id}_required",
+                "status": status,
+                "summary": f"{upstream_stage_id} must pass before {stage_id}; current status is {upstream_status}",
+            }
+        )
+        return base
+    return None
+
+
+def build_splat_training_report(job_path: Path, accept_warning: bool = False, allow_heavy: bool = False) -> dict[str, Any]:
+    sfm_path = stage_report_path(job_path, "sfm")
+    blocked = missing_or_blocked_upstream_report(job_path, "splat_training", "sfm", sfm_path)
+    if blocked is not None:
+        return blocked
+
+    sfm_report = read_json(sfm_path)
+    sfm_status = sfm_report.get("stage", {}).get("status")
+    base = {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "splat_training",
+            "status": "pending",
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "checks": [],
+        "acceptedUpstreamWarnings": accept_warning,
+        "training": read_json(job_path).get("capture", {}).get("pipeline", {}).get("training", {}),
+        "source": {
+            "sfmReportPath": str(sfm_path),
+            "sparseModelPath": sfm_report.get("sparseModelPath"),
+        },
+    }
+    if sfm_status == "warning" and not accept_warning:
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "sfm_warning_acceptance",
+                "status": "fail",
+                "summary": "SfM warning must be explicitly accepted with --accept-warning before training",
+            }
+        )
+        return base
+    if not allow_heavy:
+        base["stage"]["status"] = "blocked_workload"
+        base["checks"].append(
+            {
+                "id": "heavy_workload_ack_required",
+                "status": "blocked_workload",
+                "summary": "Splat training can sustain high GPU load; rerun with --allow-heavy only after confirming the workstation can take sustained load.",
+            }
+        )
+        base["workload"] = {
+            "classification": "heavy",
+            "requiresExplicitApproval": True,
+            "approvalFlag": "--allow-heavy",
+            "reason": "Gaussian Splat training can sustain high RTX/GPU and CPU load.",
+        }
+        return base
+
+    base["stage"]["status"] = "setup_gap"
+    base["checks"].append(
+        {
+            "id": "training_implementation",
+            "status": "setup_gap",
+            "summary": "Training orchestration is not implemented yet; no training command was run.",
+        }
+    )
+    return base
+
+
+def build_packaging_report(job_path: Path, accept_warning: bool = False) -> dict[str, Any]:
+    training_path = stage_report_path(job_path, "splat_training")
+    blocked = missing_or_blocked_upstream_report(job_path, "packaging", "splat_training", training_path)
+    if blocked is not None:
+        return blocked
+
+    training_report = read_json(training_path)
+    training_status = training_report.get("stage", {}).get("status")
+    base = {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "packaging",
+            "status": "pending",
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "checks": [],
+        "acceptedUpstreamWarnings": accept_warning,
+        "source": {"trainingReportPath": str(training_path)},
+    }
+    if training_status == "warning" and not accept_warning:
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "training_warning_acceptance",
+                "status": "fail",
+                "summary": "Training warning must be explicitly accepted with --accept-warning before packaging",
+            }
+        )
+        return base
+
+    artifact_path = training_report.get("exportedArtifactPath") or training_report.get("splatArtifactPath")
+    if not isinstance(artifact_path, str) or not artifact_path:
+        base["stage"]["status"] = "setup_gap"
+        base["checks"].append(
+            {
+                "id": "training_artifact",
+                "status": "setup_gap",
+                "summary": "Training report does not declare an exported splat artifact path; packaging did not run.",
+            }
+        )
+        return base
+
+    artifact = Path(artifact_path)
+    if not artifact.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "training_artifact",
+                "status": "fail",
+                "summary": "Declared training artifact does not exist",
+                "path": str(artifact),
+            }
+        )
+        return base
+
+    base["stage"]["status"] = "pass"
+    base["artifact"] = {
+        "path": str(artifact),
+        "sizeBytes": artifact.stat().st_size,
+        "sha256": file_sha256(artifact),
+    }
+    base["checks"].append(
+        {
+            "id": "artifact",
+            "status": "pass",
+            "summary": "Splat artifact exists and hash/size are recorded",
+        }
+    )
+    return base
+
+
+def build_viewer_report(job_path: Path, accept_warning: bool = False, allow_heavy: bool = False) -> dict[str, Any]:
+    packaging_path = stage_report_path(job_path, "packaging")
+    blocked = missing_or_blocked_upstream_report(job_path, "viewer", "packaging", packaging_path)
+    if blocked is not None:
+        return blocked
+
+    packaging_report = read_json(packaging_path)
+    packaging_status = packaging_report.get("stage", {}).get("status")
+    base = {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "viewer",
+            "status": "pending",
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "checks": [],
+        "acceptedUpstreamWarnings": accept_warning,
+        "source": {"packagingReportPath": str(packaging_path)},
+    }
+    if packaging_status == "warning" and not accept_warning:
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "packaging_warning_acceptance",
+                "status": "fail",
+                "summary": "Packaging warning must be explicitly accepted with --accept-warning before viewer validation",
+            }
+        )
+        return base
+    if not allow_heavy:
+        base["stage"]["status"] = "blocked_workload"
+        base["checks"].append(
+            {
+                "id": "heavy_workload_ack_required",
+                "status": "blocked_workload",
+                "summary": "Viewer validation may launch browser/rendering work; rerun with --allow-heavy only after confirming workstation load is acceptable.",
+            }
+        )
+        base["workload"] = {
+            "classification": "heavy",
+            "requiresExplicitApproval": True,
+            "approvalFlag": "--allow-heavy",
+            "reason": "Browser/canvas validation can exercise GPU rendering paths.",
+        }
+        return base
+
+    base["stage"]["status"] = "setup_gap"
+    base["checks"].append(
+        {
+            "id": "viewer_implementation",
+            "status": "setup_gap",
+            "summary": "Viewer validation is not implemented yet; no browser or render command was launched.",
+        }
+    )
+    return base
+
+
+def build_quality_report(job_path: Path) -> dict[str, Any]:
+    stage_summaries = []
+    first_boundary = None
+    for stage in STAGES:
+        stage_id = stage["id"]
+        if stage_id == "quality_report":
+            continue
+        report_path = stage_report_path(job_path, stage_id)
+        if report_path.exists():
+            report = read_json(report_path)
+            status = report.get("stage", {}).get("status", "unknown")
+            checks = report.get("checks", []) if isinstance(report.get("checks"), list) else []
+            summary = next((check.get("summary") for check in checks if isinstance(check, dict) and check.get("summary")), None)
+        else:
+            status = "pending"
+            summary = "report has not been generated"
+        item = {
+            "id": stage_id,
+            "label": stage["label"],
+            "status": status,
+            "reportPath": str(report_path) if report_path.exists() else None,
+            "summary": summary,
+        }
+        stage_summaries.append(item)
+        if first_boundary is None and status not in {"pass", "warning"}:
+            first_boundary = item
+
+    statuses = [item["status"] for item in stage_summaries]
+    if any(status == "blocked_license" for status in statuses):
+        status = "blocked_license"
+        classification = "blocked"
+    elif any(status == "blocked_workload" for status in statuses):
+        status = "blocked_workload"
+        classification = "blocked"
+    elif any(status == "fail" for status in statuses):
+        status = "fail"
+        classification = "failed"
+    elif any(status in {"setup_gap", "pending", "unknown"} for status in statuses):
+        status = "setup_gap"
+        classification = "incomplete"
+    elif any(status == "warning" for status in statuses):
+        status = "warning"
+        classification = "weak"
+    else:
+        status = "pass"
+        classification = "usable"
+
+    return {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "quality_report",
+            "status": status,
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "classification": classification,
+        "firstBoundary": first_boundary,
+        "stages": stage_summaries,
+        "checks": [
+            {
+                "id": "pipeline_boundary",
+                "status": status,
+                "summary": "pipeline summary generated; first blocking boundary recorded" if first_boundary else "all pipeline stages are pass/warning",
+            }
+        ],
+    }
+
+
 def build_intake_report(job_path: Path) -> dict[str, Any]:
     repo_root = repo_root_from_script()
     job = read_json(job_path)
@@ -1462,7 +1861,9 @@ def command_run_stage(args: argparse.Namespace) -> int:
     if not job_path.exists():
         raise FileNotFoundError(f"job manifest not found: {job_path}")
 
-    if args.stage == "environment":
+    if args.stage == "framework_license":
+        report = build_framework_license_report(job_path)
+    elif args.stage == "environment":
         report = build_environment_report(job_path)
     elif args.stage == "intake":
         report = build_intake_report(job_path)
@@ -1470,6 +1871,14 @@ def command_run_stage(args: argparse.Namespace) -> int:
         report = build_frame_sampling_report(job_path, accept_warning=args.accept_warning)
     elif args.stage == "sfm":
         report = build_sfm_report(job_path, accept_warning=args.accept_warning, allow_heavy=args.allow_heavy)
+    elif args.stage == "splat_training":
+        report = build_splat_training_report(job_path, accept_warning=args.accept_warning, allow_heavy=args.allow_heavy)
+    elif args.stage == "packaging":
+        report = build_packaging_report(job_path, accept_warning=args.accept_warning)
+    elif args.stage == "viewer":
+        report = build_viewer_report(job_path, accept_warning=args.accept_warning, allow_heavy=args.allow_heavy)
+    elif args.stage == "quality_report":
+        report = build_quality_report(job_path)
     else:
         raise ValueError(f"unsupported stage {args.stage!r}")
 
@@ -1563,7 +1972,21 @@ def build_parser() -> argparse.ArgumentParser:
     run_stage = subparsers.add_parser(
         "run-stage", help="Run one validated pipeline stage for a job."
     )
-    run_stage.add_argument("stage", choices=["environment", "intake", "frame_sampling", "sfm"], help="Stage id to run.")
+    run_stage.add_argument(
+        "stage",
+        choices=[
+            "framework_license",
+            "environment",
+            "intake",
+            "frame_sampling",
+            "sfm",
+            "splat_training",
+            "packaging",
+            "viewer",
+            "quality_report",
+        ],
+        help="Stage id to run.",
+    )
     run_stage.add_argument("--job", required=True, help="Path to a job.json manifest.")
     run_stage.add_argument(
         "--accept-warning",

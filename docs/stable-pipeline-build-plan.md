@@ -21,14 +21,16 @@ Already in place:
 - video intake stage with explicit missing-file and metadata stop conditions
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
+- low-load stage gates for splat training, packaging, viewer validation and quality reporting
 - placeholder capture and viewer asset manifests
 - capture readiness reporting for local file/provenance status before intake
 
 Not yet real:
 
 - a known-good capture video that passes intake, frame sampling and SfM
-- splat training
-- real splat viewer load
+- actual splat training implementation
+- actual packaging/export conversion
+- real splat viewer load and screenshot validation
 
 ## Current Environment Result
 
@@ -46,7 +48,7 @@ As of 2026-06-08, the repo-local `.venv` and workstation validate:
 
 ## Workload Safety
 
-Heavy stages are currently guarded because the workstation has a known power-supply/load stability concern. `sfm`, future training and viewer/render validation must not run accidentally. The CLI writes `blocked_workload` unless a heavy stage is explicitly run with `--allow-heavy`.
+Heavy stages are currently guarded because the workstation has a known power-supply/load stability concern. `sfm`, `splat_training` and `viewer` must not run accidentally. The CLI writes `blocked_workload` unless a heavy stage is explicitly run with `--allow-heavy`.
 
 The UI intentionally sends `allowHeavy=false`; use CLI approval only after confirming the machine can sustain the load.
 

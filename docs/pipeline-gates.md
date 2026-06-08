@@ -54,7 +54,7 @@ reports/
   splat_training.json
   packaging.json
   viewer.json
-  quality.json
+  quality_report.json
 frames/
   <run_timestamp>/
     frame_manifest.json
@@ -91,6 +91,10 @@ Initial thresholds are intentionally conservative and can be tuned after known-g
 | Training | exported splat exists; final report includes iterations, wall time and loss samples |
 | Packaging | artifact hash and byte size recorded; selected viewer supports the format |
 | Viewer | nonblank screenshot; camera reset returns to initial pose |
+
+## Current Workload Guard
+
+Training and viewer validation are currently guarded stage contracts, not active heavy implementations. They report `blocked_workload` when upstream data is ready unless an operator explicitly launches with `--allow-heavy`.
 
 ## Responsibility Boundaries
 

@@ -19,6 +19,11 @@ python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest dat
 grep -q "job_manifest=" /tmp/gaussian-splat-lab-phase-1-contracts.txt
 job_manifest="$(sed -n 's/^job_manifest=//p' /tmp/gaussian-splat-lab-phase-1-contracts.txt)"
 
+python3 "${repo_root}/scripts/lab-pipeline.py" run-stage framework_license   --job "${job_manifest}"   >/tmp/gaussian-splat-lab-phase-1-framework-license.txt || true
+grep -Eq "framework_license_status=(pass|warning|fail|setup_gap|blocked_license|blocked_workload)" /tmp/gaussian-splat-lab-phase-1-framework-license.txt
+framework_license_report="$(sed -n 's/^framework_license_report=//p' /tmp/gaussian-splat-lab-phase-1-framework-license.txt)"
+python3 -m json.tool "${framework_license_report}" >/dev/null
+
 python3 "${repo_root}/scripts/lab-pipeline.py" run-stage environment   --job "${job_manifest}"   >/tmp/gaussian-splat-lab-phase-1-environment.txt
 
 grep -Eq "environment_status=(pass|setup_gap)" /tmp/gaussian-splat-lab-phase-1-environment.txt
@@ -41,6 +46,13 @@ grep -Eq "sfm_status=(pass|warning|fail|setup_gap|blocked_license|blocked_worklo
 sfm_report="$(sed -n 's/^sfm_report=//p' /tmp/gaussian-splat-lab-phase-1-sfm.txt)"
 python3 -m json.tool "${sfm_report}" >/dev/null
 
+for stage in splat_training packaging viewer quality_report; do
+  python3 "${repo_root}/scripts/lab-pipeline.py" run-stage "${stage}"   --job "${job_manifest}"   >/tmp/gaussian-splat-lab-phase-1-${stage}.txt || true
+  grep -Eq "${stage}_status=(pass|warning|fail|setup_gap|blocked_license|blocked_workload)" /tmp/gaussian-splat-lab-phase-1-${stage}.txt
+  stage_report="$(sed -n "s/^${stage}_report=//p" /tmp/gaussian-splat-lab-phase-1-${stage}.txt)"
+  python3 -m json.tool "${stage_report}" >/dev/null
+done
+
 heavy_jobs_dir="$(mktemp -d)"
 python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --jobs-dir "${heavy_jobs_dir}"   >/tmp/gaussian-splat-lab-phase-1-heavy-contracts.txt
 heavy_job_manifest="$(sed -n 's/^job_manifest=//p' /tmp/gaussian-splat-lab-phase-1-heavy-contracts.txt)"
@@ -51,19 +63,37 @@ import sys
 job_path = Path(sys.argv[1])
 reports = job_path.parent / "reports"
 reports.mkdir(parents=True, exist_ok=True)
-(reports / "frame_sampling.json").write_text(json.dumps({
-    "schemaVersion": 1,
-    "stage": {"id": "frame_sampling", "status": "pass"},
-    "frameManifestPath": str(job_path.parent / "frames" / "synthetic" / "frame_manifest.json"),
-}, indent=2) + "\n", encoding="utf-8")
+synthetic_reports = {
+    "frame_sampling": {
+        "schemaVersion": 1,
+        "stage": {"id": "frame_sampling", "status": "pass"},
+        "frameManifestPath": str(job_path.parent / "frames" / "synthetic" / "frame_manifest.json"),
+    },
+    "sfm": {
+        "schemaVersion": 1,
+        "stage": {"id": "sfm", "status": "pass"},
+        "sparseModelPath": str(job_path.parent / "sfm" / "synthetic" / "sparse" / "0"),
+    },
+    "packaging": {
+        "schemaVersion": 1,
+        "stage": {"id": "packaging", "status": "pass"},
+        "artifact": {"path": str(job_path.parent / "splats" / "synthetic.ksplat")},
+    },
+}
+for name, report in synthetic_reports.items():
+    (reports / f"{name}.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 job = json.loads(job_path.read_text(encoding="utf-8"))
 for stage in job["stages"]:
-    if stage["id"] == "frame_sampling":
+    if stage["id"] in synthetic_reports:
         stage["status"] = "pass"
-        stage["reportPath"] = "reports/frame_sampling.json"
+        stage["reportPath"] = f"reports/{stage['id']}.json"
 job_path.write_text(json.dumps(job, indent=2) + "\n", encoding="utf-8")
 PYCODE
 python3 "${repo_root}/scripts/lab-pipeline.py" run-stage sfm   --job "${heavy_job_manifest}"   >/tmp/gaussian-splat-lab-phase-1-heavy-sfm.txt || true
 grep -q "sfm_status=blocked_workload" /tmp/gaussian-splat-lab-phase-1-heavy-sfm.txt
+python3 "${repo_root}/scripts/lab-pipeline.py" run-stage splat_training   --job "${heavy_job_manifest}"   >/tmp/gaussian-splat-lab-phase-1-heavy-training.txt || true
+grep -q "splat_training_status=blocked_workload" /tmp/gaussian-splat-lab-phase-1-heavy-training.txt
+python3 "${repo_root}/scripts/lab-pipeline.py" run-stage viewer   --job "${heavy_job_manifest}"   >/tmp/gaussian-splat-lab-phase-1-heavy-viewer.txt || true
+grep -q "viewer_status=blocked_workload" /tmp/gaussian-splat-lab-phase-1-heavy-viewer.txt
 
 echo "phase1_contract_validation=passed"

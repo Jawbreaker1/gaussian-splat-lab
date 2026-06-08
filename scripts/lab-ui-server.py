@@ -24,7 +24,7 @@ JOBS_DIR = REPO_ROOT / "outputs/jobs"
 RTX_EVIDENCE = REPO_ROOT / "docs/validation/phase-0-rtx-workstation-wsl-output.md"
 PIPELINE_SCRIPT = REPO_ROOT / "scripts/lab-pipeline.py"
 VENV_PYTHON = REPO_ROOT / ".venv/bin/python"
-RUNNABLE_STAGES = {"environment", "intake", "frame_sampling", "sfm"}
+RUNNABLE_STAGES = {"framework_license", "environment", "intake", "frame_sampling", "sfm", "splat_training", "packaging", "viewer", "quality_report"}
 
 
 def read_json(path: Path) -> dict[str, Any]:

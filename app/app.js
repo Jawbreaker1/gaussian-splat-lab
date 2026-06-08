@@ -17,8 +17,8 @@ let state = null;
 let activeJob = null;
 let runningStage = null;
 
-const runnableStages = new Set(['environment', 'intake', 'frame_sampling', 'sfm']);
-const heavyStages = new Set(['sfm']);
+const runnableStages = new Set(['framework_license', 'environment', 'intake', 'frame_sampling', 'sfm', 'splat_training', 'packaging', 'viewer', 'quality_report']);
+const heavyStages = new Set(['sfm', 'splat_training', 'viewer']);
 
 function pill(text, type = 'neutral') {
   const span = document.createElement('span');
