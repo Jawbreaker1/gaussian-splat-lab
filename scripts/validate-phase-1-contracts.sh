@@ -32,4 +32,10 @@ grep -Eq "frame_sampling_status=(pass|warning|fail|setup_gap|blocked_license)" /
 frame_sampling_report="$(sed -n 's/^frame_sampling_report=//p' /tmp/gaussian-splat-lab-phase-1-frame-sampling.txt)"
 python3 -m json.tool "${frame_sampling_report}" >/dev/null
 
+python3 "${repo_root}/scripts/lab-pipeline.py" run-stage sfm   --job "${job_manifest}"   >/tmp/gaussian-splat-lab-phase-1-sfm.txt || true
+
+grep -Eq "sfm_status=(pass|warning|fail|setup_gap|blocked_license)" /tmp/gaussian-splat-lab-phase-1-sfm.txt
+sfm_report="$(sed -n 's/^sfm_report=//p' /tmp/gaussian-splat-lab-phase-1-sfm.txt)"
+python3 -m json.tool "${sfm_report}" >/dev/null
+
 echo "phase1_contract_validation=passed"

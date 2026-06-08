@@ -17,7 +17,7 @@ let state = null;
 let activeJob = null;
 let runningStage = null;
 
-const runnableStages = new Set(['environment', 'intake', 'frame_sampling']);
+const runnableStages = new Set(['environment', 'intake', 'frame_sampling', 'sfm']);
 
 function pill(text, type = 'neutral') {
   const span = document.createElement('span');

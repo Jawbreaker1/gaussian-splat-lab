@@ -24,7 +24,7 @@ Generated artifacts stay out of git. Only manifests, small reports, docs and rep
 | 1 | Environment gate | machine runtime | `EnvironmentReport` | Required tools visible; versions recorded; RTX workstation has `nvidia-smi`, Python, CUDA-compatible PyTorch and gsplat smoke when training starts. |
 | 2 | Capture intake | `CaptureInput` | `CaptureMetadata` | Video exists locally, provenance/license recorded, `ffprobe` metadata parsed, duration/resolution/frame rate within configured limits. |
 | 3 | Frame sampling | `CaptureMetadata` | `FrameManifest` | Frame count matches plan, timestamps are monotonic, files exist, hashes recorded, contact sheet generated. |
-| 4 | SfM/camera solve | `FrameManifest` | `CameraSolveReport` | COLMAP exits cleanly, enough frames are registered, sparse point count and reprojection error pass thresholds. |
+| 4 | SfM/camera solve | `FrameManifest` | `CameraSolveReport` | COLMAP exits cleanly, sparse model exists, enough frames are registered, sparse point count and reprojection error are recorded. |
 | 5 | Splat training | `CameraSolveReport` | `TrainingRunReport` | Training completes or checkpoints cleanly, nonzero splats exported, loss trend and sample renders recorded. |
 | 6 | Packaging | `TrainingRunReport` | `SplatArtifact` | Artifact file exists, format is declared, byte size/hash recorded, viewer loader can parse it. |
 | 7 | Viewer | `SplatArtifact` | `ViewerValidationReport` | Browser opens, canvas is nonblank, orbit/pan/zoom/reset work, screenshot evidence saved. |

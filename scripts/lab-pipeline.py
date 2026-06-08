@@ -9,6 +9,7 @@ import math
 import importlib.util
 import json
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -909,6 +910,344 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
     return base
 
 
+def sfm_run_directory(job_path: Path) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return job_path.parent / "sfm" / stamp
+
+
+def parse_colmap_model_analyzer(output: str) -> dict[str, Any]:
+    metrics: dict[str, Any] = {}
+    for line in output.splitlines():
+        if ":" not in line:
+            continue
+        key, raw_value = line.split(":", 1)
+        normalized = re.sub(r"[^a-z0-9]+", "_", key.strip().lower()).strip("_")
+        value = raw_value.strip()
+        match = re.search(r"-?\d+(?:\.\d+)?", value)
+        if match:
+            number = float(match.group(0))
+            metrics[normalized] = int(number) if number.is_integer() else number
+        else:
+            metrics[normalized] = value
+    return metrics
+
+
+def first_metric(metrics: dict[str, Any], names: list[str]) -> Any:
+    for name in names:
+        if name in metrics:
+            return metrics[name]
+    return None
+
+
+def validate_sfm_output(
+    frame_count: int,
+    sparse_model_path: Path | None,
+    analyzer: dict[str, Any] | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    checks: list[dict[str, Any]] = []
+    if sparse_model_path is None or not sparse_model_path.exists():
+        return "fail", [
+            {
+                "id": "sparse_model",
+                "status": "fail",
+                "summary": "COLMAP did not produce a sparse model",
+            }
+        ]
+
+    checks.append(
+        {
+            "id": "sparse_model",
+            "status": "pass",
+            "summary": "sparse model directory exists",
+            "path": str(sparse_model_path),
+        }
+    )
+
+    metrics = analyzer or {}
+    registered_images = first_metric(metrics, ["registered_images", "images"])
+    points = first_metric(metrics, ["points", "points3d", "points_3d"])
+    reprojection_error = first_metric(
+        metrics,
+        ["mean_reprojection_error", "mean_reprojection_error_px", "reprojection_error"],
+    )
+
+    if isinstance(registered_images, int) and frame_count > 0:
+        registered_fraction = registered_images / frame_count
+        checks.append(
+            {
+                "id": "registered_frames",
+                "status": "pass" if registered_fraction >= 0.70 else "fail",
+                "summary": f"{registered_images}/{frame_count} frames registered",
+                "registeredImages": registered_images,
+                "frameCount": frame_count,
+                "registeredFraction": round(registered_fraction, 4),
+            }
+        )
+    else:
+        checks.append(
+            {
+                "id": "registered_frames",
+                "status": "warning",
+                "summary": "registered image count was not parsed from COLMAP output",
+            }
+        )
+
+    if isinstance(points, int):
+        checks.append(
+            {
+                "id": "sparse_points",
+                "status": "pass" if points > 0 else "fail",
+                "summary": f"{points} sparse points",
+                "sparsePoints": points,
+            }
+        )
+    else:
+        checks.append(
+            {
+                "id": "sparse_points",
+                "status": "warning",
+                "summary": "sparse point count was not parsed from COLMAP output",
+            }
+        )
+
+    checks.append(
+        {
+            "id": "reprojection_error",
+            "status": "pass" if isinstance(reprojection_error, (int, float)) else "warning",
+            "summary": "reprojection error recorded" if isinstance(reprojection_error, (int, float)) else "reprojection error was not parsed",
+            "meanReprojectionError": reprojection_error,
+        }
+    )
+
+    statuses = [check["status"] for check in checks]
+    if any(status == "fail" for status in statuses):
+        return "fail", checks
+    if any(status == "warning" for status in statuses):
+        return "warning", checks
+    return "pass", checks
+
+
+def build_sfm_report(job_path: Path, accept_warning: bool = False) -> dict[str, Any]:
+    frame_sampling_path = stage_report_path(job_path, "frame_sampling")
+    base = {
+        "schemaVersion": 1,
+        "stage": {
+            "id": "sfm",
+            "status": "pending",
+            "generatedAt": utc_now(),
+            "jobPath": str(job_path),
+        },
+        "checks": [],
+        "acceptedUpstreamWarnings": accept_warning,
+    }
+
+    if not frame_sampling_path.exists():
+        base["stage"]["status"] = "setup_gap"
+        base["checks"].append(
+            {
+                "id": "frame_sampling_required",
+                "status": "setup_gap",
+                "summary": "frame_sampling report is missing; run frame_sampling before sfm",
+            }
+        )
+        return base
+
+    frame_sampling_report = read_json(frame_sampling_path)
+    frame_sampling_status = frame_sampling_report.get("stage", {}).get("status")
+    if frame_sampling_status == "warning" and not accept_warning:
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "frame_sampling_warning_acceptance",
+                "status": "fail",
+                "summary": "frame_sampling warning must be explicitly accepted with --accept-warning before SfM",
+            }
+        )
+        return base
+    if frame_sampling_status not in {"pass", "warning"}:
+        base["stage"]["status"] = "setup_gap" if frame_sampling_status in {None, "pending", "setup_gap"} else "fail"
+        base["checks"].append(
+            {
+                "id": "frame_sampling_required",
+                "status": base["stage"]["status"],
+                "summary": f"frame_sampling must pass before sfm; current status is {frame_sampling_status}",
+            }
+        )
+        return base
+
+    frame_manifest_path_raw = frame_sampling_report.get("frameManifestPath")
+    if not isinstance(frame_manifest_path_raw, str) or not frame_manifest_path_raw:
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "frame_manifest",
+                "status": "fail",
+                "summary": "frame_sampling report does not declare frameManifestPath",
+            }
+        )
+        return base
+
+    frame_manifest_path = Path(frame_manifest_path_raw)
+    if not frame_manifest_path.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "frame_manifest",
+                "status": "fail",
+                "summary": "frame manifest file does not exist",
+                "path": str(frame_manifest_path),
+            }
+        )
+        return base
+
+    frame_manifest = read_json(frame_manifest_path)
+    frames = frame_manifest.get("frames", [])
+    if not isinstance(frames, list) or not frames:
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "frame_manifest",
+                "status": "fail",
+                "summary": "frame manifest has no frames",
+            }
+        )
+        return base
+
+    frame_dir = Path(str(frame_manifest.get("frameDirectory") or frame_sampling_report.get("frameDirectory") or ""))
+    if not frame_dir.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "frame_directory",
+                "status": "fail",
+                "summary": "frame directory does not exist",
+                "path": str(frame_dir),
+            }
+        )
+        return base
+
+    colmap = run_command(["colmap", "--help"], timeout_seconds=10)
+    if colmap["status"] != "pass":
+        base["stage"]["status"] = colmap["status"]
+        base["checks"].append(
+            {
+                "id": "colmap",
+                "status": colmap["status"],
+                "summary": command_summary(colmap, max_lines=3) or "COLMAP is not available",
+                "details": colmap,
+            }
+        )
+        return base
+
+    sfm_dir = sfm_run_directory(job_path)
+    sfm_dir.mkdir(parents=True, exist_ok=True)
+    database_path = sfm_dir / "database.db"
+    sparse_dir = sfm_dir / "sparse"
+    sparse_dir.mkdir(parents=True, exist_ok=True)
+
+    commands: dict[str, Any] = {}
+    commands["featureExtractor"] = run_command(
+        [
+            "colmap",
+            "feature_extractor",
+            "--database_path",
+            str(database_path),
+            "--image_path",
+            str(frame_dir),
+            "--ImageReader.single_camera",
+            "1",
+            "--SiftExtraction.use_gpu",
+            "0",
+        ],
+        timeout_seconds=3600,
+    )
+    if commands["featureExtractor"]["status"] != "pass":
+        base["stage"]["status"] = commands["featureExtractor"]["status"]
+        base["commands"] = commands
+        base["checks"].append(
+            {
+                "id": "colmap_feature_extractor",
+                "status": commands["featureExtractor"]["status"],
+                "summary": command_summary(commands["featureExtractor"], max_lines=5) or "COLMAP feature extraction failed",
+            }
+        )
+        return base
+
+    commands["sequentialMatcher"] = run_command(
+        [
+            "colmap",
+            "sequential_matcher",
+            "--database_path",
+            str(database_path),
+            "--SiftMatching.use_gpu",
+            "0",
+        ],
+        timeout_seconds=3600,
+    )
+    if commands["sequentialMatcher"]["status"] != "pass":
+        base["stage"]["status"] = commands["sequentialMatcher"]["status"]
+        base["commands"] = commands
+        base["checks"].append(
+            {
+                "id": "colmap_matcher",
+                "status": commands["sequentialMatcher"]["status"],
+                "summary": command_summary(commands["sequentialMatcher"], max_lines=5) or "COLMAP matching failed",
+            }
+        )
+        return base
+
+    commands["mapper"] = run_command(
+        [
+            "colmap",
+            "mapper",
+            "--database_path",
+            str(database_path),
+            "--image_path",
+            str(frame_dir),
+            "--output_path",
+            str(sparse_dir),
+        ],
+        timeout_seconds=3600,
+    )
+    base["commands"] = commands
+    if commands["mapper"]["status"] != "pass":
+        base["stage"]["status"] = commands["mapper"]["status"]
+        base["checks"].append(
+            {
+                "id": "colmap_mapper",
+                "status": commands["mapper"]["status"],
+                "summary": command_summary(commands["mapper"], max_lines=5) or "COLMAP mapper failed",
+            }
+        )
+        return base
+
+    model_dirs = sorted(path for path in sparse_dir.iterdir() if path.is_dir())
+    sparse_model_path = model_dirs[0] if model_dirs else None
+    analyzer_result = None
+    analyzer_metrics = None
+    if sparse_model_path is not None:
+        analyzer_result = run_command(["colmap", "model_analyzer", "--path", str(sparse_model_path)], timeout_seconds=300)
+        commands["modelAnalyzer"] = analyzer_result
+        if analyzer_result["status"] == "pass":
+            analyzer_metrics = parse_colmap_model_analyzer(analyzer_result.get("stdout", ""))
+
+    status, checks = validate_sfm_output(len(frames), sparse_model_path, analyzer_metrics)
+    base["stage"]["status"] = status
+    base["sfmDirectory"] = str(sfm_dir)
+    base["databasePath"] = str(database_path)
+    base["sparseModelPath"] = str(sparse_model_path) if sparse_model_path else None
+    base["frameManifestPath"] = str(frame_manifest_path)
+    base["metrics"] = analyzer_metrics or {}
+    base["colmap"] = {
+        "versionSummary": command_summary(colmap, max_lines=3),
+        "matcher": "sequential_matcher",
+        "usesGpu": False,
+        "note": "Ubuntu COLMAP package reports without CUDA; first SfM validation uses CPU SIFT extraction and matching.",
+    }
+    base["checks"].extend(checks)
+    return base
+
+
 def build_intake_report(job_path: Path) -> dict[str, Any]:
     repo_root = repo_root_from_script()
     job = read_json(job_path)
@@ -1020,6 +1359,8 @@ def command_run_stage(args: argparse.Namespace) -> int:
         report = build_intake_report(job_path)
     elif args.stage == "frame_sampling":
         report = build_frame_sampling_report(job_path, accept_warning=args.accept_warning)
+    elif args.stage == "sfm":
+        report = build_sfm_report(job_path, accept_warning=args.accept_warning)
     else:
         raise ValueError(f"unsupported stage {args.stage!r}")
 
@@ -1092,7 +1433,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_stage = subparsers.add_parser(
         "run-stage", help="Run one validated pipeline stage for a job."
     )
-    run_stage.add_argument("stage", choices=["environment", "intake", "frame_sampling"], help="Stage id to run.")
+    run_stage.add_argument("stage", choices=["environment", "intake", "frame_sampling", "sfm"], help="Stage id to run.")
     run_stage.add_argument("--job", required=True, help="Path to a job.json manifest.")
     run_stage.add_argument(
         "--accept-warning",

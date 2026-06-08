@@ -20,12 +20,12 @@ Already in place:
 - FFmpeg/ffprobe install/version validation
 - video intake stage with explicit missing-file and metadata stop conditions
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
+- SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
 - placeholder capture and viewer asset manifests
 
 Not yet real:
 
-- a known-good capture video that passes intake and frame sampling
-- SfM solve
+- a known-good capture video that passes intake, frame sampling and SfM
 - splat training
 - real splat viewer load
 
@@ -41,6 +41,7 @@ As of 2026-06-08, the repo-local `.venv` and workstation validate:
 - FFmpeg/ffprobe 6.1.1-3ubuntu5 are on PATH at `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`
 - the installed Ubuntu FFmpeg build includes `--enable-gpl`; keep it as a lab-only system tool until redistribution/build flags are reviewed
 - frame sampling passed a synthetic CLI smoke test; evidence is recorded in `docs/validation/phase-1-frame-sampling-smoke.md`
+- SfM now has a runnable COLMAP stage wrapper; successful reconstruction awaits real frame input
 
 ## Next Build Step
 
@@ -54,6 +55,7 @@ Why next:
 - intake is the first stage that touches real capture input
 - it gives frame sampling and SfM a validated metadata contract instead of ad hoc file paths
 - the frame sampling command is already implemented and will produce `FrameManifest` once intake passes
+- the SfM command is already implemented and will refuse to run until `FrameManifest` is valid
 
 Expected output:
 
