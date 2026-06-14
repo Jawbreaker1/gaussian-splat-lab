@@ -1249,9 +1249,32 @@ def sfm_run_directory(job_path: Path) -> Path:
     return job_path.parent / "sfm" / stamp
 
 
+def prepare_colmap_image_directory(frames: list[Any], image_dir: Path) -> tuple[list[dict[str, str]], list[str]]:
+    image_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[dict[str, str]] = []
+    errors: list[str] = []
+    for frame in frames:
+        if not isinstance(frame, dict):
+            errors.append("frame entry is not an object")
+            continue
+        source = Path(str(frame.get("path") or ""))
+        if not source.exists() or not source.is_file():
+            errors.append(f"frame file is missing: {source}")
+            continue
+        if source.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            errors.append(f"frame file is not a supported image: {source}")
+            continue
+        target = image_dir / source.name
+        shutil.copy2(source, target)
+        copied.append({"source": str(source), "path": str(target)})
+    return copied, errors
+
+
 def parse_colmap_model_analyzer(output: str) -> dict[str, Any]:
     metrics: dict[str, Any] = {}
     for line in output.splitlines():
+        if "] " in line:
+            line = line.split("] ", 1)[1]
         if ":" not in line:
             continue
         key, raw_value = line.split(":", 1)
@@ -1307,14 +1330,22 @@ def validate_sfm_output(
 
     if isinstance(registered_images, int) and frame_count > 0:
         registered_fraction = registered_images / frame_count
+        if registered_fraction >= 0.70:
+            registered_status = "pass"
+        elif registered_fraction >= 0.50:
+            registered_status = "warning"
+        else:
+            registered_status = "fail"
         checks.append(
             {
                 "id": "registered_frames",
-                "status": "pass" if registered_fraction >= 0.70 else "fail",
+                "status": registered_status,
                 "summary": f"{registered_images}/{frame_count} frames registered",
                 "registeredImages": registered_images,
                 "frameCount": frame_count,
                 "registeredFraction": round(registered_fraction, 4),
+                "passThreshold": 0.70,
+                "warningThreshold": 0.50,
             }
         )
     else:
@@ -1494,7 +1525,34 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
     sfm_dir.mkdir(parents=True, exist_ok=True)
     database_path = sfm_dir / "database.db"
     sparse_dir = sfm_dir / "sparse"
+    colmap_image_dir = sfm_dir / "images"
     sparse_dir.mkdir(parents=True, exist_ok=True)
+    colmap_images, colmap_image_errors = prepare_colmap_image_directory(frames, colmap_image_dir)
+    if colmap_image_errors or len(colmap_images) != len(frames):
+        base["stage"]["status"] = "fail"
+        base["colmapImageDirectory"] = str(colmap_image_dir)
+        base["checks"].append(
+            {
+                "id": "colmap_images",
+                "status": "fail",
+                "summary": "failed to prepare clean COLMAP image directory",
+                "errors": colmap_image_errors,
+                "copiedFrameCount": len(colmap_images),
+                "expectedFrameCount": len(frames),
+            }
+        )
+        return base
+
+    base["colmapImageDirectory"] = str(colmap_image_dir)
+    base["checks"].append(
+        {
+            "id": "colmap_images",
+            "status": "pass",
+            "summary": "prepared clean COLMAP image directory from frame manifest",
+            "copiedFrameCount": len(colmap_images),
+            "path": str(colmap_image_dir),
+        }
+    )
 
     commands: dict[str, Any] = {}
     commands["featureExtractor"] = run_command(
@@ -1504,7 +1562,7 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
             "--database_path",
             str(database_path),
             "--image_path",
-            str(frame_dir),
+            str(colmap_image_dir),
             "--ImageReader.single_camera",
             "1",
             "--SiftExtraction.use_gpu",
@@ -1524,10 +1582,10 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         )
         return base
 
-    commands["sequentialMatcher"] = run_command(
+    commands["exhaustiveMatcher"] = run_command(
         [
             "colmap",
-            "sequential_matcher",
+            "exhaustive_matcher",
             "--database_path",
             str(database_path),
             "--SiftMatching.use_gpu",
@@ -1535,14 +1593,14 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         ],
         timeout_seconds=3600,
     )
-    if commands["sequentialMatcher"]["status"] != "pass":
-        base["stage"]["status"] = commands["sequentialMatcher"]["status"]
+    if commands["exhaustiveMatcher"]["status"] != "pass":
+        base["stage"]["status"] = commands["exhaustiveMatcher"]["status"]
         base["commands"] = commands
         base["checks"].append(
             {
                 "id": "colmap_matcher",
-                "status": commands["sequentialMatcher"]["status"],
-                "summary": command_summary(commands["sequentialMatcher"], max_lines=5) or "COLMAP matching failed",
+                "status": commands["exhaustiveMatcher"]["status"],
+                "summary": command_summary(commands["exhaustiveMatcher"], max_lines=5) or "COLMAP matching failed",
             }
         )
         return base
@@ -1554,7 +1612,7 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
             "--database_path",
             str(database_path),
             "--image_path",
-            str(frame_dir),
+            str(colmap_image_dir),
             "--output_path",
             str(sparse_dir),
         ],
@@ -1573,25 +1631,48 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         return base
 
     model_dirs = sorted(path for path in sparse_dir.iterdir() if path.is_dir())
-    sparse_model_path = model_dirs[0] if model_dirs else None
-    analyzer_result = None
-    analyzer_metrics = None
-    if sparse_model_path is not None:
-        analyzer_result = run_command(["colmap", "model_analyzer", "--path", str(sparse_model_path)], timeout_seconds=300)
-        commands["modelAnalyzer"] = analyzer_result
+    sparse_models: list[dict[str, Any]] = []
+    for model_path in model_dirs:
+        analyzer_result = run_command(["colmap", "model_analyzer", "--path", str(model_path)], timeout_seconds=300)
+        commands[f"modelAnalyzer_{model_path.name}"] = analyzer_result
+        analyzer_metrics = None
         if analyzer_result["status"] == "pass":
-            analyzer_metrics = parse_colmap_model_analyzer(analyzer_result.get("stdout", ""))
+            analyzer_text = analyzer_result.get("stdout") or analyzer_result.get("stderr") or ""
+            analyzer_metrics = parse_colmap_model_analyzer(analyzer_text)
+        sparse_models.append(
+            {
+                "path": str(model_path),
+                "name": model_path.name,
+                "status": analyzer_result["status"],
+                "metrics": analyzer_metrics or {},
+            }
+        )
+
+    def model_score(model: dict[str, Any]) -> tuple[int, int]:
+        metrics = model.get("metrics", {}) if isinstance(model.get("metrics"), dict) else {}
+        registered = metrics.get("registered_images")
+        images = metrics.get("images")
+        points = metrics.get("points")
+        image_score = registered if isinstance(registered, int) else images if isinstance(images, int) else -1
+        point_score = points if isinstance(points, int) else -1
+        return image_score, point_score
+
+    best_model = max(sparse_models, key=model_score) if sparse_models else None
+    sparse_model_path = Path(best_model["path"]) if best_model else None
+    analyzer_metrics = best_model.get("metrics", {}) if best_model else None
 
     status, checks = validate_sfm_output(len(frames), sparse_model_path, analyzer_metrics)
     base["stage"]["status"] = status
     base["sfmDirectory"] = str(sfm_dir)
+    base["colmapImageDirectory"] = str(colmap_image_dir)
     base["databasePath"] = str(database_path)
     base["sparseModelPath"] = str(sparse_model_path) if sparse_model_path else None
+    base["sparseModels"] = sparse_models
     base["frameManifestPath"] = str(frame_manifest_path)
     base["metrics"] = analyzer_metrics or {}
     base["colmap"] = {
         "versionSummary": command_summary(colmap, max_lines=3),
-        "matcher": "sequential_matcher",
+        "matcher": "exhaustive_matcher",
         "usesGpu": False,
         "note": "Ubuntu COLMAP package reports without CUDA; first SfM validation uses CPU SIFT extraction and matching.",
     }

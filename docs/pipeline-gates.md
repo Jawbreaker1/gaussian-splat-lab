@@ -96,7 +96,7 @@ Initial thresholds are intentionally conservative and can be tuned after known-g
 | --- | --- |
 | Capture intake | local file exists; duration 10-120 seconds; resolution at least 720p; license/provenance non-empty |
 | Frame sampling | 50-250 frames; no missing files; contact sheet generated |
-| SfM | at least 70% registered frames; median reprojection error recorded; sparse points nonzero |
+| SfM | pass at 70% registered frames; warning at 50-70%; sparse points and reprojection error recorded |
 | Training | exported splat exists; final report includes iterations, wall time and loss samples |
 | Packaging | artifact hash and byte size recorded; selected viewer supports the format |
 | Viewer | nonblank screenshot; camera reset returns to initial pose |

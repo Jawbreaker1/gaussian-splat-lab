@@ -44,7 +44,7 @@ As of 2026-06-08, the repo-local `.venv` and workstation validate:
 - FFmpeg/ffprobe 6.1.1-3ubuntu5 are on PATH at `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`
 - the installed Ubuntu FFmpeg build includes `--enable-gpl`; keep it as a lab-only system tool until redistribution/build flags are reviewed
 - frame sampling passed a synthetic CLI smoke test; evidence is recorded in `docs/validation/phase-1-frame-sampling-smoke.md`
-- SfM now has a runnable COLMAP stage wrapper; successful reconstruction awaits real frame input
+- SfM has a runnable COLMAP stage wrapper; the first post-PSU test produced a passing sparse reconstruction from local frame input
 
 ## Workload Safety
 
@@ -183,6 +183,7 @@ Validation:
 - registered-frame percentage recorded
 - sparse point count nonzero
 - reprojection metrics recorded
+- if COLMAP emits multiple sparse models, the report selects the model with the most registered images
 - failure boundary is clear if solve fails
 
 ### 4. Splat Training

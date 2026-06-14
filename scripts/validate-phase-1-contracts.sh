@@ -2,6 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+phase1_import_contract_dir="${repo_root}/data/tmp/phase-1-import-contract"
+trap 'rm -rf "${phase1_import_contract_dir}"' EXIT
 
 python3 -m json.tool "${repo_root}/data/manifests/captures.example.json" >/dev/null
 python3 -m json.tool "${repo_root}/data/manifests/viewer-assets.example.json" >/dev/null

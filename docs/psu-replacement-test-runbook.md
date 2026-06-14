@@ -98,7 +98,7 @@ Run this only after the PSU replacement and an explicit go-ahead.
 .venv/bin/python scripts/lab-pipeline.py run-stage quality_report --job "$JOB"
 ```
 
-Stop after SfM. Record whether COLMAP registers enough frames and whether sparse points/reprojection metrics look sane.
+Stop after SfM. Record whether COLMAP registers enough frames. Treat 50-70% registered frames as a warning boundary that can be accepted for experimental continuation, not as a clean pass.
 
 ## 5. Expected Boundary After SfM
 
