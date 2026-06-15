@@ -1249,6 +1249,29 @@ def sfm_run_directory(job_path: Path) -> Path:
     return job_path.parent / "sfm" / stamp
 
 
+def splat_training_run_directory(job_path: Path) -> Path:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return job_path.parent / "splats" / stamp
+
+
+def positive_int_setting(config: dict[str, Any], key: str, default: int, minimum: int, maximum: int) -> int:
+    raw_value = config.get(key, default)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
+def positive_float_setting(config: dict[str, Any], key: str, default: float, minimum: float, maximum: float) -> float:
+    raw_value = config.get(key, default)
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, value))
+
+
 def prepare_colmap_image_directory(frames: list[Any], image_dir: Path) -> tuple[list[dict[str, str]], list[str]]:
     image_dir.mkdir(parents=True, exist_ok=True)
     copied: list[dict[str, str]] = []
@@ -1784,14 +1807,225 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
         }
         return base
 
-    base["stage"]["status"] = "setup_gap"
-    base["checks"].append(
+    sparse_model_raw = sfm_report.get("sparseModelPath")
+    if not isinstance(sparse_model_raw, str) or not sparse_model_raw:
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "sparse_model",
+                "status": "fail",
+                "summary": "SfM report does not declare sparseModelPath",
+            }
+        )
+        return base
+
+    sparse_model_path = Path(sparse_model_raw)
+    if not sparse_model_path.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "sparse_model",
+                "status": "fail",
+                "summary": "SfM sparse model path does not exist",
+                "path": str(sparse_model_path),
+            }
+        )
+        return base
+
+    colmap_image_dir_raw = sfm_report.get("colmapImageDirectory")
+    if not isinstance(colmap_image_dir_raw, str) or not colmap_image_dir_raw:
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "colmap_image_directory",
+                "status": "fail",
+                "summary": "SfM report does not declare colmapImageDirectory",
+            }
+        )
+        return base
+
+    colmap_image_dir = Path(colmap_image_dir_raw)
+    if not colmap_image_dir.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "colmap_image_directory",
+                "status": "fail",
+                "summary": "COLMAP image directory does not exist",
+                "path": str(colmap_image_dir),
+            }
+        )
+        return base
+
+    torch_cuda = check_torch_cuda()
+    gsplat = check_python_import("gsplat")
+    env_checks = [
         {
-            "id": "training_implementation",
-            "status": "setup_gap",
-            "summary": "Training orchestration is not implemented yet; no training command was run.",
-        }
-    )
+            "id": "pytorch_cuda",
+            "status": torch_cuda["status"],
+            "summary": torch_cuda.get("deviceName") or torch_cuda.get("message") or torch_cuda.get("version"),
+            "details": torch_cuda,
+        },
+        {
+            "id": "gsplat",
+            "status": gsplat["status"],
+            "summary": gsplat.get("version") or gsplat.get("message"),
+            "details": gsplat,
+        },
+    ]
+    base["checks"].extend(env_checks)
+    if any(check["status"] == "fail" for check in env_checks):
+        base["stage"]["status"] = "fail"
+        return base
+    if any(check["status"] == "setup_gap" for check in env_checks):
+        base["stage"]["status"] = "setup_gap"
+        return base
+
+    training_config = base["training"] if isinstance(base.get("training"), dict) else {}
+    run_config = {
+        "iterations": positive_int_setting(training_config, "iterations", 40, 1, 2000),
+        "maxImages": positive_int_setting(training_config, "maxImages", 8, 1, 64),
+        "maxPoints": positive_int_setting(training_config, "maxPoints", 6000, 100, 200000),
+        "maxRenderSize": positive_int_setting(training_config, "maxRenderSize", 384, 64, 1920),
+        "sampleEvery": positive_int_setting(training_config, "sampleEvery", 5, 1, 1000),
+        "meanLr": positive_float_setting(training_config, "meanLr", 0.0005, 0.0, 1.0),
+        "colorLr": positive_float_setting(training_config, "colorLr", 0.02, 0.0, 1.0),
+        "scaleLr": positive_float_setting(training_config, "scaleLr", 0.001, 0.0, 1.0),
+        "opacityLr": positive_float_setting(training_config, "opacityLr", 0.01, 0.0, 1.0),
+    }
+    training_dir = splat_training_run_directory(job_path)
+    result_path = training_dir / "training_result.json"
+    trainer_script = repo_root_from_script() / "scripts" / "mini-gsplat-train.py"
+    command = [
+        sys.executable,
+        str(trainer_script),
+        "--sparse-model-path",
+        str(sparse_model_path),
+        "--image-dir",
+        str(colmap_image_dir),
+        "--output-dir",
+        str(training_dir),
+        "--result-json",
+        str(result_path),
+        "--iterations",
+        str(run_config["iterations"]),
+        "--max-images",
+        str(run_config["maxImages"]),
+        "--max-points",
+        str(run_config["maxPoints"]),
+        "--max-render-size",
+        str(run_config["maxRenderSize"]),
+        "--sample-every",
+        str(run_config["sampleEvery"]),
+        "--mean-lr",
+        str(run_config["meanLr"]),
+        "--color-lr",
+        str(run_config["colorLr"]),
+        "--scale-lr",
+        str(run_config["scaleLr"]),
+        "--opacity-lr",
+        str(run_config["opacityLr"]),
+    ]
+    trainer = run_command(command, timeout_seconds=7200)
+    base["trainingDirectory"] = str(training_dir)
+    base["runConfig"] = run_config
+    base["commands"] = {"miniGsplatTrainer": trainer}
+
+    if trainer["status"] != "pass":
+        result_status = trainer["status"]
+        result_summary = command_summary(trainer, max_lines=8) or "mini gsplat trainer failed"
+        if result_path.exists():
+            result = read_json(result_path)
+            base["trainingResultPath"] = str(result_path)
+            base["trainingResult"] = result
+            if isinstance(result.get("status"), str):
+                result_status = result["status"]
+            result_checks = result.get("checks", []) if isinstance(result.get("checks"), list) else []
+            base["checks"].extend(check for check in result_checks if isinstance(check, dict))
+            for check in result_checks:
+                if isinstance(check, dict) and check.get("summary"):
+                    result_summary = str(check["summary"])
+                    break
+        base["stage"]["status"] = result_status if result_status in {"setup_gap", "blocked_license", "blocked_workload", "fail"} else trainer["status"]
+        base["checks"].append(
+            {
+                "id": "mini_gsplat_trainer",
+                "status": base["stage"]["status"],
+                "summary": result_summary,
+            }
+        )
+        return base
+
+    if not result_path.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "training_result",
+                "status": "fail",
+                "summary": "trainer completed without writing training_result.json",
+                "path": str(result_path),
+            }
+        )
+        return base
+
+    result = read_json(result_path)
+    base["trainingResultPath"] = str(result_path)
+    base["trainingResult"] = result
+    result_checks = result.get("checks", []) if isinstance(result.get("checks"), list) else []
+    base["checks"].extend(check for check in result_checks if isinstance(check, dict))
+
+    checkpoint_path = Path(str(result.get("checkpointPath") or ""))
+    exported_artifact_path = Path(str(result.get("exportedArtifactPath") or result.get("splatArtifactPath") or ""))
+    sample_render_path = Path(str(result.get("sampleRenderPath") or ""))
+    loss_samples = result.get("training", {}).get("lossSamples") if isinstance(result.get("training"), dict) else None
+    artifact_checks = [
+        {
+            "id": "checkpoint",
+            "status": "pass" if checkpoint_path.exists() else "fail",
+            "summary": "checkpoint exists" if checkpoint_path.exists() else "checkpoint was not written",
+            "path": str(checkpoint_path),
+        },
+        {
+            "id": "exported_artifact",
+            "status": "pass" if exported_artifact_path.exists() and exported_artifact_path.stat().st_size > 0 else "fail",
+            "summary": "exported splat artifact exists" if exported_artifact_path.exists() else "exported splat artifact was not written",
+            "path": str(exported_artifact_path),
+        },
+        {
+            "id": "loss_samples",
+            "status": "pass" if isinstance(loss_samples, list) and len(loss_samples) >= 2 else "fail",
+            "summary": "loss samples recorded" if isinstance(loss_samples, list) and len(loss_samples) >= 2 else "loss samples were not recorded",
+        },
+        {
+            "id": "sample_render",
+            "status": "pass" if sample_render_path.exists() and sample_render_path.stat().st_size > 0 else "fail",
+            "summary": "sample render exists" if sample_render_path.exists() else "sample render was not written",
+            "path": str(sample_render_path),
+        },
+    ]
+    base["checks"].extend(artifact_checks)
+    base["checkpointPath"] = str(checkpoint_path)
+    base["exportedArtifactPath"] = str(exported_artifact_path)
+    base["splatArtifactPath"] = str(exported_artifact_path)
+    base["sampleRenderPath"] = str(sample_render_path)
+    base["sampleTargetPath"] = result.get("sampleTargetPath")
+    base["metrics"] = result.get("training", {})
+    base["device"] = result.get("device", {})
+    base["versions"] = result.get("versions", {})
+    base["artifact"] = {
+        "path": str(exported_artifact_path),
+        "format": "ply",
+        "sizeBytes": exported_artifact_path.stat().st_size if exported_artifact_path.exists() else 0,
+        "sha256": file_sha256(exported_artifact_path) if exported_artifact_path.exists() else None,
+    }
+
+    check_statuses = [check.get("status") for check in base["checks"] if isinstance(check, dict)]
+    if result.get("status") != "pass" or any(status == "fail" for status in check_statuses):
+        base["stage"]["status"] = "fail"
+    elif any(status == "warning" for status in check_statuses):
+        base["stage"]["status"] = "warning"
+    else:
+        base["stage"]["status"] = "pass"
     return base
 
 

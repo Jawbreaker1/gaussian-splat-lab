@@ -1,6 +1,6 @@
 # Stable Pipeline Build Plan
 
-Verified: 2026-06-08
+Verified: 2026-06-15
 
 Goal: build the first robust golden path from local video to browser-visible Gaussian Splat on the Windows RTX 5090 workstation.
 
@@ -21,69 +21,65 @@ Already in place:
 - video intake stage with explicit missing-file and metadata stop conditions
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
-- low-load stage gates for splat training, packaging, viewer validation and quality reporting
+- minimal gsplat training orchestration with checkpoint/PLY/sample-render validation once the gsplat CUDA extension is available
+- low-load stage gates for packaging, viewer validation and quality reporting
 - placeholder capture and viewer asset manifests
 - capture readiness reporting for local file/provenance status before intake
 
 Not yet real:
 
-- a known-good capture video that passes intake, frame sampling and SfM
-- actual splat training implementation
-- actual packaging/export conversion
+- gsplat CUDA rasterization on this WSL environment, because `nvcc` / CUDA Toolkit is not visible and no compatible prebuilt gsplat wheel exists for Python 3.12 + torch 2.11/cu128
+- a clean commercially reusable capture; the current imported phone video is local-test-only evidence
+- actual packaging/export conversion beyond the training-produced PLY handoff
 - real splat viewer load and screenshot validation
 
 ## Current Environment Result
 
-As of 2026-06-08, the repo-local `.venv` and workstation validate:
+As of 2026-06-15, the repo-local `.venv` and workstation validate:
 
 - RTX 5090 visible through `nvidia-smi`
 - PyTorch CUDA smoke passes with torch 2.11.0+cu128
-- gsplat 1.5.3 imports successfully
+- gsplat 1.5.3 imports successfully, but its CUDA extension reports `setup_gap` because WSL has no `nvcc`/CUDA Toolkit visible
 - COLMAP 3.9.1 is on PATH at `/usr/bin/colmap`
 - installed COLMAP package reports `without CUDA`, so first SfM validation should assume CPU COLMAP
 - FFmpeg/ffprobe 6.1.1-3ubuntu5 are on PATH at `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`
 - the installed Ubuntu FFmpeg build includes `--enable-gpl`; keep it as a lab-only system tool until redistribution/build flags are reviewed
 - frame sampling passed a synthetic CLI smoke test; evidence is recorded in `docs/validation/phase-1-frame-sampling-smoke.md`
 - SfM has a runnable COLMAP stage wrapper; the first post-PSU test produced a passing sparse reconstruction from local frame input
+- `splat_training` now has a minimal gsplat trainer wrapper and correctly stops at `setup_gap` when the gsplat CUDA extension cannot load
 
 ## Workload Safety
 
-Heavy stages are currently guarded because the workstation has a known power-supply/load stability concern. `sfm`, `splat_training` and `viewer` must not run accidentally. The CLI writes `blocked_workload` unless a heavy stage is explicitly run with `--allow-heavy`.
+Heavy stages remain guarded even after the PSU replacement. `sfm`, `splat_training` and `viewer` must not run accidentally. The CLI writes `blocked_workload` unless a heavy stage is explicitly run with `--allow-heavy`.
 
 The UI intentionally sends `allowHeavy=false`; use CLI approval only after confirming the machine can sustain the load.
 
 ## Next Build Step
 
-Provide a known-good local capture and make the video intake stage pass.
+Make a CUDA Toolkit with `nvcc` visible inside WSL, then rerun the guarded `splat_training` stage.
 
-Current setup note: FFmpeg/ffprobe is installed and now recorded by the environment report. The current placeholder capture points at `data/videos/static-room-orbit-001.mp4`, which does not exist yet, so intake correctly writes a `fail` report and frame sampling refuses to run on top of it.
+Current setup note: PyTorch CUDA works on the RTX 5090, but gsplat 1.5.3 JIT-loads a CUDA extension and currently reports `setup_gap` because `torch.utils.cpp_extension.CUDA_HOME` is `None` and no `nvcc` command is on PATH. The official gsplat wheel index checked during validation did not provide a compatible prebuilt wheel for Python 3.12 + torch 2.11/cu128.
 
 Why next:
 
-- the environment gate now passes on the RTX workstation
-- intake is the first stage that touches real capture input
-- it gives frame sampling and SfM a validated metadata contract instead of ad hoc file paths
-- the frame sampling command is already implemented and will produce `FrameManifest` once intake passes
-- the SfM command is already implemented and will refuse to run until `FrameManifest` is valid
+- intake, frame sampling and SfM now pass on a local-test-only capture
+- the training wrapper exists and reaches the exact gsplat CUDA-extension boundary
+- without `nvcc` or a compatible prebuilt gsplat wheel, training cannot produce a PLY/checkpoint artifact
+- once this setup gap is closed, the same `splat_training --allow-heavy` command should run the first real GPU training smoke
 
-Expected output:
+Expected output after the setup gap is closed:
 
 ```text
-outputs/jobs/<job_id>/reports/intake.json
+outputs/jobs/<job_id>/reports/splat_training.json
+outputs/jobs/<job_id>/splats/<run_timestamp>/checkpoint.pt
+outputs/jobs/<job_id>/splats/<run_timestamp>/trained_splats.ply
+outputs/jobs/<job_id>/splats/<run_timestamp>/sample_render.png
 ```
-
-Minimum intake report fields:
-
-- source video path
-- source/provenance/license fields from the capture manifest
-- `ffprobe` availability/version or `setup_gap`
-- duration, resolution, frame rate, codec, bitrate and stream summary
-- pass/warning/fail classification against MVP limits
 
 Stop condition:
 
-- no frame sampling may run until intake report is `pass` or an explicitly accepted `warning`
-- missing video file or missing/unclear source rights must stop the pipeline
+- no packaging or viewer stage may run until `splat_training` writes a `pass` or explicitly accepted `warning` report with an exported artifact path
+- do not install or redistribute NVIDIA CUDA Toolkit components without recording the exact install source and terms in the installation ledger
 
 ## Golden Path Implementation Sequence
 
@@ -194,8 +190,8 @@ Inputs:
 
 Components:
 
-- Nerfstudio/Splatfacto first
-- `gsplat` backend
+- minimal repo-local `gsplat` trainer first
+- Nerfstudio/Splatfacto remains a later alternative once dependency impact is justified
 
 Output:
 
@@ -205,6 +201,7 @@ Output:
 Validation:
 
 - training command and versions recorded
+- gsplat CUDA extension availability checked before training
 - export exists
 - loss samples and wall time recorded
 - sample render evidence saved where practical

@@ -108,7 +108,7 @@ After SfM passes, the next expected boundary is `splat_training`:
 .venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job "$JOB" --allow-heavy
 ```
 
-Today this should not launch real training; it should report that training orchestration is not implemented yet. That is the next implementation task before a full video-to-splat run is possible.
+After the 2026-06-15 trainer update, this launches the minimal gsplat training wrapper only when `--allow-heavy` is supplied. In the current WSL environment it should still stop at `setup_gap` until `nvcc` or a compatible prebuilt gsplat wheel is available.
 
 ## Validation Commands
 

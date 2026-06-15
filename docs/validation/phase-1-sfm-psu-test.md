@@ -27,5 +27,5 @@ Purpose: first post-PSU heavier local reconstruction test on the Windows RTX 509
 
 - PSU-related instability was not observed during this SfM run.
 - Installed COLMAP reports without CUDA, so this run primarily exercised CPU/disk rather than sustained GPU load.
-- `splat_training` is the next implementation boundary; the current stage reports `setup_gap` and does not launch training yet.
+- `splat_training` was the next implementation boundary at this point. As of 2026-06-15, a minimal gsplat wrapper exists, but the current WSL environment still reports `setup_gap` until a CUDA Toolkit with `nvcc` or a compatible prebuilt gsplat wheel is available.
 - SfM implementation was updated during this test to use a clean COLMAP image directory and to select the best sparse model when COLMAP emits multiple reconstructions.

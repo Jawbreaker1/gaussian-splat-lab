@@ -209,3 +209,50 @@ Revert plan: `sudo apt-get remove ffmpeg` if installed by apt.
 Result: pass; user installed FFmpeg manually. Installed apt package `ffmpeg 7:6.1.1-3ubuntu5` at `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`; both report version `6.1.1-3ubuntu5`.
 Notes: The Ubuntu build configuration includes `--enable-gpl`, so this remains conditional for commercial/product use. It is acceptable as a system external tool in this lab, but must not be bundled or redistributed without LGPL/GPL/build-flag review.
 
+## Entry: 2026-06-15 Install packaging into .venv
+
+Date: 2026-06-15
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Provide the Python packaging utility required by the local torch/gsplat training runtime path.
+Dependency: Python package `packaging`
+Commercial decision: `packaging` is `accepted` / `allowed_with_notice` in `framework-evaluation.json`; package metadata reports `Apache-2.0 OR BSD-2-Clause`.
+Command:
+
+```bash
+.venv/bin/python -m pip install --no-cache-dir packaging
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: install `packaging` inside ignored `.venv/` only and update `requirements/gpu-cu128.txt` with the exact version.
+Validation: `.venv/bin/python -c "import packaging; print(packaging.__version__)"` and the `splat_training` stage.
+Revert plan: uninstall with `.venv/bin/python -m pip uninstall packaging`; full rollback remains deleting `.venv/`.
+Result: pass; installed `packaging 26.2` into `.venv`; exact package freeze updated in `requirements/gpu-cu128.txt`.
+Notes: This was discovered by the first gsplat training smoke attempt, which failed before sustained GPU load with `No module named 'packaging'`.
+
+## Entry: 2026-06-15 Attempt nvidia-cuda-nvcc-cu12 wheel, then revert
+
+Date: 2026-06-15
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Test whether a repo-local CUDA 12.8 nvcc wheel could satisfy gsplat JIT compilation without a system CUDA Toolkit install.
+Dependency: Python package `nvidia-cuda-nvcc-cu12`
+Commercial decision: Covered by the existing `nvidia-cuda` conditional decision in `framework-evaluation.json`; package metadata reports NVIDIA Proprietary Software.
+Command:
+
+```bash
+.venv/bin/python -m pip install --no-cache-dir nvidia-cuda-nvcc-cu12==12.8.93
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: install NVIDIA CUDA compiler-related files inside ignored `.venv/` only.
+Validation: inspect wheel contents for `nvcc`, run `torch.utils.cpp_extension.CUDA_HOME`, and re-run `splat_training`.
+Revert plan: uninstall with `.venv/bin/python -m pip uninstall nvidia-cuda-nvcc-cu12`; full rollback remains deleting `.venv/`.
+Result: reverted; the wheel installed successfully but did not provide a `bin/nvcc` executable, so it did not satisfy gsplat's CUDA toolkit check. It was removed with:
+
+```bash
+.venv/bin/python -m pip uninstall -y nvidia-cuda-nvcc-cu12
+```
+
+Notes: After revert, `requirements/gpu-cu128.txt` no longer contains `nvidia-cuda-nvcc-cu12`. The remaining setup gap is a CUDA Toolkit with `nvcc` visible to WSL or a compatible prebuilt gsplat wheel.
+

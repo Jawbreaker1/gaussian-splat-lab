@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "verifiedAt": "2026-06-07",
+  "verifiedAt": "2026-06-15",
   "licensePolicy": {
     "preferredSpdx": [
       "MIT",
@@ -150,6 +150,24 @@
         "Do not use bundled sample datasets or model weights unless their separate licenses allow the intended use."
       ],
       "distributionRisk": "medium",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "python-packaging",
+      "name": "Python packaging",
+      "role": "Python package version and compatibility utility used by the training runtime stack",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "decision": "accepted",
+      "reason": "Permissive dual-license metadata package required by local torch/gsplat training execution.",
+      "officialSources": [
+        "https://github.com/pypa/packaging"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep Apache-2.0 or BSD-2-Clause license notices when distributing.",
+        "Record the exact installed version in the Python environment freeze."
+      ],
+      "distributionRisk": "low",
       "reviewRequiredBeforeProduction": true
     },
     {

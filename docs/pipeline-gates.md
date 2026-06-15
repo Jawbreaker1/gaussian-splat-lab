@@ -1,6 +1,6 @@
 # Pipeline Gates
 
-Verified: 2026-06-08
+Verified: 2026-06-15
 
 The media pipeline must be stage-based and self-validating. Preflight gates use the same report/status mechanics, but they are project and workstation readiness checks rather than media-processing stages. A downstream stage may only read an upstream output after that output has a passing validation report.
 
@@ -97,13 +97,13 @@ Initial thresholds are intentionally conservative and can be tuned after known-g
 | Capture intake | local file exists; duration 10-120 seconds; resolution at least 720p; license/provenance non-empty |
 | Frame sampling | 50-250 frames; no missing files; contact sheet generated |
 | SfM | pass at 70% registered frames; warning at 50-70%; sparse points and reprojection error recorded |
-| Training | exported splat exists; final report includes iterations, wall time and loss samples |
+| Training | gsplat CUDA extension available; exported splat exists; final report includes iterations, wall time and loss samples |
 | Packaging | artifact hash and byte size recorded; selected viewer supports the format |
 | Viewer | nonblank screenshot; camera reset returns to initial pose |
 
 ## Current Workload Guard
 
-Training and viewer validation are currently guarded stage contracts, not active heavy implementations. They report `blocked_workload` when upstream data is ready unless an operator explicitly launches with `--allow-heavy`.
+SfM, training and viewer validation remain guarded heavy stages. Training now has a minimal gsplat orchestration behind `--allow-heavy`; in the current WSL environment it reports `setup_gap` because gsplat cannot load/JIT its CUDA extension without `nvcc` or a compatible prebuilt wheel. Viewer validation remains a guarded setup boundary until packaging produces a viewer-compatible artifact.
 
 ## Responsibility Boundaries
 

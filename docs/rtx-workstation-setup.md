@@ -1,6 +1,6 @@
 # RTX Workstation Setup
 
-Verified: 2026-06-08
+Verified: 2026-06-15
 
 This document records the local workstation setup needed for the Gaussian Splat golden path.
 
@@ -22,13 +22,30 @@ Validated in `.venv`:
 - torch 2.11.0+cu128
 - torchvision 0.26.0+cu128
 - gsplat 1.5.3
+- packaging 26.2
 - PyTorch CUDA smoke: pass on NVIDIA GeForce RTX 5090
+- gsplat CUDA extension: setup gap; `nvcc` / CUDA Toolkit is not visible in WSL
 
 Exact package freeze:
 
 ```text
 requirements/gpu-cu128.txt
 ```
+
+## CUDA Toolkit Boundary
+
+PyTorch CUDA works with the installed Windows driver/runtime, but gsplat 1.5.3 JIT-loads a CUDA extension and currently needs a CUDA Toolkit with `nvcc` visible inside WSL. Current checks:
+
+```text
+torch.utils.cpp_extension.CUDA_HOME = None
+nvcc: not found
+```
+
+A repo-local `nvidia-cuda-nvcc-cu12==12.8.93` wheel was tested and reverted because it did not provide a `bin/nvcc` executable. The official gsplat wheel index checked on 2026-06-15 did not list a compatible prebuilt wheel for Python 3.12 + torch 2.11 + CUDA 12.8.
+
+NVIDIA's WSL guidance says the Windows NVIDIA driver should remain the GPU driver, and WSL should use a CUDA Toolkit package that does not install or overwrite a Linux NVIDIA driver. Avoid the `cuda`, `cuda-12-x`, and `cuda-drivers` metapackages under WSL; use a toolkit-only package/path.
+
+Next setup action: install or expose a CUDA Toolkit with `nvcc` inside WSL, preferably matching the CUDA 12.8 runtime line used by the current PyTorch wheel, and record the exact source, version and revert plan in `docs/installation-and-revert-ledger.md`.
 
 ## COLMAP
 

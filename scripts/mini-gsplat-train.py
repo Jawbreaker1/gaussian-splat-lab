@@ -1,0 +1,613 @@
+#!/usr/bin/env python3
+"""Minimal COLMAP-to-gsplat training smoke for the lab pipeline."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import shutil
+import subprocess
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import torch
+from PIL import Image
+from gsplat import rasterization
+from gsplat.cuda import _backend as gsplat_backend
+from gsplat.exporter import export_splats
+
+
+SH_C0 = 0.28209479177387814
+
+
+@dataclass(frozen=True)
+class Camera:
+    camera_id: int
+    model: str
+    width: int
+    height: int
+    params: list[float]
+
+
+@dataclass(frozen=True)
+class RegisteredImage:
+    image_id: int
+    qvec: list[float]
+    tvec: list[float]
+    camera_id: int
+    name: str
+
+
+@dataclass(frozen=True)
+class Point3D:
+    xyz: list[float]
+    rgb: list[float]
+    error: float
+
+
+def write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=2)
+        handle.write("\n")
+
+
+def run_command(command: list[str], timeout_seconds: int) -> dict[str, Any]:
+    executable = shutil.which(command[0])
+    if executable is None:
+        return {
+            "command": command,
+            "status": "setup_gap",
+            "exitCode": None,
+            "stdout": "",
+            "stderr": f"{command[0]} not found on PATH",
+        }
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": command,
+            "status": "fail",
+            "exitCode": None,
+            "stdout": exc.stdout or "",
+            "stderr": f"command timed out after {timeout_seconds}s",
+        }
+    return {
+        "command": command,
+        "status": "pass" if result.returncode == 0 else "fail",
+        "exitCode": result.returncode,
+        "stdout": result.stdout.strip(),
+        "stderr": result.stderr.strip(),
+    }
+
+
+def model_to_text(sparse_model_path: Path, output_dir: Path) -> dict[str, Any]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return run_command(
+        [
+            "colmap",
+            "model_converter",
+            "--input_path",
+            str(sparse_model_path),
+            "--output_path",
+            str(output_dir),
+            "--output_type",
+            "TXT",
+        ],
+        timeout_seconds=300,
+    )
+
+
+def content_lines(path: Path) -> list[str]:
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+
+def parse_cameras(path: Path) -> dict[int, Camera]:
+    cameras: dict[int, Camera] = {}
+    for line in content_lines(path):
+        fields = line.split()
+        if len(fields) < 5:
+            continue
+        camera_id = int(fields[0])
+        cameras[camera_id] = Camera(
+            camera_id=camera_id,
+            model=fields[1],
+            width=int(fields[2]),
+            height=int(fields[3]),
+            params=[float(value) for value in fields[4:]],
+        )
+    return cameras
+
+
+def parse_images(path: Path) -> list[RegisteredImage]:
+    lines = content_lines(path)
+    images: list[RegisteredImage] = []
+    index = 0
+    while index < len(lines):
+        fields = lines[index].split()
+        if len(fields) >= 10:
+            images.append(
+                RegisteredImage(
+                    image_id=int(fields[0]),
+                    qvec=[float(value) for value in fields[1:5]],
+                    tvec=[float(value) for value in fields[5:8]],
+                    camera_id=int(fields[8]),
+                    name=" ".join(fields[9:]),
+                )
+            )
+        index += 2
+    return images
+
+
+def parse_points3d(path: Path, max_points: int) -> list[Point3D]:
+    points: list[Point3D] = []
+    for line in content_lines(path):
+        fields = line.split()
+        if len(fields) < 8:
+            continue
+        points.append(
+            Point3D(
+                xyz=[float(value) for value in fields[1:4]],
+                rgb=[float(value) / 255.0 for value in fields[4:7]],
+                error=float(fields[7]),
+            )
+        )
+    points.sort(key=lambda point: point.error)
+    return points[:max_points]
+
+
+def camera_intrinsics(camera: Camera, scale: float) -> np.ndarray:
+    if camera.model in {"SIMPLE_PINHOLE", "SIMPLE_RADIAL"}:
+        fx = fy = camera.params[0]
+        cx = camera.params[1]
+        cy = camera.params[2]
+    elif camera.model == "PINHOLE":
+        fx, fy, cx, cy = camera.params[:4]
+    elif camera.model in {"OPENCV", "OPENCV_FISHEYE", "FULL_OPENCV"}:
+        fx, fy, cx, cy = camera.params[:4]
+    else:
+        raise ValueError(f"unsupported COLMAP camera model: {camera.model}")
+    return np.array(
+        [
+            [fx * scale, 0.0, cx * scale],
+            [0.0, fy * scale, cy * scale],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+
+
+def qvec_to_rotmat(qvec: list[float]) -> np.ndarray:
+    qw, qx, qy, qz = qvec
+    return np.array(
+        [
+            [
+                1 - 2 * qy * qy - 2 * qz * qz,
+                2 * qx * qy - 2 * qw * qz,
+                2 * qz * qx + 2 * qw * qy,
+            ],
+            [
+                2 * qx * qy + 2 * qw * qz,
+                1 - 2 * qz * qz - 2 * qx * qx,
+                2 * qy * qz - 2 * qw * qx,
+            ],
+            [
+                2 * qz * qx - 2 * qw * qy,
+                2 * qy * qz + 2 * qw * qx,
+                1 - 2 * qx * qx - 2 * qy * qy,
+            ],
+        ],
+        dtype=np.float32,
+    )
+
+
+def viewmat_from_image(image: RegisteredImage) -> np.ndarray:
+    viewmat = np.eye(4, dtype=np.float32)
+    viewmat[:3, :3] = qvec_to_rotmat(image.qvec)
+    viewmat[:3, 3] = np.array(image.tvec, dtype=np.float32)
+    return viewmat
+
+
+def select_evenly(items: list[RegisteredImage], max_items: int) -> list[RegisteredImage]:
+    if len(items) <= max_items:
+        return items
+    indices = np.linspace(0, len(items) - 1, max_items)
+    selected: list[RegisteredImage] = []
+    seen: set[int] = set()
+    for raw_index in indices:
+        index = int(round(float(raw_index)))
+        if index not in seen:
+            selected.append(items[index])
+            seen.add(index)
+    return selected
+
+
+def load_training_views(
+    images: list[RegisteredImage],
+    cameras: dict[int, Camera],
+    image_dir: Path,
+    max_images: int,
+    max_render_size: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[dict[str, Any]], int, int]:
+    available = [image for image in sorted(images, key=lambda item: item.name) if (image_dir / image.name).exists()]
+    selected = select_evenly(available, max_images)
+    if not selected:
+        raise ValueError("no registered COLMAP images exist in image directory")
+
+    camera = cameras[selected[0].camera_id]
+    scale = min(max_render_size / max(camera.width, camera.height), 1.0)
+    width = max(1, int(round(camera.width * scale)))
+    height = max(1, int(round(camera.height * scale)))
+
+    targets = []
+    viewmats = []
+    intrinsics = []
+    selected_manifest = []
+    for image in selected:
+        camera = cameras[image.camera_id]
+        rgb = Image.open(image_dir / image.name).convert("RGB").resize((width, height), Image.Resampling.BILINEAR)
+        target = np.asarray(rgb, dtype=np.float32) / 255.0
+        targets.append(torch.from_numpy(target))
+        viewmats.append(torch.from_numpy(viewmat_from_image(image)))
+        intrinsics.append(torch.from_numpy(camera_intrinsics(camera, scale)))
+        selected_manifest.append(
+            {
+                "imageId": image.image_id,
+                "name": image.name,
+                "cameraId": image.camera_id,
+                "path": str(image_dir / image.name),
+            }
+        )
+
+    return (
+        torch.stack(targets).to(device),
+        torch.stack(viewmats).to(device),
+        torch.stack(intrinsics).to(device),
+        selected_manifest,
+        width,
+        height,
+    )
+
+
+def initial_scale(points: torch.Tensor) -> float:
+    if points.shape[0] < 2:
+        return 0.01
+    sample = points[: min(points.shape[0], 2048)].detach().cpu()
+    distances = torch.cdist(sample, sample)
+    distances += torch.eye(sample.shape[0]) * 1.0e9
+    nearest = distances.min(dim=1).values
+    bounds = points.detach().cpu().amax(dim=0) - points.detach().cpu().amin(dim=0)
+    diagonal = float(torch.linalg.norm(bounds).item())
+    median_nearest = float(torch.median(nearest).item())
+    lower = max(diagonal * 0.0005, 1.0e-4)
+    upper = max(diagonal * 0.02, lower)
+    return min(max(median_nearest * 0.7, lower), upper)
+
+
+def save_image(path: Path, tensor: torch.Tensor) -> None:
+    image = tensor.detach().clamp(0.0, 1.0).cpu().numpy()
+    image_u8 = (image * 255.0).round().astype(np.uint8)
+    Image.fromarray(image_u8).save(path)
+
+
+def train(args: argparse.Namespace) -> dict[str, Any]:
+    started = time.perf_counter()
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    colmap_text_dir = output_dir / "colmap_txt"
+    sparse_model_path = Path(args.sparse_model_path)
+    image_dir = Path(args.image_dir)
+
+    converter = model_to_text(sparse_model_path, colmap_text_dir)
+    if converter["status"] != "pass":
+        return {
+            "status": converter["status"],
+            "checks": [
+                {
+                    "id": "colmap_model_converter",
+                    "status": converter["status"],
+                    "summary": converter.get("stderr") or "COLMAP model conversion failed",
+                }
+            ],
+            "commands": {"modelConverter": converter},
+        }
+
+    cameras = parse_cameras(colmap_text_dir / "cameras.txt")
+    images = parse_images(colmap_text_dir / "images.txt")
+    points = parse_points3d(colmap_text_dir / "points3D.txt", args.max_points)
+    if not cameras or not images or not points:
+        return {
+            "status": "fail",
+            "checks": [
+                {
+                    "id": "colmap_text_model",
+                    "status": "fail",
+                    "summary": "COLMAP text model did not contain cameras, registered images and sparse points",
+                    "cameraCount": len(cameras),
+                    "registeredImageCount": len(images),
+                    "pointCount": len(points),
+                }
+            ],
+            "commands": {"modelConverter": converter},
+        }
+
+    if not torch.cuda.is_available():
+        return {
+            "status": "setup_gap",
+            "checks": [
+                {
+                    "id": "torch_cuda",
+                    "status": "setup_gap",
+                    "summary": "PyTorch CUDA is not available for gsplat training",
+                }
+            ],
+            "commands": {"modelConverter": converter},
+        }
+
+    if getattr(gsplat_backend, "_C", None) is None:
+        return {
+            "status": "setup_gap",
+            "checks": [
+                {
+                    "id": "gsplat_cuda_extension",
+                    "status": "setup_gap",
+                    "summary": "gsplat CUDA extension is unavailable; install a CUDA toolkit with nvcc visible to WSL or use a compatible prebuilt gsplat wheel",
+                    "required": "nvcc or compatible gsplat prebuilt wheel",
+                }
+            ],
+            "commands": {"modelConverter": converter},
+        }
+
+    torch.manual_seed(args.seed)
+    device = torch.device("cuda")
+    torch.cuda.reset_peak_memory_stats(device)
+
+    targets, viewmats, Ks, selected_images, width, height = load_training_views(
+        images=images,
+        cameras=cameras,
+        image_dir=image_dir,
+        max_images=args.max_images,
+        max_render_size=args.max_render_size,
+        device=device,
+    )
+    backgrounds = targets.mean(dim=(1, 2)).clamp(0.0, 1.0)
+
+    means_init = torch.tensor([point.xyz for point in points], dtype=torch.float32, device=device)
+    rgb_init = torch.tensor([point.rgb for point in points], dtype=torch.float32, device=device).clamp(0.01, 0.99)
+    scale_value = initial_scale(means_init)
+    means = torch.nn.Parameter(means_init)
+    color_logits = torch.nn.Parameter(torch.logit(rgb_init))
+    log_scales = torch.nn.Parameter(torch.full((len(points), 3), math.log(scale_value), dtype=torch.float32, device=device))
+    opacity_logits = torch.nn.Parameter(torch.full((len(points),), torch.logit(torch.tensor(0.55)).item(), dtype=torch.float32, device=device))
+    quats = torch.zeros((len(points), 4), dtype=torch.float32, device=device)
+    quats[:, 0] = 1.0
+
+    optimizer = torch.optim.Adam(
+        [
+            {"params": [means], "lr": args.mean_lr},
+            {"params": [color_logits], "lr": args.color_lr},
+            {"params": [log_scales], "lr": args.scale_lr},
+            {"params": [opacity_logits], "lr": args.opacity_lr},
+        ]
+    )
+
+    loss_samples: list[dict[str, Any]] = []
+    last_render = None
+    last_target = None
+    last_camera_index = 0
+    for iteration in range(1, args.iterations + 1):
+        camera_index = (iteration - 1) % targets.shape[0]
+        colors = torch.sigmoid(color_logits)
+        scales = torch.exp(log_scales).clamp(1.0e-5, 1.0e3)
+        opacities = torch.sigmoid(opacity_logits)
+        rendered, _alphas, _info = rasterization(
+            means=means,
+            quats=quats,
+            scales=scales,
+            opacities=opacities,
+            colors=colors,
+            viewmats=viewmats[camera_index : camera_index + 1],
+            Ks=Ks[camera_index : camera_index + 1],
+            width=width,
+            height=height,
+            backgrounds=backgrounds[camera_index : camera_index + 1],
+            packed=False,
+            rasterize_mode="classic",
+        )
+        prediction = rendered[0, :, :, :3]
+        target = targets[camera_index]
+        loss = torch.nn.functional.l1_loss(prediction, target)
+
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        with torch.no_grad():
+            log_scales.clamp_(math.log(1.0e-5), math.log(max(scale_value * 20.0, 1.0e-4)))
+            opacity_logits.clamp_(-8.0, 8.0)
+            color_logits.clamp_(-8.0, 8.0)
+
+        if iteration == 1 or iteration == args.iterations or iteration % args.sample_every == 0:
+            loss_samples.append(
+                {
+                    "iteration": iteration,
+                    "cameraIndex": int(camera_index),
+                    "loss": float(loss.detach().cpu().item()),
+                }
+            )
+        last_render = prediction.detach()
+        last_target = target.detach()
+        last_camera_index = int(camera_index)
+
+    torch.cuda.synchronize(device)
+    wall_time = time.perf_counter() - started
+
+    checkpoint_path = output_dir / "checkpoint.pt"
+    sample_render_path = output_dir / "sample_render.png"
+    sample_target_path = output_dir / "sample_target.png"
+    exported_ply_path = output_dir / "trained_splats.ply"
+    if last_render is not None:
+        save_image(sample_render_path, last_render)
+    if last_target is not None:
+        save_image(sample_target_path, last_target)
+
+    final_colors = torch.sigmoid(color_logits).detach()
+    sh0 = ((final_colors - 0.5) / SH_C0).unsqueeze(1)
+    shN = torch.empty((len(points), 0, 3), dtype=torch.float32, device=device)
+    final_log_scales = log_scales.detach()
+    final_opacity_logits = opacity_logits.detach()
+    final_quats = quats.detach()
+    final_means = means.detach()
+
+    torch.save(
+        {
+            "means": final_means.cpu(),
+            "log_scales": final_log_scales.cpu(),
+            "quats": final_quats.cpu(),
+            "opacity_logits": final_opacity_logits.cpu(),
+            "sh0": sh0.cpu(),
+            "shN": shN.cpu(),
+            "source": {
+                "sparseModelPath": str(sparse_model_path),
+                "imageDirectory": str(image_dir),
+                "selectedImages": selected_images,
+            },
+            "training": {
+                "iterations": args.iterations,
+                "lossSamples": loss_samples,
+                "renderWidth": width,
+                "renderHeight": height,
+            },
+        },
+        checkpoint_path,
+    )
+    export_splats(
+        means=final_means,
+        scales=final_log_scales,
+        quats=final_quats,
+        opacities=final_opacity_logits,
+        sh0=sh0,
+        shN=shN,
+        format="ply",
+        save_to=str(exported_ply_path),
+    )
+
+    max_memory_mib = float(torch.cuda.max_memory_allocated(device) / (1024 * 1024))
+    return {
+        "status": "pass",
+        "checks": [
+            {
+                "id": "training_run",
+                "status": "pass",
+                "summary": "minimal gsplat training completed",
+            },
+            {
+                "id": "exported_splat",
+                "status": "pass",
+                "summary": "PLY splat artifact exported",
+                "path": str(exported_ply_path),
+            },
+            {
+                "id": "sample_render",
+                "status": "pass" if sample_render_path.exists() else "fail",
+                "summary": "sample render saved" if sample_render_path.exists() else "sample render was not saved",
+                "path": str(sample_render_path),
+            },
+        ],
+        "commands": {"modelConverter": converter},
+        "backend": "gsplat",
+        "versions": {
+            "torch": torch.__version__,
+            "torchCuda": torch.version.cuda,
+            "gsplat": __import__("gsplat").__version__,
+        },
+        "device": {
+            "name": torch.cuda.get_device_name(device),
+            "maxMemoryAllocatedMiB": round(max_memory_mib, 2),
+        },
+        "source": {
+            "sparseModelPath": str(sparse_model_path),
+            "imageDirectory": str(image_dir),
+            "registeredImageCount": len(images),
+            "sparsePointCount": len(points),
+        },
+        "training": {
+            "iterations": args.iterations,
+            "imagesUsed": len(selected_images),
+            "selectedImages": selected_images,
+            "renderWidth": width,
+            "renderHeight": height,
+            "gaussianCount": len(points),
+            "initialScale": scale_value,
+            "lossSamples": loss_samples,
+            "initialLoss": loss_samples[0]["loss"] if loss_samples else None,
+            "finalLoss": loss_samples[-1]["loss"] if loss_samples else None,
+            "lastCameraIndex": last_camera_index,
+            "wallTimeSeconds": round(wall_time, 3),
+        },
+        "checkpointPath": str(checkpoint_path),
+        "exportedArtifactPath": str(exported_ply_path),
+        "splatArtifactPath": str(exported_ply_path),
+        "sampleRenderPath": str(sample_render_path),
+        "sampleTargetPath": str(sample_target_path),
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run a minimal gsplat training smoke from a COLMAP sparse model.")
+    parser.add_argument("--sparse-model-path", required=True)
+    parser.add_argument("--image-dir", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--result-json", required=True)
+    parser.add_argument("--iterations", type=int, default=40)
+    parser.add_argument("--max-images", type=int, default=8)
+    parser.add_argument("--max-points", type=int, default=6000)
+    parser.add_argument("--max-render-size", type=int, default=384)
+    parser.add_argument("--sample-every", type=int, default=5)
+    parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--mean-lr", type=float, default=0.0005)
+    parser.add_argument("--color-lr", type=float, default=0.02)
+    parser.add_argument("--scale-lr", type=float, default=0.001)
+    parser.add_argument("--opacity-lr", type=float, default=0.01)
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
+    args = parser.parse_args()
+    result_json = Path(args.result_json)
+    try:
+        result = train(args)
+    except Exception as exc:  # noqa: BLE001 - stage report should preserve boundary failure
+        result = {
+            "status": "fail",
+            "checks": [
+                {
+                    "id": "training_exception",
+                    "status": "fail",
+                    "summary": str(exc),
+                }
+            ],
+        }
+    write_json(result_json, result)
+    print(f"training_status={result.get('status')}")
+    print(f"training_result={result_json}")
+    return 0 if result.get("status") == "pass" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
