@@ -8,11 +8,13 @@ import hashlib
 import importlib.util
 import math
 import json
+import os
 import platform
 import re
 import shutil
 import subprocess
 import sys
+import sysconfig
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -170,8 +172,8 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def run_command(command: list[str], timeout_seconds: int = 20) -> dict[str, Any]:
-    executable = shutil.which(command[0])
+def run_command(command: list[str], timeout_seconds: int = 20, env: dict[str, str] | None = None) -> dict[str, Any]:
+    executable = shutil.which(command[0], path=env.get("PATH") if env else None)
     if executable is None:
         return {
             "name": command[0],
@@ -188,6 +190,7 @@ def run_command(command: list[str], timeout_seconds: int = 20) -> dict[str, Any]
             cwd=repo_root_from_script(),
             capture_output=True,
             check=False,
+            env=env,
             text=True,
             timeout=timeout_seconds,
         )
@@ -217,6 +220,65 @@ def command_summary(command_result: dict[str, Any], max_lines: int = 8) -> str:
     return "\n".join(lines[:max_lines])
 
 
+def check_python_dev_headers() -> dict[str, Any]:
+    include_path = sysconfig.get_path("include")
+    header_path = Path(include_path) / "Python.h" if include_path else None
+    package_hint = f"python{sys.version_info.major}.{sys.version_info.minor}-dev"
+    header_exists = bool(header_path and header_path.exists())
+    return {
+        "id": "python_dev_headers",
+        "status": "pass" if header_exists else "setup_gap",
+        "summary": "Python development headers are available" if header_exists else f"Python.h is missing; install {package_hint}",
+        "path": str(header_path) if header_path else None,
+        "required": package_hint,
+    }
+
+
+def cuda_home_candidate() -> Path | None:
+    raw_cuda_home = os.environ.get("CUDA_HOME")
+    if raw_cuda_home:
+        return Path(raw_cuda_home)
+    for candidate in (Path("/usr/local/cuda-12.8"), Path("/usr/local/cuda")):
+        if (candidate / "bin" / "nvcc").exists():
+            return candidate
+    return None
+
+
+def build_training_subprocess_environment(torch_cuda: dict[str, Any]) -> tuple[dict[str, str], dict[str, Any]]:
+    env = os.environ.copy()
+    path_prepend: list[str] = []
+
+    virtual_env = os.environ.get("VIRTUAL_ENV")
+    venv_bin = Path(virtual_env) / "bin" if virtual_env else Path(sys.executable).parent
+    if venv_bin.exists():
+        path_prepend.append(str(venv_bin))
+
+    cuda_home = cuda_home_candidate()
+    if cuda_home is not None:
+        env["CUDA_HOME"] = str(cuda_home)
+        cuda_bin = cuda_home / "bin"
+        if cuda_bin.exists():
+            path_prepend.append(str(cuda_bin))
+
+    current_path = env.get("PATH", "")
+    env["PATH"] = os.pathsep.join(path_prepend + ([current_path] if current_path else []))
+
+    if not env.get("TORCH_CUDA_ARCH_LIST"):
+        capability = torch_cuda.get("deviceCapability")
+        if isinstance(capability, (list, tuple)) and len(capability) >= 2:
+            env["TORCH_CUDA_ARCH_LIST"] = f"{capability[0]}.{capability[1]}"
+        else:
+            env["TORCH_CUDA_ARCH_LIST"] = "12.0"
+    env.setdefault("MAX_JOBS", "4")
+
+    return env, {
+        "CUDA_HOME": env.get("CUDA_HOME"),
+        "PATH_PREPEND": path_prepend,
+        "TORCH_CUDA_ARCH_LIST": env.get("TORCH_CUDA_ARCH_LIST"),
+        "MAX_JOBS": env.get("MAX_JOBS"),
+    }
+
+
 def check_torch_cuda() -> dict[str, Any]:
     if importlib.util.find_spec("torch") is None:
         return {
@@ -242,9 +304,11 @@ def check_torch_cuda() -> dict[str, Any]:
         if cuda_available:
             device_index = torch.cuda.current_device()
             tensor = torch.tensor([1.0, 2.0], device="cuda") * 2
+            capability = torch.cuda.get_device_capability(device_index)
             result.update(
                 {
                     "deviceName": torch.cuda.get_device_name(device_index),
+                    "deviceCapability": [int(capability[0]), int(capability[1])],
                     "tensorSmoke": [float(value) for value in tensor.cpu().tolist()],
                 }
             )
@@ -1881,6 +1945,24 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
         base["stage"]["status"] = "setup_gap"
         return base
 
+    trainer_env, trainer_env_summary = build_training_subprocess_environment(torch_cuda)
+    base["commandEnvironment"] = trainer_env_summary
+    nvcc_path = shutil.which("nvcc", path=trainer_env.get("PATH"))
+    setup_checks = [
+        {
+            "id": "cuda_toolkit_nvcc",
+            "status": "pass" if nvcc_path else "setup_gap",
+            "summary": "nvcc is visible to the trainer" if nvcc_path else "nvcc is not visible to the trainer",
+            "path": nvcc_path,
+            "CUDA_HOME": trainer_env_summary.get("CUDA_HOME"),
+        },
+        check_python_dev_headers(),
+    ]
+    base["checks"].extend(setup_checks)
+    if any(check["status"] == "setup_gap" for check in setup_checks):
+        base["stage"]["status"] = "setup_gap"
+        return base
+
     training_config = base["training"] if isinstance(base.get("training"), dict) else {}
     run_config = {
         "iterations": positive_int_setting(training_config, "iterations", 40, 1, 2000),
@@ -1926,7 +2008,7 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
         "--opacity-lr",
         str(run_config["opacityLr"]),
     ]
-    trainer = run_command(command, timeout_seconds=7200)
+    trainer = run_command(command, timeout_seconds=7200, env=trainer_env)
     base["trainingDirectory"] = str(training_dir)
     base["runConfig"] = run_config
     base["commands"] = {"miniGsplatTrainer": trainer}

@@ -28,7 +28,7 @@ Already in place:
 
 Not yet real:
 
-- gsplat CUDA rasterization on this WSL environment, because `nvcc` / CUDA Toolkit is not visible and no compatible prebuilt gsplat wheel exists for Python 3.12 + torch 2.11/cu128
+- gsplat CUDA rasterization on this WSL environment, because Python 3.12 development headers are not installed yet; CUDA Toolkit `nvcc` is now visible
 - a clean commercially reusable capture; the current imported phone video is local-test-only evidence
 - actual packaging/export conversion beyond the training-produced PLY handoff
 - real splat viewer load and screenshot validation
@@ -39,7 +39,7 @@ As of 2026-06-15, the repo-local `.venv` and workstation validate:
 
 - RTX 5090 visible through `nvidia-smi`
 - PyTorch CUDA smoke passes with torch 2.11.0+cu128
-- gsplat 1.5.3 imports successfully, but its CUDA extension reports `setup_gap` because WSL has no `nvcc`/CUDA Toolkit visible
+- gsplat 1.5.3 imports successfully; CUDA Toolkit `nvcc` is visible at `/usr/local/cuda-12.8/bin/nvcc`, but extension build preflight reports `setup_gap` because `/usr/include/python3.12/Python.h` is missing
 - COLMAP 3.9.1 is on PATH at `/usr/bin/colmap`
 - installed COLMAP package reports `without CUDA`, so first SfM validation should assume CPU COLMAP
 - FFmpeg/ffprobe 6.1.1-3ubuntu5 are on PATH at `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`
@@ -56,15 +56,15 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 ## Next Build Step
 
-Make a CUDA Toolkit with `nvcc` visible inside WSL, then rerun the guarded `splat_training` stage.
+Install Python 3.12 development headers, then rerun the guarded `splat_training` stage.
 
-Current setup note: PyTorch CUDA works on the RTX 5090, but gsplat 1.5.3 JIT-loads a CUDA extension and currently reports `setup_gap` because `torch.utils.cpp_extension.CUDA_HOME` is `None` and no `nvcc` command is on PATH. The official gsplat wheel index checked during validation did not provide a compatible prebuilt wheel for Python 3.12 + torch 2.11/cu128.
+Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 imports, `CUDA_HOME` resolves to `/usr/local/cuda-12.8`, and `nvcc` is visible. The current `setup_gap` is `/usr/include/python3.12/Python.h` missing, which gsplat needs while building its CUDA extension. The official gsplat wheel index checked during validation did not provide a compatible prebuilt wheel for Python 3.12 + torch 2.11/cu128.
 
 Why next:
 
 - intake, frame sampling and SfM now pass on a local-test-only capture
 - the training wrapper exists and reaches the exact gsplat CUDA-extension boundary
-- without `nvcc` or a compatible prebuilt gsplat wheel, training cannot produce a PLY/checkpoint artifact
+- without `Python.h`, gsplat cannot compile its CUDA extension even though `nvcc` is now available
 - once this setup gap is closed, the same `splat_training --allow-heavy` command should run the first real GPU training smoke
 
 Expected output after the setup gap is closed:

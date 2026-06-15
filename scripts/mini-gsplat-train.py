@@ -16,9 +16,6 @@ from typing import Any
 import numpy as np
 import torch
 from PIL import Image
-from gsplat import rasterization
-from gsplat.cuda import _backend as gsplat_backend
-from gsplat.exporter import export_splats
 
 
 SH_C0 = 0.28209479177387814
@@ -89,6 +86,13 @@ def run_command(command: list[str], timeout_seconds: int) -> dict[str, Any]:
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
     }
+
+
+def compact_text(value: str, max_chars: int = 2000) -> str:
+    normalized = "\n".join(line.rstrip() for line in value.splitlines())
+    if len(normalized) <= max_chars:
+        return normalized
+    return f"{normalized[:max_chars]}... [truncated]"
 
 
 def model_to_text(sparse_model_path: Path, output_dir: Path) -> dict[str, Any]:
@@ -359,6 +363,35 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             "commands": {"modelConverter": converter},
         }
 
+    try:
+        import gsplat as gsplat_module  # type: ignore[import-not-found]
+        from gsplat import rasterization  # type: ignore[import-not-found]
+        from gsplat.cuda import _backend as gsplat_backend  # type: ignore[import-not-found]
+        from gsplat.exporter import export_splats  # type: ignore[import-not-found]
+    except Exception as exc:  # noqa: BLE001 - extension builds fail at this boundary
+        diagnostic = compact_text(str(exc))
+        summary = "gsplat CUDA extension could not load or build"
+        required = "CUDA Toolkit with nvcc and compatible Python development headers"
+        if "Python.h" in diagnostic:
+            summary = "gsplat CUDA extension build cannot find Python.h; install python3.12-dev"
+            required = "python3.12-dev"
+        elif "CUDA_HOME" in diagnostic or "nvcc" in diagnostic:
+            summary = "gsplat CUDA extension build cannot find CUDA Toolkit/nvcc"
+            required = "CUDA Toolkit with nvcc visible to WSL"
+        return {
+            "status": "setup_gap",
+            "checks": [
+                {
+                    "id": "gsplat_cuda_extension",
+                    "status": "setup_gap",
+                    "summary": summary,
+                    "required": required,
+                    "diagnostic": diagnostic,
+                }
+            ],
+            "commands": {"modelConverter": converter},
+        }
+
     if getattr(gsplat_backend, "_C", None) is None:
         return {
             "status": "setup_gap",
@@ -366,8 +399,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 {
                     "id": "gsplat_cuda_extension",
                     "status": "setup_gap",
-                    "summary": "gsplat CUDA extension is unavailable; install a CUDA toolkit with nvcc visible to WSL or use a compatible prebuilt gsplat wheel",
-                    "required": "nvcc or compatible gsplat prebuilt wheel",
+                    "summary": "gsplat CUDA extension is unavailable after import",
+                    "required": "CUDA Toolkit with nvcc or compatible gsplat prebuilt wheel",
                 }
             ],
             "commands": {"modelConverter": converter},
@@ -533,7 +566,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "versions": {
             "torch": torch.__version__,
             "torchCuda": torch.version.cuda,
-            "gsplat": __import__("gsplat").__version__,
+            "gsplat": getattr(gsplat_module, "__version__", None),
         },
         "device": {
             "name": torch.cuda.get_device_name(device),

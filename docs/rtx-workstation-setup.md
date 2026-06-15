@@ -24,7 +24,7 @@ Validated in `.venv`:
 - gsplat 1.5.3
 - packaging 26.2
 - PyTorch CUDA smoke: pass on NVIDIA GeForce RTX 5090
-- gsplat CUDA extension: setup gap; `nvcc` / CUDA Toolkit is not visible in WSL
+- gsplat CUDA extension: setup gap; CUDA Toolkit `nvcc` is visible, but Python development headers are missing
 
 Exact package freeze:
 
@@ -32,37 +32,35 @@ Exact package freeze:
 requirements/gpu-cu128.txt
 ```
 
-## CUDA Toolkit Boundary
+## CUDA Toolkit / Python Header Boundary
 
-PyTorch CUDA works with the installed Windows driver/runtime, but gsplat 1.5.3 JIT-loads a CUDA extension and currently needs a CUDA Toolkit with `nvcc` visible inside WSL. Current checks:
+PyTorch CUDA works with the installed Windows driver/runtime. gsplat 1.5.3 JIT-loads a CUDA extension and needs both a CUDA Toolkit with `nvcc` and Python development headers for the active Python 3.12 environment. Current checks:
 
 ```text
-torch.utils.cpp_extension.CUDA_HOME = None
-nvcc: not found
+CUDA_HOME = /usr/local/cuda-12.8
+nvcc = /usr/local/cuda-12.8/bin/nvcc
+nvcc version = CUDA compilation tools, release 12.8, V12.8.93
+Python.h = missing at /usr/include/python3.12/Python.h
 ```
+
+The user installed NVIDIA's WSL-Ubuntu CUDA repo/keyring path plus `cuda-nvcc-12-8` after Codex documented the narrow setup. The pipeline now prepends `.venv/bin` and `/usr/local/cuda-12.8/bin` for the trainer so `ninja` and `nvcc` are visible without requiring users to hand-prefix every command.
 
 A repo-local `nvidia-cuda-nvcc-cu12==12.8.93` wheel was tested and reverted because it did not provide a `bin/nvcc` executable. The official gsplat wheel index checked on 2026-06-15 did not list a compatible prebuilt wheel for Python 3.12 + torch 2.11 + CUDA 12.8.
 
 NVIDIA's WSL guidance says the Windows NVIDIA driver should remain the GPU driver, and WSL should use a CUDA Toolkit package that does not install or overwrite a Linux NVIDIA driver. Avoid the `cuda`, `cuda-12-x`, and `cuda-drivers` metapackages under WSL; use a toolkit-only package/path.
 
-Next setup action: install or expose a CUDA Toolkit with `nvcc` inside WSL, preferably matching the CUDA 12.8 runtime line used by the current PyTorch wheel, and record the exact source, version and revert plan in `docs/installation-and-revert-ledger.md`.
-
-The narrow candidate identified on 2026-06-15 is NVIDIA's WSL-Ubuntu repo keyring plus `cuda-nvcc-12-8`, not the broader `cuda`, `cuda-12-x`, `cuda-drivers`, or Ubuntu `nvidia-cuda-toolkit` packages. The inspected `cuda-nvcc-12-8_12.8.93-1_amd64.deb` contains `/usr/local/cuda-12.8/bin/nvcc` and depends on CUDA runtime/dev/compiler support packages, but not on a Linux display driver package.
-
-Candidate commands, to run manually in WSL because sudo requires the local Linux password:
+Next setup action: install the Python 3.12 development headers used by gsplat's extension build:
 
 ```bash
 cd /home/engwall/projects/gaussian-splat-lab
-sudo dpkg -i /tmp/cuda-keyring_1.1-1_all.deb
-sudo apt-get update
-sudo apt-get install -y cuda-nvcc-12-8
+sudo apt-get install -y python3.12-dev
 ```
 
 Validation after install:
 
 ```bash
-/usr/local/cuda-12.8/bin/nvcc --version
-CUDA_HOME=/usr/local/cuda-12.8 PATH=/usr/local/cuda-12.8/bin:$PATH .venv/bin/python -c "from gsplat.cuda import _backend; print(_backend._C is not None)"
+test -f /usr/include/python3.12/Python.h
+.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy
 ```
 
 ## COLMAP

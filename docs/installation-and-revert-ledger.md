@@ -276,6 +276,27 @@ Working directory: `/home/engwall/projects/gaussian-splat-lab`
 Expected changes: register NVIDIA's WSL-Ubuntu CUDA apt repository and install the CUDA 12.8 nvcc/compiler packages under `/usr/local/cuda-12.8/`, including `/usr/local/cuda-12.8/bin/nvcc`.
 Validation: `/usr/local/cuda-12.8/bin/nvcc --version`, `torch.utils.cpp_extension.CUDA_HOME`, and `.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job <job.json> --allow-heavy`.
 Revert plan: remove installed CUDA packages with `sudo apt-get remove cuda-nvcc-12-8` and remove the CUDA keyring/repo package with `sudo apt-get remove cuda-keyring` if no longer needed; verify `nvcc` is absent or no longer on PATH.
-Result: pending; sudo requires the local Linux password, so Codex did not install these packages.
-Notes: Do not install `cuda`, `cuda-12-x`, `cuda-drivers`, or Ubuntu `nvidia-cuda-toolkit` for this WSL setup. NVIDIA's WSL guidance warns not to install a Linux display driver inside WSL; use toolkit-only packages.
+Result: pass for CUDA/nvcc after the user installed the documented packages locally. `/usr/local/cuda-12.8/bin/nvcc --version` reports CUDA compilation tools release 12.8, V12.8.93. Installed package snapshot includes `cuda-keyring 1.1-1`, `cuda-nvcc-12-8 12.8.93-1`, `cuda-cudart-dev-12-8 12.8.90-1`, `cuda-nvvm-12-8 12.8.93-1`, and `cuda-crt-12-8 12.8.93-1`.
+Notes: Do not install `cuda`, `cuda-12-x`, `cuda-drivers`, or Ubuntu `nvidia-cuda-toolkit` for this WSL setup. NVIDIA's WSL guidance warns not to install a Linux display driver inside WSL; use toolkit-only packages. The remaining gsplat setup gap is Python development headers for Python 3.12.
+
+## Entry: 2026-06-15 Python 3.12 development headers setup gap
+
+Date: 2026-06-15
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Provide `Python.h` for gsplat's CUDA extension build after CUDA Toolkit `nvcc` became visible.
+Dependency: Ubuntu package `python3.12-dev`
+Commercial decision: System build dependency for local workstation compilation; do not redistribute system packages without OS/package license review.
+Command considered:
+
+```bash
+sudo apt-get install -y python3.12-dev
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: install Python 3.12 C headers and related development files under system include/lib paths, including `/usr/include/python3.12/Python.h`.
+Validation: `test -f /usr/include/python3.12/Python.h` and `.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy`.
+Revert plan: remove with `sudo apt-get remove python3.12-dev` if no longer needed; run `sudo apt-get autoremove` only after reviewing packages apt proposes to remove.
+Result: pending; current `splat_training` preflight reports `python_dev_headers` as `setup_gap`.
+Notes: `python3-dev` is also available in apt, but the exact missing header path belongs to Python 3.12, so the narrow package is `python3.12-dev`.
 
