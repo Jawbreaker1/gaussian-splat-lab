@@ -15,7 +15,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +60,34 @@ def run_validator(script_name: str) -> bool:
     return result.returncode == 0
 
 
+def artifact_url(repo_relative_path: str | None) -> str | None:
+    if not repo_relative_path:
+        return None
+    return f"/api/artifacts/{quote(repo_relative_path, safe='/')}"
+
+
+def resolve_artifact_path(raw_path: str) -> Path:
+    if not raw_path:
+        raise ValueError("artifact path is required")
+    path = (REPO_ROOT / unquote(raw_path)).resolve()
+    path.relative_to(JOBS_DIR.resolve())
+    if not path.exists() or not path.is_file():
+        raise ValueError("artifact path must point at an existing job artifact")
+    return path
+
+
+def attach_artifact_urls(viewer_manifest: dict[str, Any]) -> dict[str, Any]:
+    manifest = json.loads(json.dumps(viewer_manifest))
+    artifact = manifest.get("artifact") if isinstance(manifest.get("artifact"), dict) else {}
+    preview = manifest.get("preview") if isinstance(manifest.get("preview"), dict) else {}
+    if isinstance(artifact, dict):
+        artifact["url"] = artifact_url(artifact.get("repoRelativePath"))
+    if isinstance(preview, dict):
+        preview["sampleRenderUrl"] = artifact_url(preview.get("sampleRenderRepoRelativePath"))
+        preview["sampleTargetUrl"] = artifact_url(preview.get("sampleTargetRepoRelativePath"))
+    return manifest
+
+
 def latest_job() -> dict[str, Any] | None:
     if not JOBS_DIR.exists():
         return None
@@ -69,6 +97,39 @@ def latest_job() -> dict[str, Any] | None:
     job = read_json(candidates[0])
     job["jobPath"] = str(candidates[0])
     return job
+
+
+def latest_viewer_artifact() -> dict[str, Any] | None:
+    job = latest_job()
+    if not job:
+        return None
+    job_path = Path(job["jobPath"])
+    packaging_path = job_path.parent / "reports" / "packaging.json"
+    viewer_path = job_path.parent / "reports" / "viewer.json"
+    if not packaging_path.exists():
+        return None
+    packaging = read_json(packaging_path)
+    manifest_raw = packaging.get("viewerManifestPath")
+    if not isinstance(manifest_raw, str) or not manifest_raw:
+        return None
+    manifest_path = Path(manifest_raw)
+    if not manifest_path.exists():
+        return None
+    viewer_report = read_json(viewer_path) if viewer_path.exists() else None
+    manifest = attach_artifact_urls(read_json(manifest_path))
+    try:
+        manifest_repo_relative = manifest_path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        manifest_repo_relative = None
+    return {
+        "jobId": job.get("job", {}).get("id"),
+        "jobPath": str(job_path),
+        "packagingStatus": packaging.get("stage", {}).get("status"),
+        "viewerStatus": viewer_report.get("stage", {}).get("status") if viewer_report else None,
+        "viewerManifestPath": str(manifest_path),
+        "viewerManifestUrl": artifact_url(manifest_repo_relative),
+        "manifest": manifest,
+    }
 
 
 def build_state() -> dict[str, Any]:
@@ -86,6 +147,7 @@ def build_state() -> dict[str, Any]:
         "frameworks": frameworks,
         "gates": gates,
         "latestJob": latest_job(),
+        "viewerArtifact": latest_viewer_artifact(),
         "validation": {
             "architecture": run_validator("validate-architecture-contracts.sh"),
             "phase1": run_validator("validate-phase-1-contracts.sh"),
@@ -245,6 +307,24 @@ class LabUiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_artifact(self, raw_path: str) -> None:
+        try:
+            artifact = resolve_artifact_path(raw_path)
+        except ValueError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+
+        body = artifact.read_bytes()
+        content_type = mimetypes.guess_type(str(artifact))[0] or "application/octet-stream"
+        if artifact.suffix == ".ply":
+            content_type = "application/octet-stream"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_static(self, path: Path) -> None:
         try:
             resolved = path.resolve()
@@ -274,6 +354,9 @@ class LabUiHandler(BaseHTTPRequestHandler):
             return
 
         route = self.path.split("?", 1)[0]
+        if route.startswith("/api/artifacts/"):
+            self.send_artifact(route.removeprefix("/api/artifacts/"))
+            return
         if route == "/":
             self.send_static(APP_ROOT / "index.html")
             return

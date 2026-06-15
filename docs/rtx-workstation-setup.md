@@ -1,6 +1,6 @@
 # RTX Workstation Setup
 
-Verified: 2026-06-15
+Verified: 2026-06-16
 
 This document records the local workstation setup needed for the Gaussian Splat golden path.
 
@@ -24,7 +24,7 @@ Validated in `.venv`:
 - gsplat 1.5.3
 - packaging 26.2
 - PyTorch CUDA smoke: pass on NVIDIA GeForce RTX 5090
-- gsplat CUDA extension: setup gap; CUDA Toolkit `nvcc` is visible, but Python development headers are missing
+- gsplat CUDA extension/training smoke: pass on NVIDIA GeForce RTX 5090 after CUDA Toolkit `nvcc` and Python 3.12 development headers were installed
 
 Exact package freeze:
 
@@ -40,23 +40,17 @@ PyTorch CUDA works with the installed Windows driver/runtime. gsplat 1.5.3 JIT-l
 CUDA_HOME = /usr/local/cuda-12.8
 nvcc = /usr/local/cuda-12.8/bin/nvcc
 nvcc version = CUDA compilation tools, release 12.8, V12.8.93
-Python.h = missing at /usr/include/python3.12/Python.h
+Python.h = present at /usr/include/python3.12/Python.h
+python3.12-dev = 3.12.3-1ubuntu0.13
 ```
 
-The user installed NVIDIA's WSL-Ubuntu CUDA repo/keyring path plus `cuda-nvcc-12-8` after Codex documented the narrow setup. The pipeline now prepends `.venv/bin` and `/usr/local/cuda-12.8/bin` for the trainer so `ninja` and `nvcc` are visible without requiring users to hand-prefix every command.
+The user installed NVIDIA's WSL-Ubuntu CUDA repo/keyring path plus `cuda-nvcc-12-8` after Codex documented the narrow setup, then installed `python3.12-dev`. The pipeline prepends `.venv/bin` and `/usr/local/cuda-12.8/bin` for the trainer so `ninja` and `nvcc` are visible without requiring users to hand-prefix every command.
 
 A repo-local `nvidia-cuda-nvcc-cu12==12.8.93` wheel was tested and reverted because it did not provide a `bin/nvcc` executable. The official gsplat wheel index checked on 2026-06-15 did not list a compatible prebuilt wheel for Python 3.12 + torch 2.11 + CUDA 12.8.
 
 NVIDIA's WSL guidance says the Windows NVIDIA driver should remain the GPU driver, and WSL should use a CUDA Toolkit package that does not install or overwrite a Linux NVIDIA driver. Avoid the `cuda`, `cuda-12-x`, and `cuda-drivers` metapackages under WSL; use a toolkit-only package/path.
 
-Next setup action: install the Python 3.12 development headers used by gsplat's extension build:
-
-```bash
-cd /home/engwall/projects/gaussian-splat-lab
-sudo apt-get install -y python3.12-dev
-```
-
-Validation after install:
+Validation now passing:
 
 ```bash
 test -f /usr/include/python3.12/Python.h

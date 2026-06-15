@@ -297,6 +297,6 @@ Working directory: `/home/engwall/projects/gaussian-splat-lab`
 Expected changes: install Python 3.12 C headers and related development files under system include/lib paths, including `/usr/include/python3.12/Python.h`.
 Validation: `test -f /usr/include/python3.12/Python.h` and `.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy`.
 Revert plan: remove with `sudo apt-get remove python3.12-dev` if no longer needed; run `sudo apt-get autoremove` only after reviewing packages apt proposes to remove.
-Result: pending; current `splat_training` preflight reports `python_dev_headers` as `setup_gap`.
-Notes: `python3-dev` is also available in apt, but the exact missing header path belongs to Python 3.12, so the narrow package is `python3.12-dev`.
+Result: pass after the user installed `python3.12-dev 3.12.3-1ubuntu0.13`. `/usr/include/python3.12/Python.h` exists, `splat_training --allow-heavy` passed, and gsplat produced checkpoint/PLY/sample-render artifacts on the RTX 5090.
+Notes: `python3-dev` is also available in apt, but the exact missing header path belongs to Python 3.12, so the narrow package is `python3.12-dev`. The remaining quality warning is capture/commercial provenance, not a Python/CUDA setup gap.
 

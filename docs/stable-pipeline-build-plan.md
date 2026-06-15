@@ -1,6 +1,6 @@
 # Stable Pipeline Build Plan
 
-Verified: 2026-06-15
+Verified: 2026-06-16
 
 Goal: build the first robust golden path from local video to browser-visible Gaussian Splat on the Windows RTX 5090 workstation.
 
@@ -21,32 +21,31 @@ Already in place:
 - video intake stage with explicit missing-file and metadata stop conditions
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
-- minimal gsplat training orchestration with checkpoint/PLY/sample-render validation once the gsplat CUDA extension is available
-- low-load stage gates for packaging, viewer validation and quality reporting
-- placeholder capture and viewer asset manifests
+- minimal gsplat training orchestration with checkpoint/PLY/sample-render validation on the RTX 5090
+- artifact packaging that writes a viewer manifest with PLY hash, byte size and header metadata
+- local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders an interactive point preview
 - capture readiness reporting for local file/provenance status before intake
 
 Not yet real:
 
-- gsplat CUDA rasterization on this WSL environment, because Python 3.12 development headers are not installed yet; CUDA Toolkit `nvcc` is now visible
 - a clean commercially reusable capture; the current imported phone video is local-test-only evidence
-- actual packaging/export conversion beyond the training-produced PLY handoff
-- real splat viewer load and screenshot validation
+- production-grade Gaussian Splat rendering; the current viewer is a local binary-PLY point preview for validation and inspection
+- screenshot/canvas-pixel browser automation for viewer QA across viewports
 
 ## Current Environment Result
 
-As of 2026-06-15, the repo-local `.venv` and workstation validate:
+As of 2026-06-16, the repo-local `.venv` and workstation validate:
 
 - RTX 5090 visible through `nvidia-smi`
 - PyTorch CUDA smoke passes with torch 2.11.0+cu128
-- gsplat 1.5.3 imports successfully; CUDA Toolkit `nvcc` is visible at `/usr/local/cuda-12.8/bin/nvcc`, but extension build preflight reports `setup_gap` because `/usr/include/python3.12/Python.h` is missing
+- gsplat 1.5.3 trains successfully with CUDA Toolkit `nvcc` at `/usr/local/cuda-12.8/bin/nvcc` and Python headers at `/usr/include/python3.12/Python.h`
 - COLMAP 3.9.1 is on PATH at `/usr/bin/colmap`
 - installed COLMAP package reports `without CUDA`, so first SfM validation should assume CPU COLMAP
 - FFmpeg/ffprobe 6.1.1-3ubuntu5 are on PATH at `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`
 - the installed Ubuntu FFmpeg build includes `--enable-gpl`; keep it as a lab-only system tool until redistribution/build flags are reviewed
 - frame sampling passed a synthetic CLI smoke test; evidence is recorded in `docs/validation/phase-1-frame-sampling-smoke.md`
 - SfM has a runnable COLMAP stage wrapper; the first post-PSU test produced a passing sparse reconstruction from local frame input
-- `splat_training` now has a minimal gsplat trainer wrapper and correctly stops at `setup_gap` when the gsplat CUDA extension cannot load
+- `splat_training`, `packaging` and `viewer` now pass on the local-test-only capture; quality remains `warning` because framework/capture provenance is not product-ready
 
 ## Workload Safety
 
@@ -56,30 +55,34 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 ## Next Build Step
 
-Install Python 3.12 development headers, then rerun the guarded `splat_training` stage.
+Move from technical golden path to controlled quality experiments and product-readiness hardening.
 
-Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 imports, `CUDA_HOME` resolves to `/usr/local/cuda-12.8`, and `nvcc` is visible. The current `setup_gap` is `/usr/include/python3.12/Python.h` missing, which gsplat needs while building its CUDA extension. The official gsplat wheel index checked during validation did not provide a compatible prebuilt wheel for Python 3.12 + torch 2.11/cu128.
+Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains, packaging writes a viewer manifest, and the local UI can fetch and render the exported binary PLY as an interactive point preview. The current end-to-end quality status is `warning` because the capture is local-test-only and framework/commercial notices still need product review.
 
 Why next:
 
-- intake, frame sampling and SfM now pass on a local-test-only capture
-- the training wrapper exists and reaches the exact gsplat CUDA-extension boundary
-- without `Python.h`, gsplat cannot compile its CUDA extension even though `nvcc` is now available
-- once this setup gap is closed, the same `splat_training --allow-heavy` command should run the first real GPU training smoke
+- intake, frame sampling, SfM, training, packaging and viewer now pass on a local-test-only capture
+- the pipeline has explicit reports for each stage and a quality report that preserves the remaining commercial/provenance warning
+- input-quality experiments can now be run against a known working baseline without confusing setup gaps for quality degradation
 
-Expected output after the setup gap is closed:
+Current technical golden-path output:
 
 ```text
 outputs/jobs/<job_id>/reports/splat_training.json
+outputs/jobs/<job_id>/reports/packaging.json
+outputs/jobs/<job_id>/reports/viewer.json
+outputs/jobs/<job_id>/reports/quality_report.json
 outputs/jobs/<job_id>/splats/<run_timestamp>/checkpoint.pt
 outputs/jobs/<job_id>/splats/<run_timestamp>/trained_splats.ply
 outputs/jobs/<job_id>/splats/<run_timestamp>/sample_render.png
+outputs/jobs/<job_id>/viewer/viewer-manifest.json
 ```
 
 Stop condition:
 
-- no packaging or viewer stage may run until `splat_training` writes a `pass` or explicitly accepted `warning` report with an exported artifact path
+- do not treat local-test-only capture output as commercial showcase material
 - do not install or redistribute NVIDIA CUDA Toolkit components without recording the exact install source and terms in the installation ledger
+- do not replace the local point preview with a third-party viewer library until the framework/commercial gate is updated
 
 ## Golden Path Implementation Sequence
 

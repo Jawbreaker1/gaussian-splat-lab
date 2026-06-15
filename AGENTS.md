@@ -4,7 +4,7 @@
 
 Build an isolated, commercially plausible local pipeline that turns a video capture into a browser-interactive Gaussian Splat artifact on this Windows RTX 5090 workstation.
 
-The stable golden path comes first. Input-quality experiments and arbitrary-user capture preflight come only after at least one known-good capture runs end to end.
+The stable golden path came first and now has a local-test-only technical pass through viewer validation. Input-quality experiments may start from that baseline, but arbitrary-user capture preflight and commercial showcase use still require provenance and compliance hardening.
 
 ## Primary Host
 
@@ -87,7 +87,7 @@ Use these documents as the source of truth:
 
 ## Workload Safety
 
-The workstation currently has a known power-supply/load stability concern. Do not run heavy stages such as SfM, splat training, viewer rendering or long GPU/CPU stress tasks without explicit user approval in that turn.
+The workstation PSU has been replaced and the user has approved heavy validation runs, but heavy stages must still stay deliberate. Do not run SfM, splat training, viewer rendering or long GPU/CPU stress tasks without explicit user approval in that turn.
 
 Pipeline stages that can sustain high CPU/GPU load must expose a guard and report `blocked_workload` unless deliberately launched with the documented heavy-workload flag.
 
@@ -95,7 +95,7 @@ Pipeline stages that can sustain high CPU/GPU load must expose a guard and repor
 
 Follow the staged plan. Do not build later stages on unvalidated earlier stages.
 
-Immediate golden-path order:
+Golden-path order:
 
 1. framework/license gate
 2. RTX workstation environment gate
@@ -109,6 +109,8 @@ Immediate golden-path order:
 10. resumable CLI/UI orchestration
 11. input-quality experiments
 12. capture preflight
+
+Current technical baseline: `outputs/jobs/static-room-orbit-001-20260614T100535Z` passes environment, frame sampling, SfM, splat training, packaging and viewer validation. The quality report remains `warning` because the capture/framework state is not product-ready.
 
 Avoid big-bang integration. Every stage must be runnable and inspectable before the next stage depends on it.
 

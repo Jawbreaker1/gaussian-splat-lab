@@ -103,7 +103,7 @@ Initial thresholds are intentionally conservative and can be tuned after known-g
 
 ## Current Workload Guard
 
-SfM, training and viewer validation remain guarded heavy stages. Training now has a minimal gsplat orchestration behind `--allow-heavy`; in the current WSL environment it reports `setup_gap` because gsplat cannot load/JIT its CUDA extension without `nvcc` or a compatible prebuilt wheel. Viewer validation remains a guarded setup boundary until packaging produces a viewer-compatible artifact.
+SfM, training and viewer validation remain guarded heavy stages. Training now has a minimal gsplat orchestration behind `--allow-heavy`; on the RTX workstation it produces a checkpoint, binary PLY and sample render. Packaging writes a viewer manifest with hash, byte size and PLY header metadata. Viewer validation reads that manifest, verifies the artifact hash/header and checks that the local UI contains the binary PLY viewer hooks.
 
 ## Responsibility Boundaries
 

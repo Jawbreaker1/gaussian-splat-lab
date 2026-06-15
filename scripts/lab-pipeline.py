@@ -2111,6 +2111,103 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
     return base
 
 
+def repo_relative_path(path: Path) -> str | None:
+    try:
+        return path.resolve().relative_to(repo_root_from_script().resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def parse_ply_header(path: Path) -> dict[str, Any]:
+    with path.open("rb") as handle:
+        prefix = handle.read(65536)
+    marker = b"end_header"
+    index = prefix.find(marker)
+    if index < 0:
+        return {
+            "status": "fail",
+            "summary": "PLY header does not contain end_header",
+        }
+    line_end = prefix.find(b"\n", index)
+    header_bytes = prefix[: line_end + 1 if line_end >= 0 else index + len(marker)]
+    header = header_bytes.decode("ascii", errors="replace")
+    lines = [line.strip() for line in header.splitlines() if line.strip()]
+    ply_format = None
+    vertex_count = None
+    properties: list[str] = []
+    in_vertex = False
+    for line in lines:
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] == "format":
+            ply_format = fields[1]
+        elif len(fields) >= 3 and fields[0] == "element":
+            in_vertex = fields[1] == "vertex"
+            if in_vertex:
+                try:
+                    vertex_count = int(fields[2])
+                except ValueError:
+                    vertex_count = None
+        elif in_vertex and len(fields) >= 3 and fields[0] == "property":
+            properties.append(fields[-1])
+    required = {"x", "y", "z"}
+    missing = sorted(required.difference(properties))
+    return {
+        "status": "pass" if ply_format and vertex_count is not None and not missing else "fail",
+        "summary": "PLY header is readable" if ply_format and vertex_count is not None and not missing else "PLY header is missing required vertex fields",
+        "format": ply_format,
+        "vertexCount": vertex_count,
+        "properties": properties,
+        "headerBytes": len(header_bytes),
+        "missingProperties": missing,
+    }
+
+
+def build_viewer_manifest(
+    job_path: Path,
+    training_report: dict[str, Any],
+    packaging_report: dict[str, Any],
+    artifact: Path,
+) -> dict[str, Any]:
+    sample_render_raw = training_report.get("sampleRenderPath")
+    sample_target_raw = training_report.get("sampleTargetPath")
+    sample_render_path = Path(sample_render_raw) if isinstance(sample_render_raw, str) and sample_render_raw else None
+    sample_target_path = Path(sample_target_raw) if isinstance(sample_target_raw, str) and sample_target_raw else None
+    ply_header = parse_ply_header(artifact)
+    return {
+        "schemaVersion": 1,
+        "generatedAt": utc_now(),
+        "jobPath": str(job_path),
+        "source": {
+            "trainingReportPath": packaging_report.get("source", {}).get("trainingReportPath"),
+            "packagingStage": packaging_report.get("stage", {}).get("id"),
+        },
+        "artifact": {
+            "kind": "gaussian_splat_ply",
+            "format": "ply",
+            "path": str(artifact),
+            "repoRelativePath": repo_relative_path(artifact),
+            "sizeBytes": artifact.stat().st_size,
+            "sha256": file_sha256(artifact),
+            "ply": ply_header,
+        },
+        "preview": {
+            "sampleRenderPath": str(sample_render_path) if sample_render_path else None,
+            "sampleRenderRepoRelativePath": repo_relative_path(sample_render_path) if sample_render_path else None,
+            "sampleRenderSizeBytes": sample_render_path.stat().st_size if sample_render_path and sample_render_path.exists() else None,
+            "sampleTargetPath": str(sample_target_path) if sample_target_path else None,
+            "sampleTargetRepoRelativePath": repo_relative_path(sample_target_path) if sample_target_path else None,
+        },
+        "training": training_report.get("metrics", {}),
+        "device": training_report.get("device", {}),
+        "versions": training_report.get("versions", {}),
+        "viewer": {
+            "implementation": "local_canvas_binary_ply_points",
+            "supports": ["orbit", "zoom", "reset_view"],
+            "loads": "binary_little_endian PLY vertex positions and SH DC color fields",
+        },
+    }
+
+
 def build_packaging_report(job_path: Path, accept_warning: bool = False) -> dict[str, Any]:
     training_path = stage_report_path(job_path, "splat_training")
     blocked = missing_or_blocked_upstream_report(job_path, "packaging", "splat_training", training_path)
@@ -2167,19 +2264,44 @@ def build_packaging_report(job_path: Path, accept_warning: bool = False) -> dict
         )
         return base
 
-    base["stage"]["status"] = "pass"
+    viewer_manifest_path = job_path.parent / "viewer" / "viewer-manifest.json"
+    viewer_manifest = build_viewer_manifest(job_path, training_report, base, artifact)
+    write_json(viewer_manifest_path, viewer_manifest)
+    ply_header = viewer_manifest["artifact"].get("ply", {})
+
     base["artifact"] = {
         "path": str(artifact),
+        "repoRelativePath": repo_relative_path(artifact),
         "sizeBytes": artifact.stat().st_size,
         "sha256": file_sha256(artifact),
+        "ply": ply_header,
     }
-    base["checks"].append(
-        {
-            "id": "artifact",
-            "status": "pass",
-            "summary": "Splat artifact exists and hash/size are recorded",
-        }
+    base["viewerManifestPath"] = str(viewer_manifest_path)
+    base["viewerManifestRepoRelativePath"] = repo_relative_path(viewer_manifest_path)
+    base["checks"].extend(
+        [
+            {
+                "id": "artifact",
+                "status": "pass",
+                "summary": "Splat artifact exists and hash/size are recorded",
+            },
+            {
+                "id": "ply_header",
+                "status": ply_header.get("status", "fail"),
+                "summary": ply_header.get("summary", "PLY header could not be validated"),
+                "format": ply_header.get("format"),
+                "vertexCount": ply_header.get("vertexCount"),
+            },
+            {
+                "id": "viewer_manifest",
+                "status": "pass" if viewer_manifest_path.exists() else "fail",
+                "summary": "viewer manifest written" if viewer_manifest_path.exists() else "viewer manifest was not written",
+                "path": str(viewer_manifest_path),
+            },
+        ]
     )
+    check_statuses = [check.get("status") for check in base["checks"] if isinstance(check, dict)]
+    base["stage"]["status"] = "fail" if any(status == "fail" for status in check_statuses) else "pass"
     return base
 
 
@@ -2230,14 +2352,99 @@ def build_viewer_report(job_path: Path, accept_warning: bool = False, allow_heav
         }
         return base
 
-    base["stage"]["status"] = "setup_gap"
-    base["checks"].append(
+    manifest_raw = packaging_report.get("viewerManifestPath")
+    if not isinstance(manifest_raw, str) or not manifest_raw:
+        base["stage"]["status"] = "setup_gap"
+        base["checks"].append(
+            {
+                "id": "viewer_manifest",
+                "status": "setup_gap",
+                "summary": "Packaging report does not declare viewerManifestPath; rerun packaging before viewer validation.",
+            }
+        )
+        return base
+
+    viewer_manifest_path = Path(manifest_raw)
+    if not viewer_manifest_path.exists():
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "viewer_manifest",
+                "status": "fail",
+                "summary": "Declared viewer manifest does not exist",
+                "path": str(viewer_manifest_path),
+            }
+        )
+        return base
+
+    viewer_manifest = read_json(viewer_manifest_path)
+    artifact_info = viewer_manifest.get("artifact", {}) if isinstance(viewer_manifest.get("artifact"), dict) else {}
+    artifact_raw = artifact_info.get("path")
+    artifact_path = Path(artifact_raw) if isinstance(artifact_raw, str) and artifact_raw else None
+    artifact_exists = bool(artifact_path and artifact_path.exists() and artifact_path.is_file())
+    expected_sha = artifact_info.get("sha256")
+    actual_sha = file_sha256(artifact_path) if artifact_exists and artifact_path else None
+    ply_header = parse_ply_header(artifact_path) if artifact_exists and artifact_path else {"status": "fail", "summary": "artifact missing"}
+    preview_info = viewer_manifest.get("preview", {}) if isinstance(viewer_manifest.get("preview"), dict) else {}
+    sample_render_raw = preview_info.get("sampleRenderPath")
+    sample_render_path = Path(sample_render_raw) if isinstance(sample_render_raw, str) and sample_render_raw else None
+    app_js = repo_root_from_script() / "app" / "app.js"
+    app_html = repo_root_from_script() / "app" / "index.html"
+    app_css = repo_root_from_script() / "app" / "styles.css"
+    app_text = app_js.read_text(encoding="utf-8") if app_js.exists() else ""
+    checks = [
         {
-            "id": "viewer_implementation",
-            "status": "setup_gap",
-            "summary": "Viewer validation is not implemented yet; no browser or render command was launched.",
-        }
-    )
+            "id": "viewer_manifest",
+            "status": "pass",
+            "summary": "viewer manifest exists and is readable",
+            "path": str(viewer_manifest_path),
+        },
+        {
+            "id": "viewer_artifact",
+            "status": "pass" if artifact_exists and artifact_path and artifact_path.stat().st_size > 0 else "fail",
+            "summary": "viewer artifact exists" if artifact_exists else "viewer artifact is missing",
+            "path": str(artifact_path) if artifact_path else None,
+            "sizeBytes": artifact_path.stat().st_size if artifact_exists and artifact_path else None,
+        },
+        {
+            "id": "viewer_artifact_hash",
+            "status": "pass" if expected_sha and actual_sha == expected_sha else "fail",
+            "summary": "viewer artifact hash matches manifest" if expected_sha and actual_sha == expected_sha else "viewer artifact hash does not match manifest",
+            "expectedSha256": expected_sha,
+            "actualSha256": actual_sha,
+        },
+        {
+            "id": "viewer_ply_header",
+            "status": ply_header.get("status", "fail"),
+            "summary": ply_header.get("summary", "PLY header could not be validated"),
+            "format": ply_header.get("format"),
+            "vertexCount": ply_header.get("vertexCount"),
+        },
+        {
+            "id": "sample_render",
+            "status": "pass" if sample_render_path and sample_render_path.exists() and sample_render_path.stat().st_size > 0 else "warning",
+            "summary": "sample render exists" if sample_render_path and sample_render_path.exists() else "sample render is not available for preview fallback",
+            "path": str(sample_render_path) if sample_render_path else None,
+        },
+        {
+            "id": "local_viewer_app",
+            "status": "pass" if app_html.exists() and app_css.exists() and "parseBinaryPly" in app_text and "viewerArtifact" in app_text else "fail",
+            "summary": "local UI contains binary PLY viewer hooks" if app_html.exists() and app_css.exists() and "parseBinaryPly" in app_text and "viewerArtifact" in app_text else "local UI is missing viewer hooks",
+        },
+    ]
+    base["checks"].extend(checks)
+    base["viewerManifestPath"] = str(viewer_manifest_path)
+    base["viewerManifest"] = viewer_manifest
+    base["artifact"] = artifact_info
+    base["preview"] = preview_info
+    base["viewerUrl"] = "/"
+    check_statuses = [check.get("status") for check in checks]
+    if any(status == "fail" for status in check_statuses):
+        base["stage"]["status"] = "fail"
+    elif any(status == "warning" for status in check_statuses):
+        base["stage"]["status"] = "warning"
+    else:
+        base["stage"]["status"] = "pass"
     return base
 
 

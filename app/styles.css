@@ -413,13 +413,42 @@ select {
   background: var(--violet-soft);
 }
 
+.preview-panel {
+  display: grid;
+  grid-template-rows: auto auto auto auto;
+}
+
+.viewer-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: -4px 0 10px;
+}
+
 #splatCanvas {
   width: 100%;
-  aspect-ratio: 3 / 2;
+  aspect-ratio: 32 / 21;
   display: block;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #191b1f;
+  touch-action: none;
+  cursor: grab;
+}
+
+#splatCanvas:active {
+  cursor: grabbing;
+}
+
+.viewer-meta {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.viewer-meta .meta-row {
+  min-height: 24px;
 }
 
 .compliance-grid {
