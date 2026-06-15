@@ -256,3 +256,26 @@ Result: reverted; the wheel installed successfully but did not provide a `bin/nv
 
 Notes: After revert, `requirements/gpu-cu128.txt` no longer contains `nvidia-cuda-nvcc-cu12`. The remaining setup gap is a CUDA Toolkit with `nvcc` visible to WSL or a compatible prebuilt gsplat wheel.
 
+## Entry: 2026-06-15 CUDA nvcc setup gap
+
+Date: 2026-06-15
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Identify the narrow CUDA Toolkit component needed for gsplat JIT compilation after `splat_training` reached the CUDA extension boundary.
+Dependency: NVIDIA CUDA WSL-Ubuntu repo keyring and `cuda-nvcc-12-8`
+Commercial decision: Covered by the existing `nvidia-cuda` conditional decision in `framework-evaluation.json`; local workstation use only unless NVIDIA redistribution terms are reviewed.
+Command considered:
+
+```bash
+sudo dpkg -i /tmp/cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get install -y cuda-nvcc-12-8
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: register NVIDIA's WSL-Ubuntu CUDA apt repository and install the CUDA 12.8 nvcc/compiler packages under `/usr/local/cuda-12.8/`, including `/usr/local/cuda-12.8/bin/nvcc`.
+Validation: `/usr/local/cuda-12.8/bin/nvcc --version`, `torch.utils.cpp_extension.CUDA_HOME`, and `.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job <job.json> --allow-heavy`.
+Revert plan: remove installed CUDA packages with `sudo apt-get remove cuda-nvcc-12-8` and remove the CUDA keyring/repo package with `sudo apt-get remove cuda-keyring` if no longer needed; verify `nvcc` is absent or no longer on PATH.
+Result: pending; sudo requires the local Linux password, so Codex did not install these packages.
+Notes: Do not install `cuda`, `cuda-12-x`, `cuda-drivers`, or Ubuntu `nvidia-cuda-toolkit` for this WSL setup. NVIDIA's WSL guidance warns not to install a Linux display driver inside WSL; use toolkit-only packages.
+

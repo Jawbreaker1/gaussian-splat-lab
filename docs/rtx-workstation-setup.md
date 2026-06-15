@@ -47,6 +47,24 @@ NVIDIA's WSL guidance says the Windows NVIDIA driver should remain the GPU drive
 
 Next setup action: install or expose a CUDA Toolkit with `nvcc` inside WSL, preferably matching the CUDA 12.8 runtime line used by the current PyTorch wheel, and record the exact source, version and revert plan in `docs/installation-and-revert-ledger.md`.
 
+The narrow candidate identified on 2026-06-15 is NVIDIA's WSL-Ubuntu repo keyring plus `cuda-nvcc-12-8`, not the broader `cuda`, `cuda-12-x`, `cuda-drivers`, or Ubuntu `nvidia-cuda-toolkit` packages. The inspected `cuda-nvcc-12-8_12.8.93-1_amd64.deb` contains `/usr/local/cuda-12.8/bin/nvcc` and depends on CUDA runtime/dev/compiler support packages, but not on a Linux display driver package.
+
+Candidate commands, to run manually in WSL because sudo requires the local Linux password:
+
+```bash
+cd /home/engwall/projects/gaussian-splat-lab
+sudo dpkg -i /tmp/cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get install -y cuda-nvcc-12-8
+```
+
+Validation after install:
+
+```bash
+/usr/local/cuda-12.8/bin/nvcc --version
+CUDA_HOME=/usr/local/cuda-12.8 PATH=/usr/local/cuda-12.8/bin:$PATH .venv/bin/python -c "from gsplat.cuda import _backend; print(_backend._C is not None)"
+```
+
 ## COLMAP
 
 COLMAP is installed on PATH:
