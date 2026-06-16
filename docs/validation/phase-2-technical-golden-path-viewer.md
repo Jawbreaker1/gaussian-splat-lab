@@ -63,6 +63,7 @@ Viewer validation now checks:
 - binary PLY header is readable and includes `x`, `y`, `z`
 - sample render exists
 - local UI contains WebGL binary PLY viewer hooks
+- local UI exposes latest `gsplat` sample render and target images for visual comparison
 
 Viewer implementation recorded in the manifest:
 
@@ -70,7 +71,7 @@ Viewer implementation recorded in the manifest:
 local_webgl_binary_ply_point_splats
 ```
 
-The UI server exposes job artifacts only under `/api/artifacts/...` paths that resolve inside `outputs/jobs`. `/api/state` includes the latest `viewerArtifact`, training profile, densification strategy and gaussian growth metadata. The local frontend reads the exported binary PLY into an interactive WebGL point-splat inspection scene. This is a true browser 3D scene for inspection, but still not a production-grade covariance/screen-space Gaussian Splat renderer.
+The UI server exposes job artifacts only under `/api/artifacts/...` paths that resolve inside `outputs/jobs`. `/api/state` includes the latest `viewerArtifact`, training profile, densification strategy, gaussian growth metadata and sample render/target URLs. The local frontend reads the exported binary PLY into an interactive WebGL point-splat inspection scene and shows the latest `gsplat` render beside its training target. The WebGL scene is useful for orbit inspection, while the sample render is the current visual quality reference. This is still not a production-grade covariance/screen-space Gaussian Splat browser renderer.
 
 ## HTTP Smoke
 
@@ -84,5 +85,5 @@ Smoke result:
 
 - `GET /api/state`: returned `viewerArtifact` with `viewerStatus=pass`, `trainingProfile=baseline`, `strategy=default`, `vertexCount=26985`
 - `GET /api/artifacts/outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T075257Z/trained_splats.ply`: returned HTTP `200` and `ply` file prefix
-- `GET /`: returned HTML containing `Splat Inspect` and `splatCanvas`
-- `GET /app.js`: returned code containing `initWebGLScene`, `gl_PointSize`, `createSceneLines` and `getContext('webgl')`
+- `GET /`: returned HTML containing `Splat Inspect`, `splatCanvas`, `sampleRenderImage` and `sampleTargetImage`
+- `GET /app.js`: returned code containing `initWebGLScene`, `gl_PointSize`, `createSceneLines`, `getContext('webgl')` and `renderSampleComparison`

@@ -14,6 +14,7 @@ The UI owns:
 - preflight and media pipeline gate visibility
 - commercial/compliance visibility
 - local RTX workstation status evidence
+- packaged splat inspection with WebGL PLY orbit/pan/zoom and the latest `gsplat` sample render/target images
 
 The UI does not own:
 
@@ -21,6 +22,7 @@ The UI does not own:
 - SfM
 - splat training
 - artifact conversion
+- production Gaussian Splat rendering
 - viewer runtime validation
 
 Those remain separate stages and must keep their own reports.

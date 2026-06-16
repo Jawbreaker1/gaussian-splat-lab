@@ -20,6 +20,11 @@ const els = {
   viewerResetButton: document.querySelector('#viewerResetButton'),
   viewerZoomOutButton: document.querySelector('#viewerZoomOutButton'),
   viewerZoomInButton: document.querySelector('#viewerZoomInButton'),
+  renderCompare: document.querySelector('#renderCompare'),
+  sampleRenderFigure: document.querySelector('#sampleRenderFigure'),
+  sampleTargetFigure: document.querySelector('#sampleTargetFigure'),
+  sampleRenderImage: document.querySelector('#sampleRenderImage'),
+  sampleTargetImage: document.querySelector('#sampleTargetImage'),
   viewerMeta: document.querySelector('#viewerMeta'),
   canvas: document.querySelector('#splatCanvas'),
 };
@@ -407,12 +412,31 @@ function viewerQuality(status, training = {}, runConfig = {}) {
   return { text: 'baseline inspect', type: 'pass' };
 }
 
+function setSampleImage(image, figure, url) {
+  figure.hidden = !url;
+  if (!url) {
+    image.removeAttribute('src');
+    return;
+  }
+  if (image.getAttribute('src') !== url) image.src = url;
+}
+
+function renderSampleComparison(preview = {}) {
+  const renderUrl = preview.sampleRenderUrl;
+  const targetUrl = preview.sampleTargetUrl;
+  const hasSample = Boolean(renderUrl || targetUrl);
+  els.renderCompare.hidden = !hasSample;
+  setSampleImage(els.sampleRenderImage, els.sampleRenderFigure, renderUrl);
+  setSampleImage(els.sampleTargetImage, els.sampleTargetFigure, targetUrl);
+}
+
 function renderViewerMeta(extra = null) {
   els.viewerMeta.replaceChildren();
   const viewer = state?.viewerArtifact;
   const manifest = viewer?.manifest;
   const artifact = manifest?.artifact;
   if (!artifact) {
+    renderSampleComparison();
     setViewerStatus('pending', 'neutral');
     els.viewerMeta.append(row('Artifact', 'No packaged splat'));
     return;
@@ -421,6 +445,7 @@ function renderViewerMeta(extra = null) {
   const ply = artifact.ply ?? {};
   const training = manifest?.training ?? {};
   const runConfig = manifest?.runConfig ?? {};
+  renderSampleComparison(manifest?.preview ?? {});
   const status = viewer.viewerStatus ?? viewer.packagingStatus ?? 'packaged';
   const quality = viewerQuality(status, training, runConfig);
   setViewerStatus(quality.text, quality.type);

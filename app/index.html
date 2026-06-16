@@ -85,6 +85,16 @@
               <button class="icon-button" id="viewerZoomInButton" title="Zoom in" aria-label="Zoom in">+</button>
             </div>
             <canvas id="splatCanvas" width="640" height="420" aria-label="Gaussian splat inspection scene"></canvas>
+            <div class="render-compare" id="renderCompare" hidden>
+              <figure id="sampleRenderFigure">
+                <div class="render-frame"><img id="sampleRenderImage" alt="gsplat rendered sample" /></div>
+                <figcaption>Render</figcaption>
+              </figure>
+              <figure id="sampleTargetFigure">
+                <div class="render-frame"><img id="sampleTargetImage" alt="training target frame" /></div>
+                <figcaption>Target</figcaption>
+              </figure>
+            </div>
             <div class="viewer-meta" id="viewerMeta"></div>
           </section>
 
