@@ -23,8 +23,10 @@ const els = {
   renderCompare: document.querySelector('#renderCompare'),
   sampleRenderFigure: document.querySelector('#sampleRenderFigure'),
   sampleTargetFigure: document.querySelector('#sampleTargetFigure'),
+  renderReviewFigure: document.querySelector('#renderReviewFigure'),
   sampleRenderImage: document.querySelector('#sampleRenderImage'),
   sampleTargetImage: document.querySelector('#sampleTargetImage'),
+  renderReviewImage: document.querySelector('#renderReviewImage'),
   viewerMeta: document.querySelector('#viewerMeta'),
   canvas: document.querySelector('#splatCanvas'),
 };
@@ -409,6 +411,9 @@ function viewerQuality(status, training = {}, runConfig = {}) {
   const gaussianCount = Number(training.gaussianCount);
   if (profile === 'smoke' || strategy === 'none') return { text: 'smoke inspect', type: 'warning' };
   if (Number.isFinite(gaussianCount) && gaussianCount < 10000) return { text: 'thin inspect', type: 'warning' };
+  if (profile === 'quality_probe') {
+    return { text: training.renderReview?.status === 'pass' ? 'quality inspect' : 'quality warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
+  }
   return { text: 'baseline inspect', type: 'pass' };
 }
 
@@ -424,10 +429,12 @@ function setSampleImage(image, figure, url) {
 function renderSampleComparison(preview = {}) {
   const renderUrl = preview.sampleRenderUrl;
   const targetUrl = preview.sampleTargetUrl;
+  const reviewUrl = preview.renderReviewUrl;
   const hasSample = Boolean(renderUrl || targetUrl);
   els.renderCompare.hidden = !hasSample;
   setSampleImage(els.sampleRenderImage, els.sampleRenderFigure, renderUrl);
   setSampleImage(els.sampleTargetImage, els.sampleTargetFigure, targetUrl);
+  setSampleImage(els.renderReviewImage, els.renderReviewFigure, reviewUrl);
 }
 
 function renderViewerMeta(extra = null) {
@@ -451,11 +458,12 @@ function renderViewerMeta(extra = null) {
   setViewerStatus(quality.text, quality.type);
   els.viewerMeta.append(
     row('Artifact', artifact.format ?? 'ply'),
-    row('Renderer', viewerScene.renderer ? 'WebGL inspect' : 'loading'),
+    row('Renderer', viewerScene.renderer ? 'PLY point debug' : 'loading'),
     row('Profile', training.profile ?? runConfig.profile ?? '-'),
     row('Strategy', training.densifyStrategy ?? runConfig.densifyStrategy ?? '-'),
     row('Gaussians', formatCount(extra?.pointCount ?? (viewerScene.pointCount || ply.vertexCount))),
     row('Growth', formatGrowth(training)),
+    row('Review MAE', training.renderReview?.meanMae ?? '-'),
     row('Size', formatBytes(artifact.sizeBytes)),
     row('Device', manifest?.device?.name ?? '-'),
   );

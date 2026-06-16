@@ -4,6 +4,8 @@ Verified: 2026-06-08
 
 The first user interface is a local, dependency-free lab console. It is intentionally small: it lets a user select a capture, import a local video into the manifest target path, create a planned job, inspect preflight/media pipeline gates and see commercial/compliance status before heavy reconstruction work starts.
 
+As of 2026-06-16, the UI can also show packaged splat artifacts. The live WebGL canvas is a PLY point-debug inspector, not the final production Gaussian Splat renderer. The visual quality reference is the `gsplat` render/target pair and multi-view render-review sheet written by the training stage.
+
 ## Scope
 
 The UI owns:
@@ -14,7 +16,9 @@ The UI owns:
 - preflight and media pipeline gate visibility
 - commercial/compliance visibility
 - local RTX workstation status evidence
-- packaged splat inspection with WebGL PLY orbit/pan/zoom and the latest `gsplat` sample render/target images
+- packaged artifact inspection with WebGL PLY point-debug orbit/pan/zoom
+- latest `gsplat` sample render/target images
+- latest `gsplat` multi-view render/target/diff review sheet
 
 The UI does not own:
 
@@ -22,7 +26,7 @@ The UI does not own:
 - SfM
 - splat training
 - artifact conversion
-- production Gaussian Splat rendering
+- production Gaussian Splat rendering; Spark + Three.js is the preferred next viewer spike after dependency install/revert and npm license review are recorded
 - viewer runtime validation
 
 Those remain separate stages and must keep their own reports.

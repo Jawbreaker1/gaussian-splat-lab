@@ -472,11 +472,35 @@ select {
   object-fit: cover;
 }
 
-.render-compare figcaption {
+.render-compare figcaption,
+.review-sheet figcaption {
   margin-top: 5px;
   color: var(--muted);
   font-size: 12px;
   font-weight: 740;
+}
+
+.review-sheet {
+  margin: 12px 0 0;
+}
+
+.review-sheet[hidden] {
+  display: none;
+}
+
+.review-frame {
+  width: 100%;
+  max-height: 520px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.review-frame img {
+  width: 100%;
+  min-width: 760px;
+  display: block;
 }
 
 .viewer-meta {

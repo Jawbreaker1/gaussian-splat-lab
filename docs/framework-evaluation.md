@@ -1,6 +1,6 @@
 # Framework Evaluation
 
-Verified: 2026-06-07
+Verified: 2026-06-16
 
 This project must be able to move from a local video to an interactive browser Gaussian Splat without accidentally depending on non-commercial, strong-copyleft or hosted/proprietary services that would block later product use.
 
@@ -40,7 +40,7 @@ Blocked by default:
 | Training smoke | Nerfstudio Splatfacto | Accepted for lab | Apache-2.0, already wraps data parsing/training/export; good first end-to-end path. |
 | Training core | `gsplat` | Accepted | Apache-2.0 CUDA rasterization library; good target if we need a narrower custom trainer after the MVP. |
 | PyTorch companion | TorchVision | Accepted | Installed with the GPU smoke environment; keep notices and avoid bundled datasets/model weights unless separately licensed. |
-| Viewer | Spark + Three.js | Preferred viewer spike | MIT, active, Three.js-based, supports common splat formats including PLY/SPZ/SPLAT/KSPLAT/SOG. |
+| Viewer | Spark + Three.js | Preferred viewer spike | MIT, active, Three.js-based, supports common splat formats including PLY/SPZ/SPLAT/KSPLAT/SOG. This is the next real 3DGS browser viewer path after the current PLY point-debug UI. |
 | Viewer/editor fallback | SuperSplat viewer/editor and `splat-transform` | Accepted | MIT open-source pieces; avoid the hosted PlayCanvas publishing platform for core pipeline. |
 | Legacy viewer fallback | `mkkellogg/GaussianSplats3D` | Accepted fallback | MIT and mature, but the maintainer notes it is no longer actively developed. |
 
@@ -90,7 +90,7 @@ Official source:
 
 ### Viewer Direction
 
-The viewer should be isolated and format-driven. Current best first spike is Spark on Three.js because Spark is MIT, active, browser-based and supports multiple splat formats. SuperSplat is a strong fallback for editing/conversion and self-hosted viewing. The hosted PlayCanvas publishing flow is explicitly outside the core pipeline.
+The viewer should be isolated and format-driven. Current best first real-renderer spike is Spark on Three.js because Spark is MIT, active, browser-based and supports multiple splat formats. Spark currently describes itself as an advanced 3D Gaussian Splatting renderer for Three.js and the latest checked package version is `2.1.0`. The current dependency-free WebGL canvas in this repo is only a PLY point-debug inspector. SuperSplat is a strong fallback for editing/conversion and self-hosted viewing. The hosted PlayCanvas publishing flow is explicitly outside the core pipeline.
 
 Official sources:
 

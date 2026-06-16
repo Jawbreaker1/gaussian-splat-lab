@@ -31,6 +31,10 @@ TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "maxRenderSize": 384,
         "maxGaussians": 6000,
         "sampleEvery": 5,
+        "reviewSamples": 2,
+        "initialOpacity": 0.55,
+        "initialScaleMultiplier": 1.0,
+        "ssimWeight": 0.0,
         "meanLr": 0.0005,
         "colorLr": 0.02,
         "scaleLr": 0.001,
@@ -53,6 +57,10 @@ TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "maxRenderSize": 640,
         "maxGaussians": 60000,
         "sampleEvery": 50,
+        "reviewSamples": 5,
+        "initialOpacity": 0.55,
+        "initialScaleMultiplier": 1.0,
+        "ssimWeight": 0.0,
         "meanLr": 0.0005,
         "colorLr": 0.02,
         "scaleLr": 0.001,
@@ -66,6 +74,32 @@ TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "growGrad2d": 0.0002,
         "growScale3d": 0.01,
         "pruneOpa": 0.005,
+        "absgrad": False,
+    },
+    "quality_probe": {
+        "iterations": 2500,
+        "maxImages": 48,
+        "maxPoints": 80000,
+        "maxRenderSize": 768,
+        "maxGaussians": 120000,
+        "sampleEvery": 100,
+        "reviewSamples": 6,
+        "initialOpacity": 0.12,
+        "initialScaleMultiplier": 0.35,
+        "ssimWeight": 0.2,
+        "meanLr": 0.00035,
+        "colorLr": 0.025,
+        "scaleLr": 0.004,
+        "opacityLr": 0.02,
+        "quatLr": 0.0007,
+        "densifyStrategy": "default",
+        "refineStartIter": 100,
+        "refineStopIter": 2400,
+        "refineEvery": 100,
+        "resetEvery": 3000,
+        "growGrad2d": 0.00015,
+        "growScale3d": 0.006,
+        "pruneOpa": 0.003,
         "absgrad": False,
     },
 }
@@ -266,6 +300,15 @@ def command_summary(command_result: dict[str, Any], max_lines: int = 8) -> str:
     text = command_result.get("stdout") or command_result.get("stderr") or ""
     lines = [line for line in str(text).splitlines() if line.strip()]
     return "\n".join(lines[:max_lines])
+
+
+def nvidia_smi_status(command_result: dict[str, Any]) -> str:
+    if command_result.get("status") != "fail":
+        return str(command_result.get("status") or "fail")
+    text = f"{command_result.get('stdout') or ''}\n{command_result.get('stderr') or ''}"
+    if "GPU access blocked by the operating system" in text:
+        return "setup_gap"
+    return "fail"
 
 
 def check_python_dev_headers() -> dict[str, Any]:
@@ -845,7 +888,7 @@ def build_environment_report(job_path: Path) -> dict[str, Any]:
     checks = [
         {
             "id": "nvidia_smi",
-            "status": nvidia_query["status"],
+            "status": nvidia_smi_status(nvidia_query),
             "summary": command_summary(nvidia_query),
             "details": nvidia_query,
         },
@@ -2058,6 +2101,10 @@ def build_splat_training_report(
         "maxRenderSize": positive_int_setting(training_config, "maxRenderSize", int(profile_defaults["maxRenderSize"]), 64, 1920),
         "maxGaussians": positive_int_setting(training_config, "maxGaussians", int(profile_defaults["maxGaussians"]), 100, 1000000),
         "sampleEvery": positive_int_setting(training_config, "sampleEvery", int(profile_defaults["sampleEvery"]), 1, 5000),
+        "reviewSamples": positive_int_setting(training_config, "reviewSamples", int(profile_defaults["reviewSamples"]), 1, 32),
+        "initialOpacity": positive_float_setting(training_config, "initialOpacity", float(profile_defaults["initialOpacity"]), 0.001, 0.999),
+        "initialScaleMultiplier": positive_float_setting(training_config, "initialScaleMultiplier", float(profile_defaults["initialScaleMultiplier"]), 0.01, 10.0),
+        "ssimWeight": positive_float_setting(training_config, "ssimWeight", float(profile_defaults["ssimWeight"]), 0.0, 1.0),
         "meanLr": positive_float_setting(training_config, "meanLr", float(profile_defaults["meanLr"]), 0.0, 1.0),
         "colorLr": positive_float_setting(training_config, "colorLr", float(profile_defaults["colorLr"]), 0.0, 1.0),
         "scaleLr": positive_float_setting(training_config, "scaleLr", float(profile_defaults["scaleLr"]), 0.0, 1.0),
@@ -2101,6 +2148,14 @@ def build_splat_training_report(
         str(run_config["maxGaussians"]),
         "--sample-every",
         str(run_config["sampleEvery"]),
+        "--review-samples",
+        str(run_config["reviewSamples"]),
+        "--initial-opacity",
+        str(run_config["initialOpacity"]),
+        "--initial-scale-multiplier",
+        str(run_config["initialScaleMultiplier"]),
+        "--ssim-weight",
+        str(run_config["ssimWeight"]),
         "--mean-lr",
         str(run_config["meanLr"]),
         "--color-lr",
@@ -2181,6 +2236,7 @@ def build_splat_training_report(
     checkpoint_path = Path(str(result.get("checkpointPath") or ""))
     exported_artifact_path = Path(str(result.get("exportedArtifactPath") or result.get("splatArtifactPath") or ""))
     sample_render_path = Path(str(result.get("sampleRenderPath") or ""))
+    render_review_path = Path(str(result.get("renderReviewPath") or ""))
     loss_samples = result.get("training", {}).get("lossSamples") if isinstance(result.get("training"), dict) else None
     artifact_checks = [
         {
@@ -2206,6 +2262,12 @@ def build_splat_training_report(
             "summary": "sample render exists" if sample_render_path.exists() else "sample render was not written",
             "path": str(sample_render_path),
         },
+        {
+            "id": "render_review_artifact",
+            "status": "pass" if render_review_path.exists() and render_review_path.stat().st_size > 0 else "fail",
+            "summary": "render review contact sheet exists" if render_review_path.exists() else "render review contact sheet was not written",
+            "path": str(render_review_path),
+        },
     ]
     base["checks"].extend(artifact_checks)
     base["checkpointPath"] = str(checkpoint_path)
@@ -2213,6 +2275,7 @@ def build_splat_training_report(
     base["splatArtifactPath"] = str(exported_artifact_path)
     base["sampleRenderPath"] = str(sample_render_path)
     base["sampleTargetPath"] = result.get("sampleTargetPath")
+    base["renderReviewPath"] = str(render_review_path)
     base["metrics"] = result.get("training", {})
     base["device"] = result.get("device", {})
     base["versions"] = result.get("versions", {})
@@ -2292,8 +2355,10 @@ def build_viewer_manifest(
 ) -> dict[str, Any]:
     sample_render_raw = training_report.get("sampleRenderPath")
     sample_target_raw = training_report.get("sampleTargetPath")
+    render_review_raw = training_report.get("renderReviewPath")
     sample_render_path = Path(sample_render_raw) if isinstance(sample_render_raw, str) and sample_render_raw else None
     sample_target_path = Path(sample_target_raw) if isinstance(sample_target_raw, str) and sample_target_raw else None
+    render_review_path = Path(render_review_raw) if isinstance(render_review_raw, str) and render_review_raw else None
     ply_header = parse_ply_header(artifact)
     return {
         "schemaVersion": 1,
@@ -2318,6 +2383,9 @@ def build_viewer_manifest(
             "sampleRenderSizeBytes": sample_render_path.stat().st_size if sample_render_path and sample_render_path.exists() else None,
             "sampleTargetPath": str(sample_target_path) if sample_target_path else None,
             "sampleTargetRepoRelativePath": repo_relative_path(sample_target_path) if sample_target_path else None,
+            "renderReviewPath": str(render_review_path) if render_review_path else None,
+            "renderReviewRepoRelativePath": repo_relative_path(render_review_path) if render_review_path else None,
+            "renderReviewSizeBytes": render_review_path.stat().st_size if render_review_path and render_review_path.exists() else None,
         },
         "training": training_report.get("metrics", {}),
         "runConfig": training_report.get("runConfig", {}),
@@ -2326,7 +2394,7 @@ def build_viewer_manifest(
         "viewer": {
             "implementation": "local_webgl_binary_ply_point_splats",
             "supports": ["orbit", "pan", "zoom", "reset_view"],
-            "loads": "binary_little_endian PLY vertex positions, SH DC color fields, opacity and scale into a WebGL point-splat scene",
+            "loads": "binary_little_endian PLY vertex positions, SH DC color fields, opacity and scale into a WebGL point-debug scene",
         },
     }
 

@@ -85,6 +85,7 @@ def attach_artifact_urls(viewer_manifest: dict[str, Any]) -> dict[str, Any]:
     if isinstance(preview, dict):
         preview["sampleRenderUrl"] = artifact_url(preview.get("sampleRenderRepoRelativePath"))
         preview["sampleTargetUrl"] = artifact_url(preview.get("sampleTargetRepoRelativePath"))
+        preview["renderReviewUrl"] = artifact_url(preview.get("renderReviewRepoRelativePath"))
     return manifest
 
 

@@ -15,7 +15,7 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageStat
 
 
 SH_C0 = 0.28209479177387814
@@ -326,10 +326,170 @@ def prune_to_gaussian_cap(
     return int(remove_count)
 
 
-def save_image(path: Path, tensor: torch.Tensor) -> None:
+def tensor_to_image(tensor: torch.Tensor) -> Image.Image:
     image = tensor.detach().clamp(0.0, 1.0).cpu().numpy()
     image_u8 = (image * 255.0).round().astype(np.uint8)
-    Image.fromarray(image_u8).save(path)
+    return Image.fromarray(image_u8)
+
+
+def save_image(path: Path, tensor: torch.Tensor) -> None:
+    tensor_to_image(tensor).save(path)
+
+
+def image_quality_metrics(rendered: Image.Image, target: Image.Image) -> dict[str, Any]:
+    diff = ImageChops.difference(rendered.convert("RGB"), target.convert("RGB"))
+    stat = ImageStat.Stat(diff)
+    rendered_luma = ImageStat.Stat(rendered.convert("L"))
+    target_luma = ImageStat.Stat(target.convert("L"))
+    mae = sum(stat.mean) / 3.0
+    rmse = math.sqrt(sum(value * value for value in stat.rms) / 3.0)
+    return {
+        "mae": round(mae, 4),
+        "rmse": round(rmse, 4),
+        "renderLuminanceMean": round(rendered_luma.mean[0], 4),
+        "targetLuminanceMean": round(target_luma.mean[0], 4),
+        "luminanceDelta": round(rendered_luma.mean[0] - target_luma.mean[0], 4),
+    }
+
+
+def ssim_index(prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    pred = prediction.permute(2, 0, 1).unsqueeze(0)
+    truth = target.permute(2, 0, 1).unsqueeze(0)
+    channels = pred.shape[1]
+    window = torch.ones((channels, 1, 11, 11), dtype=pred.dtype, device=pred.device) / 121.0
+    mu_pred = torch.nn.functional.conv2d(pred, window, padding=5, groups=channels)
+    mu_truth = torch.nn.functional.conv2d(truth, window, padding=5, groups=channels)
+    mu_pred_sq = mu_pred * mu_pred
+    mu_truth_sq = mu_truth * mu_truth
+    mu_pred_truth = mu_pred * mu_truth
+    sigma_pred_sq = torch.nn.functional.conv2d(pred * pred, window, padding=5, groups=channels) - mu_pred_sq
+    sigma_truth_sq = torch.nn.functional.conv2d(truth * truth, window, padding=5, groups=channels) - mu_truth_sq
+    sigma_pred_truth = torch.nn.functional.conv2d(pred * truth, window, padding=5, groups=channels) - mu_pred_truth
+    c1 = 0.01**2
+    c2 = 0.03**2
+    numerator = (2 * mu_pred_truth + c1) * (2 * sigma_pred_truth + c2)
+    denominator = (mu_pred_sq + mu_truth_sq + c1) * (sigma_pred_sq + sigma_truth_sq + c2)
+    return (numerator / denominator.clamp_min(1.0e-8)).mean()
+
+
+def render_final_review(
+    *,
+    rasterization: Any,
+    final_means: torch.Tensor,
+    final_quats: torch.Tensor,
+    final_log_scales: torch.Tensor,
+    final_opacity_logits: torch.Tensor,
+    final_colors: torch.Tensor,
+    viewmats: torch.Tensor,
+    Ks: torch.Tensor,
+    backgrounds: torch.Tensor,
+    targets: torch.Tensor,
+    selected_images: list[dict[str, Any]],
+    width: int,
+    height: int,
+    output_dir: Path,
+    sample_render_path: Path,
+    sample_target_path: Path,
+    last_camera_index: int,
+    review_samples: int,
+) -> dict[str, Any]:
+    view_count = int(targets.shape[0])
+    sample_count = max(1, min(review_samples, view_count))
+    indices = [last_camera_index]
+    for raw_index in np.linspace(0, view_count - 1, sample_count):
+        index = int(round(float(raw_index)))
+        if index not in indices:
+            indices.append(index)
+    indices = indices[:sample_count]
+
+    review_dir = output_dir / "render_review"
+    review_dir.mkdir(parents=True, exist_ok=True)
+    samples: list[dict[str, Any]] = []
+    sheet_cells: list[tuple[str, Image.Image]] = []
+    scales = torch.exp(final_log_scales).clamp(1.0e-5, 1.0e3)
+    opacities = torch.sigmoid(final_opacity_logits)
+    with torch.no_grad():
+        for order, camera_index in enumerate(indices):
+            rendered, _alphas, _info = rasterization(
+                means=final_means,
+                quats=final_quats,
+                scales=scales,
+                opacities=opacities,
+                colors=final_colors,
+                viewmats=viewmats[camera_index : camera_index + 1],
+                Ks=Ks[camera_index : camera_index + 1],
+                width=width,
+                height=height,
+                backgrounds=backgrounds[camera_index : camera_index + 1],
+                packed=False,
+                rasterize_mode="classic",
+            )
+            render_img = tensor_to_image(rendered[0, :, :, :3])
+            target_img = tensor_to_image(targets[camera_index])
+            diff_img = ImageChops.difference(render_img, target_img).point(lambda value: min(255, value * 3))
+            metrics = image_quality_metrics(render_img, target_img)
+            stem = f"view_{order:02d}_camera_{camera_index:03d}"
+            render_path = review_dir / f"{stem}_render.png"
+            target_path = review_dir / f"{stem}_target.png"
+            diff_path = review_dir / f"{stem}_diff_x3.png"
+            render_img.save(render_path)
+            target_img.save(target_path)
+            diff_img.save(diff_path)
+            if order == 0:
+                render_img.save(sample_render_path)
+                target_img.save(sample_target_path)
+            samples.append(
+                {
+                    "order": order,
+                    "cameraIndex": camera_index,
+                    "imageName": selected_images[camera_index].get("name") if camera_index < len(selected_images) else None,
+                    "renderPath": str(render_path),
+                    "targetPath": str(target_path),
+                    "diffPath": str(diff_path),
+                    **metrics,
+                }
+            )
+            sheet_cells.extend(
+                [
+                    (f"Render {camera_index} | MAE {metrics['mae']:.1f}", render_img),
+                    (f"Target {camera_index}", target_img),
+                    (f"Diff x3 | RMSE {metrics['rmse']:.1f}", diff_img),
+                ]
+            )
+
+    thumb_width = 320
+    label_height = 28
+    pad = 12
+    rows = len(samples)
+    sheet_width = thumb_width * 3 + pad * 4
+    thumb_height = max(1, round(thumb_width * height / width))
+    sheet_height = rows * (thumb_height + label_height + pad) + pad
+    contact_sheet = Image.new("RGB", (sheet_width, sheet_height), (246, 246, 242))
+    draw = ImageDraw.Draw(contact_sheet)
+    for index, (label, image) in enumerate(sheet_cells):
+        row = index // 3
+        col = index % 3
+        x = pad + col * (thumb_width + pad)
+        y = pad + row * (thumb_height + label_height + pad)
+        draw.text((x, y), label, fill=(32, 36, 42))
+        thumb = image.resize((thumb_width, thumb_height), Image.Resampling.LANCZOS)
+        contact_sheet.paste(thumb, (x, y + label_height))
+    contact_sheet_path = review_dir / "contact_sheet.png"
+    contact_sheet.save(contact_sheet_path)
+
+    mean_mae = sum(sample["mae"] for sample in samples) / max(len(samples), 1)
+    mean_rmse = sum(sample["rmse"] for sample in samples) / max(len(samples), 1)
+    mean_luma_delta = sum(sample["luminanceDelta"] for sample in samples) / max(len(samples), 1)
+    return {
+        "status": "warning" if mean_mae > 35 or abs(mean_luma_delta) > 20 else "pass",
+        "summary": "render review indicates visible mismatch" if mean_mae > 35 or abs(mean_luma_delta) > 20 else "render review is within initial visual thresholds",
+        "contactSheetPath": str(contact_sheet_path),
+        "sampleCount": len(samples),
+        "meanMae": round(mean_mae, 4),
+        "meanRmse": round(mean_rmse, 4),
+        "meanLuminanceDelta": round(mean_luma_delta, 4),
+        "samples": samples,
+    }
 
 
 def train(args: argparse.Namespace) -> dict[str, Any]:
@@ -447,16 +607,17 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
 
     means_init = torch.tensor([point.xyz for point in points], dtype=torch.float32, device=device)
     rgb_init = torch.tensor([point.rgb for point in points], dtype=torch.float32, device=device).clamp(0.01, 0.99)
-    scale_value = initial_scale(means_init)
+    scale_value = initial_scale(means_init) * args.initial_scale_multiplier
     scene_scale = scene_extent(means_init)
     quats_init = torch.zeros((len(points), 4), dtype=torch.float32, device=device)
     quats_init[:, 0] = 1.0
+    initial_opacity = min(max(args.initial_opacity, 0.001), 0.999)
     params: dict[str, torch.nn.Parameter] = {
         "means": torch.nn.Parameter(means_init),
         "colors": torch.nn.Parameter(torch.logit(rgb_init)),
         "scales": torch.nn.Parameter(torch.full((len(points), 3), math.log(scale_value), dtype=torch.float32, device=device)),
         "opacities": torch.nn.Parameter(
-            torch.full((len(points),), torch.logit(torch.tensor(0.55)).item(), dtype=torch.float32, device=device)
+            torch.full((len(points),), torch.logit(torch.tensor(initial_opacity)).item(), dtype=torch.float32, device=device)
         ),
         "quats": torch.nn.Parameter(quats_init),
     }
@@ -513,7 +674,13 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         )
         prediction = rendered[0, :, :, :3]
         target = targets[camera_index]
-        loss = torch.nn.functional.l1_loss(prediction, target)
+        l1_loss = torch.nn.functional.l1_loss(prediction, target)
+        if args.ssim_weight > 0.0:
+            ssim_loss = 1.0 - ssim_index(prediction, target)
+            loss = (1.0 - args.ssim_weight) * l1_loss + args.ssim_weight * ssim_loss
+        else:
+            ssim_loss = torch.zeros((), dtype=l1_loss.dtype, device=l1_loss.device)
+            loss = l1_loss
 
         for optimizer in optimizers.values():
             optimizer.zero_grad(set_to_none=True)
@@ -551,6 +718,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                     "iteration": iteration,
                     "cameraIndex": int(camera_index),
                     "loss": float(loss.detach().cpu().item()),
+                    "l1Loss": float(l1_loss.detach().cpu().item()),
+                    "ssimLoss": float(ssim_loss.detach().cpu().item()),
                     "gaussianCount": int(params["means"].shape[0]),
                 }
             )
@@ -578,6 +747,26 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     final_opacity_logits = params["opacities"].detach()
     final_quats = torch.nn.functional.normalize(params["quats"].detach(), dim=-1)
     final_means = params["means"].detach()
+    render_review = render_final_review(
+        rasterization=rasterization,
+        final_means=final_means,
+        final_quats=final_quats,
+        final_log_scales=final_log_scales,
+        final_opacity_logits=final_opacity_logits,
+        final_colors=final_colors,
+        viewmats=viewmats,
+        Ks=Ks,
+        backgrounds=backgrounds,
+        targets=targets,
+        selected_images=selected_images,
+        width=width,
+        height=height,
+        output_dir=output_dir,
+        sample_render_path=sample_render_path,
+        sample_target_path=sample_target_path,
+        last_camera_index=last_camera_index,
+        review_samples=args.review_samples,
+    )
 
     torch.save(
         {
@@ -595,9 +784,13 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             "training": {
                 "profile": args.profile,
                 "densifyStrategy": args.densify_strategy,
+                "initialOpacity": initial_opacity,
+                "initialScaleMultiplier": args.initial_scale_multiplier,
+                "ssimWeight": args.ssim_weight,
                 "iterations": args.iterations,
                 "lossSamples": loss_samples,
                 "densificationSamples": densification_samples,
+                "renderReview": render_review,
                 "renderWidth": width,
                 "renderHeight": height,
             },
@@ -636,6 +829,15 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 "summary": "sample render saved" if sample_render_path.exists() else "sample render was not saved",
                 "path": str(sample_render_path),
             },
+            {
+                "id": "render_review",
+                "status": render_review["status"],
+                "summary": render_review["summary"],
+                "path": render_review["contactSheetPath"],
+                "meanMae": render_review["meanMae"],
+                "meanRmse": render_review["meanRmse"],
+                "meanLuminanceDelta": render_review["meanLuminanceDelta"],
+            },
         ],
         "commands": {"modelConverter": converter},
         "backend": "gsplat",
@@ -662,6 +864,9 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             "renderHeight": height,
             "profile": args.profile,
             "densifyStrategy": args.densify_strategy,
+            "initialOpacity": initial_opacity,
+            "initialScaleMultiplier": args.initial_scale_multiplier,
+            "ssimWeight": args.ssim_weight,
             "initialGaussianCount": len(points),
             "gaussianCount": final_count,
             "gaussianGrowthFactor": round(final_count / max(len(points), 1), 4),
@@ -671,6 +876,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             "sceneScale": scene_scale,
             "lossSamples": loss_samples,
             "densificationSamples": densification_samples,
+            "renderReview": render_review,
             "initialLoss": loss_samples[0]["loss"] if loss_samples else None,
             "finalLoss": loss_samples[-1]["loss"] if loss_samples else None,
             "lastCameraIndex": last_camera_index,
@@ -681,6 +887,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         "splatArtifactPath": str(exported_ply_path),
         "sampleRenderPath": str(sample_render_path),
         "sampleTargetPath": str(sample_target_path),
+        "renderReviewPath": render_review["contactSheetPath"],
     }
 
 
@@ -697,7 +904,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-render-size", type=int, default=384)
     parser.add_argument("--max-gaussians", type=int, default=6000)
     parser.add_argument("--sample-every", type=int, default=5)
+    parser.add_argument("--review-samples", type=int, default=4)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--initial-opacity", type=float, default=0.55)
+    parser.add_argument("--initial-scale-multiplier", type=float, default=1.0)
+    parser.add_argument("--ssim-weight", type=float, default=0.0)
     parser.add_argument("--mean-lr", type=float, default=0.0005)
     parser.add_argument("--color-lr", type=float, default=0.02)
     parser.add_argument("--scale-lr", type=float, default=0.001)

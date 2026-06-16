@@ -36,7 +36,7 @@ This is the actual video-to-splat chain.
 | 3 | SfM/camera solve | `FrameManifest` | `CameraSolveReport` | COLMAP exits cleanly, sparse model exists, enough frames are registered, sparse point count and reprojection error are recorded. |
 | 4 | Splat training | `CameraSolveReport` | `TrainingRunReport` | Training completes or checkpoints cleanly, nonzero splats exported, loss trend and sample renders recorded. |
 | 5 | Packaging | `TrainingRunReport` | `SplatArtifact` | Artifact file exists, format is declared, byte size/hash recorded, viewer loader can parse it. |
-| 6 | Viewer | `SplatArtifact` | `ViewerValidationReport` | Browser opens, canvas is nonblank, orbit/pan/zoom/reset work, screenshot evidence saved. |
+| 6 | Viewer | `SplatArtifact` | `ViewerValidationReport` | Browser opens, current point-debug canvas is nonblank, orbit/pan/zoom/reset work, render-review evidence is exposed; production 3DGS rendering remains a separate viewer spike. |
 | 7 | Quality report | all stage reports | `CaptureQualityReport` | Result classified as `usable`, `weak` or `failed` with failure boundary identified. |
 
 ## Validation Status Values
@@ -99,11 +99,11 @@ Initial thresholds are intentionally conservative and can be tuned after known-g
 | SfM | pass at 70% registered frames; warning at 50-70%; sparse points and reprojection error recorded |
 | Training | gsplat CUDA extension available; exported splat exists; final report includes iterations, wall time and loss samples |
 | Packaging | artifact hash and byte size recorded; selected viewer supports the format |
-| Viewer | nonblank screenshot; camera reset returns to initial pose |
+| Viewer | point-debug canvas is nonblank; camera reset returns to initial pose; render-review sheet is available |
 
 ## Current Workload Guard
 
-SfM, training and viewer validation remain guarded heavy stages. Training now has a minimal gsplat orchestration behind `--allow-heavy`; on the RTX workstation it produces a checkpoint, binary PLY and sample render. Packaging writes a viewer manifest with hash, byte size and PLY header metadata. Viewer validation reads that manifest, verifies the artifact hash/header and checks that the local UI contains WebGL binary PLY viewer hooks.
+SfM, training and viewer validation remain guarded heavy stages. Training now has a minimal gsplat orchestration behind `--allow-heavy`; on the RTX workstation it produces a checkpoint, binary PLY, sample render/target pair and render-review sheet. Packaging writes a viewer manifest with hash, byte size, PLY header metadata and preview artifact paths. Viewer validation reads that manifest, verifies the artifact hash/header and checks that the local UI contains WebGL binary PLY point-debug hooks. The current canvas is not a production covariance/screen-space Gaussian Splat renderer.
 
 ## Responsibility Boundaries
 

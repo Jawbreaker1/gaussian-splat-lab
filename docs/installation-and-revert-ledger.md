@@ -300,3 +300,30 @@ Revert plan: remove with `sudo apt-get remove python3.12-dev` if no longer neede
 Result: pass after the user installed `python3.12-dev 3.12.3-1ubuntu0.13`. `/usr/include/python3.12/Python.h` exists, `splat_training --allow-heavy` passed, and gsplat produced checkpoint/PLY/sample-render artifacts on the RTX 5090.
 Notes: `python3-dev` is also available in apt, but the exact missing header path belongs to Python 3.12, so the narrow package is `python3.12-dev`. The remaining quality warning is capture/commercial provenance, not a Python/CUDA setup gap.
 
+## Entry: 2026-06-16 Install bubblewrap for Codex sandbox support
+
+Date: 2026-06-16
+Operator: User
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Restore the local Codex sandbox helper after image inspection and patch application failed with missing `bwrap`.
+Dependency: Ubuntu package `bubblewrap 0.9.0-1ubuntu0.1`
+Commercial decision: Developer/sandbox support tool only; not a Gaussian Splat runtime dependency and not intended for redistribution with product artifacts.
+Command recorded:
+
+```bash
+sudo apt-get install -y bubblewrap
+```
+
+Working directory: system package install, outside repo
+Expected changes: apt-managed `/usr/bin/bwrap` and package metadata for `bubblewrap`.
+Validation:
+
+```bash
+command -v bwrap
+bwrap --version
+dpkg-query -W -f='${Package} ${Version}\n' bubblewrap
+```
+
+Revert plan: remove with `sudo apt-get remove bubblewrap` if Codex sandbox support is no longer needed; review apt's proposed autoremove list before accepting any additional removals.
+Result: pass; `/usr/bin/bwrap` exists, `bwrap --version` reports `bubblewrap 0.9.0`, dpkg reports `bubblewrap 0.9.0-1ubuntu0.1`, `view_image` successfully opened the render-review contact sheet, and `apply_patch` successfully edited tracked files after install.
+Notes: This fixes the local Codex tooling issue only. It does not affect the video-to-splat runtime pipeline or commercial framework decision surface.

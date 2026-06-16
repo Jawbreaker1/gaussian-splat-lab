@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "verifiedAt": "2026-06-15",
+  "verifiedAt": "2026-06-16",
   "licensePolicy": {
     "preferredSpdx": [
       "MIT",
@@ -192,10 +192,10 @@
     {
       "id": "sparkjsdev-spark",
       "name": "Spark",
-      "role": "preferred browser Gaussian Splat viewer spike",
+      "role": "preferred production-style browser Gaussian Splat viewer spike after the current point-debug UI",
       "license": "MIT",
       "decision": "preferred",
-      "reason": "Active Three.js-based renderer with support for PLY, SPZ, SPLAT, KSPLAT and SOG formats.",
+      "reason": "Active Three.js-based renderer with support for PLY, SPZ, SPLAT, KSPLAT and SOG formats; latest checked package version is 2.1.0.",
       "officialSources": [
         "https://github.com/sparkjsdev/spark"
       ],
