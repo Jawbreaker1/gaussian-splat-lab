@@ -23,6 +23,54 @@ from typing import Any
 
 HEAVY_STAGES = {"sfm", "splat_training", "viewer"}
 
+TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "smoke": {
+        "iterations": 40,
+        "maxImages": 8,
+        "maxPoints": 6000,
+        "maxRenderSize": 384,
+        "maxGaussians": 6000,
+        "sampleEvery": 5,
+        "meanLr": 0.0005,
+        "colorLr": 0.02,
+        "scaleLr": 0.001,
+        "opacityLr": 0.01,
+        "quatLr": 0.0005,
+        "densifyStrategy": "none",
+        "refineStartIter": 500,
+        "refineStopIter": 15000,
+        "refineEvery": 100,
+        "resetEvery": 3000,
+        "growGrad2d": 0.0002,
+        "growScale3d": 0.01,
+        "pruneOpa": 0.005,
+        "absgrad": False,
+    },
+    "baseline": {
+        "iterations": 800,
+        "maxImages": 32,
+        "maxPoints": 50000,
+        "maxRenderSize": 640,
+        "maxGaussians": 60000,
+        "sampleEvery": 50,
+        "meanLr": 0.0005,
+        "colorLr": 0.02,
+        "scaleLr": 0.001,
+        "opacityLr": 0.01,
+        "quatLr": 0.0005,
+        "densifyStrategy": "default",
+        "refineStartIter": 100,
+        "refineStopIter": 780,
+        "refineEvery": 50,
+        "resetEvery": 3000,
+        "growGrad2d": 0.0002,
+        "growScale3d": 0.01,
+        "pruneOpa": 0.005,
+        "absgrad": False,
+    },
+}
+DENSIFY_STRATEGIES = {"none", "default"}
+
 
 STAGES = [
     {
@@ -231,6 +279,18 @@ def check_python_dev_headers() -> dict[str, Any]:
         "summary": "Python development headers are available" if header_exists else f"Python.h is missing; install {package_hint}",
         "path": str(header_path) if header_path else None,
         "required": package_hint,
+    }
+
+
+def check_ninja_available(env: dict[str, str] | None = None) -> dict[str, Any]:
+    search_path = (env or os.environ).get("PATH")
+    ninja_path = shutil.which("ninja", path=search_path)
+    return {
+        "id": "ninja",
+        "status": "pass" if ninja_path else "setup_gap",
+        "summary": "ninja is visible to torch extension builds" if ninja_path else "ninja is missing from PATH; install the ninja Python package or system package",
+        "path": ninja_path,
+        "required": "ninja",
     }
 
 
@@ -779,6 +839,8 @@ def build_environment_report(job_path: Path) -> dict[str, Any]:
     ffprobe = run_command(["ffprobe", "-version"], timeout_seconds=10)
     torch_cuda = check_torch_cuda()
     gsplat = check_python_import("gsplat")
+    trainer_env, trainer_env_summary = build_training_subprocess_environment(torch_cuda)
+    ninja = check_ninja_available(trainer_env)
 
     checks = [
         {
@@ -830,6 +892,7 @@ def build_environment_report(job_path: Path) -> dict[str, Any]:
             "summary": gsplat.get("version") or gsplat.get("message"),
             "details": gsplat,
         },
+        ninja,
     ]
     status = report_status(checks)
     return {
@@ -844,6 +907,7 @@ def build_environment_report(job_path: Path) -> dict[str, Any]:
             "installsPerformed": [],
             "installPolicy": "This stage only detects environment state. Missing tools are reported as setup_gap and must be installed through the installation ledger.",
         },
+        "trainingSubprocessEnvironment": trainer_env_summary,
         "checks": checks,
     }
 
@@ -1336,6 +1400,15 @@ def positive_float_setting(config: dict[str, Any], key: str, default: float, min
     return max(minimum, min(maximum, value))
 
 
+def bool_setting(config: dict[str, Any], key: str, default: bool) -> bool:
+    raw_value = config.get(key, default)
+    if isinstance(raw_value, bool):
+        return raw_value
+    if isinstance(raw_value, str):
+        return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw_value) if raw_value is not None else default
+
+
 def prepare_colmap_image_directory(frames: list[Any], image_dir: Path) -> tuple[list[dict[str, str]], list[str]]:
     image_dir.mkdir(parents=True, exist_ok=True)
     copied: list[dict[str, str]] = []
@@ -1820,7 +1893,12 @@ def missing_or_blocked_upstream_report(
     return None
 
 
-def build_splat_training_report(job_path: Path, accept_warning: bool = False, allow_heavy: bool = False) -> dict[str, Any]:
+def build_splat_training_report(
+    job_path: Path,
+    accept_warning: bool = False,
+    allow_heavy: bool = False,
+    training_profile_override: str | None = None,
+) -> dict[str, Any]:
     sfm_path = stage_report_path(job_path, "sfm")
     blocked = missing_or_blocked_upstream_report(job_path, "splat_training", "sfm", sfm_path)
     if blocked is not None:
@@ -1957,6 +2035,7 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
             "CUDA_HOME": trainer_env_summary.get("CUDA_HOME"),
         },
         check_python_dev_headers(),
+        check_ninja_available(trainer_env),
     ]
     base["checks"].extend(setup_checks)
     if any(check["status"] == "setup_gap" for check in setup_checks):
@@ -1964,16 +2043,35 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
         return base
 
     training_config = base["training"] if isinstance(base.get("training"), dict) else {}
+    requested_profile = str(training_profile_override or training_config.get("profile") or "smoke")
+    profile = requested_profile if requested_profile in TRAINING_PROFILE_DEFAULTS else "smoke"
+    profile_defaults = TRAINING_PROFILE_DEFAULTS[profile]
+    densify_strategy = str(training_config.get("densifyStrategy", profile_defaults["densifyStrategy"]))
+    if densify_strategy not in DENSIFY_STRATEGIES:
+        densify_strategy = str(profile_defaults["densifyStrategy"])
     run_config = {
-        "iterations": positive_int_setting(training_config, "iterations", 40, 1, 2000),
-        "maxImages": positive_int_setting(training_config, "maxImages", 8, 1, 64),
-        "maxPoints": positive_int_setting(training_config, "maxPoints", 6000, 100, 200000),
-        "maxRenderSize": positive_int_setting(training_config, "maxRenderSize", 384, 64, 1920),
-        "sampleEvery": positive_int_setting(training_config, "sampleEvery", 5, 1, 1000),
-        "meanLr": positive_float_setting(training_config, "meanLr", 0.0005, 0.0, 1.0),
-        "colorLr": positive_float_setting(training_config, "colorLr", 0.02, 0.0, 1.0),
-        "scaleLr": positive_float_setting(training_config, "scaleLr", 0.001, 0.0, 1.0),
-        "opacityLr": positive_float_setting(training_config, "opacityLr", 0.01, 0.0, 1.0),
+        "profile": profile,
+        "requestedProfile": requested_profile,
+        "iterations": positive_int_setting(training_config, "iterations", int(profile_defaults["iterations"]), 1, 50000),
+        "maxImages": positive_int_setting(training_config, "maxImages", int(profile_defaults["maxImages"]), 1, 128),
+        "maxPoints": positive_int_setting(training_config, "maxPoints", int(profile_defaults["maxPoints"]), 100, 500000),
+        "maxRenderSize": positive_int_setting(training_config, "maxRenderSize", int(profile_defaults["maxRenderSize"]), 64, 1920),
+        "maxGaussians": positive_int_setting(training_config, "maxGaussians", int(profile_defaults["maxGaussians"]), 100, 1000000),
+        "sampleEvery": positive_int_setting(training_config, "sampleEvery", int(profile_defaults["sampleEvery"]), 1, 5000),
+        "meanLr": positive_float_setting(training_config, "meanLr", float(profile_defaults["meanLr"]), 0.0, 1.0),
+        "colorLr": positive_float_setting(training_config, "colorLr", float(profile_defaults["colorLr"]), 0.0, 1.0),
+        "scaleLr": positive_float_setting(training_config, "scaleLr", float(profile_defaults["scaleLr"]), 0.0, 1.0),
+        "opacityLr": positive_float_setting(training_config, "opacityLr", float(profile_defaults["opacityLr"]), 0.0, 1.0),
+        "quatLr": positive_float_setting(training_config, "quatLr", float(profile_defaults["quatLr"]), 0.0, 1.0),
+        "densifyStrategy": densify_strategy,
+        "refineStartIter": positive_int_setting(training_config, "refineStartIter", int(profile_defaults["refineStartIter"]), 0, 50000),
+        "refineStopIter": positive_int_setting(training_config, "refineStopIter", int(profile_defaults["refineStopIter"]), 0, 50000),
+        "refineEvery": positive_int_setting(training_config, "refineEvery", int(profile_defaults["refineEvery"]), 1, 5000),
+        "resetEvery": positive_int_setting(training_config, "resetEvery", int(profile_defaults["resetEvery"]), 1, 50000),
+        "growGrad2d": positive_float_setting(training_config, "growGrad2d", float(profile_defaults["growGrad2d"]), 0.0, 10.0),
+        "growScale3d": positive_float_setting(training_config, "growScale3d", float(profile_defaults["growScale3d"]), 0.0, 10.0),
+        "pruneOpa": positive_float_setting(training_config, "pruneOpa", float(profile_defaults["pruneOpa"]), 0.0, 1.0),
+        "absgrad": bool_setting(training_config, "absgrad", bool(profile_defaults["absgrad"])),
     }
     training_dir = splat_training_run_directory(job_path)
     result_path = training_dir / "training_result.json"
@@ -1989,6 +2087,8 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
         str(training_dir),
         "--result-json",
         str(result_path),
+        "--profile",
+        str(run_config["profile"]),
         "--iterations",
         str(run_config["iterations"]),
         "--max-images",
@@ -1997,6 +2097,8 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
         str(run_config["maxPoints"]),
         "--max-render-size",
         str(run_config["maxRenderSize"]),
+        "--max-gaussians",
+        str(run_config["maxGaussians"]),
         "--sample-every",
         str(run_config["sampleEvery"]),
         "--mean-lr",
@@ -2007,7 +2109,27 @@ def build_splat_training_report(job_path: Path, accept_warning: bool = False, al
         str(run_config["scaleLr"]),
         "--opacity-lr",
         str(run_config["opacityLr"]),
+        "--quat-lr",
+        str(run_config["quatLr"]),
+        "--densify-strategy",
+        str(run_config["densifyStrategy"]),
+        "--refine-start-iter",
+        str(run_config["refineStartIter"]),
+        "--refine-stop-iter",
+        str(run_config["refineStopIter"]),
+        "--refine-every",
+        str(run_config["refineEvery"]),
+        "--reset-every",
+        str(run_config["resetEvery"]),
+        "--grow-grad2d",
+        str(run_config["growGrad2d"]),
+        "--grow-scale3d",
+        str(run_config["growScale3d"]),
+        "--prune-opa",
+        str(run_config["pruneOpa"]),
     ]
+    if run_config["absgrad"]:
+        command.append("--absgrad")
     trainer = run_command(command, timeout_seconds=7200, env=trainer_env)
     base["trainingDirectory"] = str(training_dir)
     base["runConfig"] = run_config
@@ -2198,6 +2320,7 @@ def build_viewer_manifest(
             "sampleTargetRepoRelativePath": repo_relative_path(sample_target_path) if sample_target_path else None,
         },
         "training": training_report.get("metrics", {}),
+        "runConfig": training_report.get("runConfig", {}),
         "device": training_report.get("device", {}),
         "versions": training_report.get("versions", {}),
         "viewer": {
@@ -2632,7 +2755,12 @@ def command_run_stage(args: argparse.Namespace) -> int:
     elif args.stage == "sfm":
         report = build_sfm_report(job_path, accept_warning=args.accept_warning, allow_heavy=args.allow_heavy)
     elif args.stage == "splat_training":
-        report = build_splat_training_report(job_path, accept_warning=args.accept_warning, allow_heavy=args.allow_heavy)
+        report = build_splat_training_report(
+            job_path,
+            accept_warning=args.accept_warning,
+            allow_heavy=args.allow_heavy,
+            training_profile_override=args.training_profile,
+        )
     elif args.stage == "packaging":
         report = build_packaging_report(job_path, accept_warning=args.accept_warning)
     elif args.stage == "viewer":
@@ -2820,6 +2948,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-heavy",
         action="store_true",
         help="Permit stages that can place sustained load on CPU/GPU. Required for SfM and future training/rendering stages.",
+    )
+    run_stage.add_argument(
+        "--training-profile",
+        choices=sorted(TRAINING_PROFILE_DEFAULTS),
+        help="Override the configured splat_training profile for this run.",
     )
     run_stage.set_defaults(func=command_run_stage)
 

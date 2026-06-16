@@ -15,7 +15,7 @@ Goal: prove that the local RTX workstation can run the lab pipeline from existin
 ## Commands
 
 ```bash
-.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy
+.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy --training-profile baseline
 .venv/bin/python scripts/lab-pipeline.py run-stage packaging --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json
 .venv/bin/python scripts/lab-pipeline.py run-stage viewer --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy
 .venv/bin/python scripts/lab-pipeline.py run-stage quality_report --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json
@@ -33,20 +33,23 @@ The warning is expected for the current fixture because framework/commercial rev
 ## Produced Local Artifacts
 
 ```text
-outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260615T193148Z/checkpoint.pt
-outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260615T193148Z/trained_splats.ply
-outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260615T193148Z/sample_render.png
+outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T075257Z/checkpoint.pt
+outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T075257Z/trained_splats.ply
+outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T075257Z/sample_render.png
 outputs/jobs/static-room-orbit-001-20260614T100535Z/viewer/viewer-manifest.json
 ```
 
 Recorded artifact facts:
 
-- PLY size: `136048` bytes
-- PLY SHA256: `0f20e784714cb858e4801d54480f8e20f0859c0486b8631f629e6746406eb3fd`
+- PLY size: `1511521` bytes
+- PLY SHA256: `9eacfc819fc2d9f57ee5113568ce4b31b5ab455d74bc306da2e53466165aba3d`
 - PLY format: `binary_little_endian`
-- Vertex count: `2423`
-- Sample render: `384x216`, RGB, `40668` bytes
-- Training smoke: `40` iterations, `8` images, RTX 5090
+- Vertex count: `26985`
+- Sample render: `640x360`, RGB, `101067` bytes
+- Training profile: `baseline`
+- Training run: `800` iterations, `32` images, RTX 5090
+- Densification: `gsplat DefaultStrategy`, `2423` initial gaussians to `26985` exported gaussians, `11.137x` growth
+- Loss: `0.20976853370666504` initial to `0.17991331219673157` final
 
 ## Viewer Handoff
 
@@ -67,7 +70,7 @@ Viewer implementation recorded in the manifest:
 local_webgl_binary_ply_point_splats
 ```
 
-The UI server exposes job artifacts only under `/api/artifacts/...` paths that resolve inside `outputs/jobs`. `/api/state` includes the latest `viewerArtifact`, and the local frontend reads the exported binary PLY into an interactive WebGL point-splat scene. This is a true browser 3D scene for inspection, but still not a production-grade covariance/screen-space Gaussian Splat renderer.
+The UI server exposes job artifacts only under `/api/artifacts/...` paths that resolve inside `outputs/jobs`. `/api/state` includes the latest `viewerArtifact`, training profile, densification strategy and gaussian growth metadata. The local frontend reads the exported binary PLY into an interactive WebGL point-splat inspection scene. This is a true browser 3D scene for inspection, but still not a production-grade covariance/screen-space Gaussian Splat renderer.
 
 ## HTTP Smoke
 
@@ -79,7 +82,7 @@ Temporary server command:
 
 Smoke result:
 
-- `GET /api/state`: returned `viewerArtifact` with `viewerStatus=pass`
-- `GET /api/artifacts/outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260615T193148Z/trained_splats.ply`: returned HTTP `200` and `ply` file prefix
-- `GET /`: returned HTML containing `splatCanvas` and `viewerStatusPill`
+- `GET /api/state`: returned `viewerArtifact` with `viewerStatus=pass`, `trainingProfile=baseline`, `strategy=default`, `vertexCount=26985`
+- `GET /api/artifacts/outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T075257Z/trained_splats.ply`: returned HTTP `200` and `ply` file prefix
+- `GET /`: returned HTML containing `Splat Inspect` and `splatCanvas`
 - `GET /app.js`: returned code containing `initWebGLScene`, `gl_PointSize`, `createSceneLines` and `getContext('webgl')`

@@ -21,7 +21,7 @@ Already in place:
 - video intake stage with explicit missing-file and metadata stop conditions
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
-- minimal gsplat training orchestration with checkpoint/PLY/sample-render validation on the RTX 5090
+- gsplat training orchestration with `smoke` and `baseline` profiles, including DefaultStrategy densification for baseline runs
 - artifact packaging that writes a viewer manifest with PLY hash, byte size and header metadata
 - local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders an interactive WebGL point-splat scene
 - capture readiness reporting for local file/provenance status before intake
@@ -38,14 +38,15 @@ As of 2026-06-16, the repo-local `.venv` and workstation validate:
 
 - RTX 5090 visible through `nvidia-smi`
 - PyTorch CUDA smoke passes with torch 2.11.0+cu128
-- gsplat 1.5.3 trains successfully with CUDA Toolkit `nvcc` at `/usr/local/cuda-12.8/bin/nvcc` and Python headers at `/usr/include/python3.12/Python.h`
+- gsplat 1.5.3 trains successfully with CUDA Toolkit `nvcc` at `/usr/local/cuda-12.8/bin/nvcc`, Python headers at `/usr/include/python3.12/Python.h` and `ninja` visible at `.venv/bin/ninja`
 - COLMAP 3.9.1 is on PATH at `/usr/bin/colmap`
 - installed COLMAP package reports `without CUDA`, so first SfM validation should assume CPU COLMAP
 - FFmpeg/ffprobe 6.1.1-3ubuntu5 are on PATH at `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`
 - the installed Ubuntu FFmpeg build includes `--enable-gpl`; keep it as a lab-only system tool until redistribution/build flags are reviewed
 - frame sampling passed a synthetic CLI smoke test; evidence is recorded in `docs/validation/phase-1-frame-sampling-smoke.md`
 - SfM has a runnable COLMAP stage wrapper; the first post-PSU test produced a passing sparse reconstruction from local frame input
-- `splat_training`, `packaging` and `viewer` now pass on the local-test-only capture; quality remains `warning` because framework/capture provenance is not product-ready
+- `splat_training`, `packaging` and `viewer` now pass on the local-test-only capture; the current baseline run uses `800` iterations, `32` images at `640x360`, grows from `2423` to `26985` gaussians and exports a `1.5 MB` binary PLY
+- quality remains `warning` because framework/capture provenance is not product-ready
 
 ## Workload Safety
 
@@ -57,7 +58,7 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 Move from technical golden path to controlled quality experiments and product-readiness hardening.
 
-Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains, packaging writes a viewer manifest, and the local UI can fetch and render the exported binary PLY as an interactive WebGL point-splat scene. The current end-to-end quality status is `warning` because the capture is local-test-only and framework/commercial notices still need product review.
+Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains with both a fast `smoke` profile and a densifying `baseline` profile, packaging writes a viewer manifest, and the local UI can fetch and render the exported binary PLY as an interactive WebGL point-splat inspection scene. The current end-to-end quality status is `warning` because the capture is local-test-only and framework/commercial notices still need product review.
 
 Why next:
 
@@ -193,7 +194,7 @@ Inputs:
 
 Components:
 
-- minimal repo-local `gsplat` trainer first
+- repo-local `gsplat` trainer with explicit `smoke` and `baseline` profiles
 - Nerfstudio/Splatfacto remains a later alternative once dependency impact is justified
 
 Output:
@@ -204,7 +205,8 @@ Output:
 Validation:
 
 - training command and versions recorded
-- gsplat CUDA extension availability checked before training
+- gsplat CUDA extension prerequisites checked before training: CUDA Toolkit `nvcc`, Python development headers and `ninja`
+- densification strategy and gaussian growth recorded for baseline runs
 - export exists
 - loss samples and wall time recorded
 - sample render evidence saved where practical
@@ -237,7 +239,8 @@ Inputs:
 
 Components:
 
-- Spark + Three.js first, subject to dependency gate when introduced
+- dependency-free local WebGL point-splat inspector first
+- Three.js or a production 3DGS renderer only after dependency/commercial gate update
 - Playwright or browser automation when available
 
 Output:

@@ -23,8 +23,9 @@ Validated in `.venv`:
 - torchvision 0.26.0+cu128
 - gsplat 1.5.3
 - packaging 26.2
+- ninja 1.13.0
 - PyTorch CUDA smoke: pass on NVIDIA GeForce RTX 5090
-- gsplat CUDA extension/training smoke: pass on NVIDIA GeForce RTX 5090 after CUDA Toolkit `nvcc` and Python 3.12 development headers were installed
+- gsplat CUDA extension/training smoke: pass on NVIDIA GeForce RTX 5090 after CUDA Toolkit `nvcc`, Python 3.12 development headers and repo-local `ninja` were available
 
 Exact package freeze:
 
@@ -34,7 +35,7 @@ requirements/gpu-cu128.txt
 
 ## CUDA Toolkit / Python Header Boundary
 
-PyTorch CUDA works with the installed Windows driver/runtime. gsplat 1.5.3 JIT-loads a CUDA extension and needs both a CUDA Toolkit with `nvcc` and Python development headers for the active Python 3.12 environment. Current checks:
+PyTorch CUDA works with the installed Windows driver/runtime. gsplat 1.5.3 JIT-loads a CUDA extension and needs a CUDA Toolkit with `nvcc`, Python development headers for the active Python 3.12 environment and `ninja` visible to PyTorch extension builds. Current checks:
 
 ```text
 CUDA_HOME = /usr/local/cuda-12.8
@@ -42,6 +43,7 @@ nvcc = /usr/local/cuda-12.8/bin/nvcc
 nvcc version = CUDA compilation tools, release 12.8, V12.8.93
 Python.h = present at /usr/include/python3.12/Python.h
 python3.12-dev = 3.12.3-1ubuntu0.13
+ninja = /home/engwall/projects/gaussian-splat-lab/.venv/bin/ninja
 ```
 
 The user installed NVIDIA's WSL-Ubuntu CUDA repo/keyring path plus `cuda-nvcc-12-8` after Codex documented the narrow setup, then installed `python3.12-dev`. The pipeline prepends `.venv/bin` and `/usr/local/cuda-12.8/bin` for the trainer so `ninja` and `nvcc` are visible without requiring users to hand-prefix every command.

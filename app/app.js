@@ -381,6 +381,32 @@ function setViewerStatus(text, type = 'neutral') {
   els.viewerStatusPill.className = `pill ${type}`;
 }
 
+function formatCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '-';
+}
+
+function formatGrowth(training = {}) {
+  const initial = Number(training.initialGaussianCount);
+  const final = Number(training.gaussianCount);
+  if (!Number.isFinite(initial) || !Number.isFinite(final)) return '-';
+  const factor = Number(training.gaussianGrowthFactor);
+  const suffix = Number.isFinite(factor) ? ` (${factor.toFixed(2)}x)` : '';
+  return `${formatCount(initial)} -> ${formatCount(final)}${suffix}`;
+}
+
+function viewerQuality(status, training = {}, runConfig = {}) {
+  if (status !== 'pass') {
+    return { text: status, type: status === 'warning' ? 'warning' : 'neutral' };
+  }
+  const profile = training.profile || runConfig.profile || 'unknown';
+  const strategy = training.densifyStrategy || runConfig.densifyStrategy || 'none';
+  const gaussianCount = Number(training.gaussianCount);
+  if (profile === 'smoke' || strategy === 'none') return { text: 'smoke inspect', type: 'warning' };
+  if (Number.isFinite(gaussianCount) && gaussianCount < 10000) return { text: 'thin inspect', type: 'warning' };
+  return { text: 'baseline inspect', type: 'pass' };
+}
+
 function renderViewerMeta(extra = null) {
   els.viewerMeta.replaceChildren();
   const viewer = state?.viewerArtifact;
@@ -393,13 +419,18 @@ function renderViewerMeta(extra = null) {
   }
 
   const ply = artifact.ply ?? {};
+  const training = manifest?.training ?? {};
+  const runConfig = manifest?.runConfig ?? {};
   const status = viewer.viewerStatus ?? viewer.packagingStatus ?? 'packaged';
-  const statusType = status === 'pass' ? 'pass' : status === 'warning' ? 'warning' : 'neutral';
-  setViewerStatus(status, statusType);
+  const quality = viewerQuality(status, training, runConfig);
+  setViewerStatus(quality.text, quality.type);
   els.viewerMeta.append(
     row('Artifact', artifact.format ?? 'ply'),
-    row('Renderer', viewerScene.renderer ? 'WebGL' : 'loading'),
-    row('Points', String(extra?.pointCount ?? (viewerScene.pointCount || ply.vertexCount || '-'))),
+    row('Renderer', viewerScene.renderer ? 'WebGL inspect' : 'loading'),
+    row('Profile', training.profile ?? runConfig.profile ?? '-'),
+    row('Strategy', training.densifyStrategy ?? runConfig.densifyStrategy ?? '-'),
+    row('Gaussians', formatCount(extra?.pointCount ?? (viewerScene.pointCount || ply.vertexCount))),
+    row('Growth', formatGrowth(training)),
     row('Size', formatBytes(artifact.sizeBytes)),
     row('Device', manifest?.device?.name ?? '-'),
   );
@@ -576,7 +607,6 @@ async function loadViewerArtifact() {
     viewerScene.uploadedArtifactUrl = null;
     uploadPointData();
     renderViewerMeta({ pointCount: parsed.vertexCount });
-    setViewerStatus(viewerScene.renderer ? 'webgl scene' : 'loaded', 'pass');
   } catch (error) {
     if (token !== viewerLoadToken) return;
     viewerScene.pointData = null;

@@ -288,6 +288,11 @@ def load_training_views(
     )
 
 
+def scene_extent(points: torch.Tensor) -> float:
+    bounds = points.detach().cpu().amax(dim=0) - points.detach().cpu().amin(dim=0)
+    return max(float(torch.linalg.norm(bounds).item()), 1.0e-4)
+
+
 def initial_scale(points: torch.Tensor) -> float:
     if points.shape[0] < 2:
         return 0.01
@@ -295,12 +300,30 @@ def initial_scale(points: torch.Tensor) -> float:
     distances = torch.cdist(sample, sample)
     distances += torch.eye(sample.shape[0]) * 1.0e9
     nearest = distances.min(dim=1).values
-    bounds = points.detach().cpu().amax(dim=0) - points.detach().cpu().amin(dim=0)
-    diagonal = float(torch.linalg.norm(bounds).item())
+    diagonal = scene_extent(points)
     median_nearest = float(torch.median(nearest).item())
     lower = max(diagonal * 0.0005, 1.0e-4)
     upper = max(diagonal * 0.02, lower)
     return min(max(median_nearest * 0.7, lower), upper)
+
+
+def prune_to_gaussian_cap(
+    params: dict[str, torch.nn.Parameter],
+    optimizers: dict[str, torch.optim.Optimizer],
+    strategy_state: dict[str, Any],
+    max_gaussians: int,
+    remove_gaussians: Any,
+) -> int:
+    gaussian_count = int(params["means"].shape[0])
+    if gaussian_count <= max_gaussians:
+        return 0
+    remove_count = gaussian_count - max_gaussians
+    scores = torch.sigmoid(params["opacities"].flatten())
+    prune_indices = torch.topk(scores, k=remove_count, largest=False).indices
+    mask = torch.zeros(gaussian_count, dtype=torch.bool, device=scores.device)
+    mask[prune_indices] = True
+    remove_gaussians(params=params, optimizers=optimizers, state=strategy_state, mask=mask)
+    return int(remove_count)
 
 
 def save_image(path: Path, tensor: torch.Tensor) -> None:
@@ -368,6 +391,8 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
         from gsplat import rasterization  # type: ignore[import-not-found]
         from gsplat.cuda import _backend as gsplat_backend  # type: ignore[import-not-found]
         from gsplat.exporter import export_splats  # type: ignore[import-not-found]
+        from gsplat.strategy import DefaultStrategy  # type: ignore[import-not-found]
+        from gsplat.strategy.ops import remove as remove_gaussians  # type: ignore[import-not-found]
     except Exception as exc:  # noqa: BLE001 - extension builds fail at this boundary
         diagnostic = compact_text(str(exc))
         summary = "gsplat CUDA extension could not load or build"
@@ -423,33 +448,56 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     means_init = torch.tensor([point.xyz for point in points], dtype=torch.float32, device=device)
     rgb_init = torch.tensor([point.rgb for point in points], dtype=torch.float32, device=device).clamp(0.01, 0.99)
     scale_value = initial_scale(means_init)
-    means = torch.nn.Parameter(means_init)
-    color_logits = torch.nn.Parameter(torch.logit(rgb_init))
-    log_scales = torch.nn.Parameter(torch.full((len(points), 3), math.log(scale_value), dtype=torch.float32, device=device))
-    opacity_logits = torch.nn.Parameter(torch.full((len(points),), torch.logit(torch.tensor(0.55)).item(), dtype=torch.float32, device=device))
-    quats = torch.zeros((len(points), 4), dtype=torch.float32, device=device)
-    quats[:, 0] = 1.0
+    scene_scale = scene_extent(means_init)
+    quats_init = torch.zeros((len(points), 4), dtype=torch.float32, device=device)
+    quats_init[:, 0] = 1.0
+    params: dict[str, torch.nn.Parameter] = {
+        "means": torch.nn.Parameter(means_init),
+        "colors": torch.nn.Parameter(torch.logit(rgb_init)),
+        "scales": torch.nn.Parameter(torch.full((len(points), 3), math.log(scale_value), dtype=torch.float32, device=device)),
+        "opacities": torch.nn.Parameter(
+            torch.full((len(points),), torch.logit(torch.tensor(0.55)).item(), dtype=torch.float32, device=device)
+        ),
+        "quats": torch.nn.Parameter(quats_init),
+    }
+    optimizers: dict[str, torch.optim.Optimizer] = {
+        "means": torch.optim.Adam([params["means"]], lr=args.mean_lr),
+        "colors": torch.optim.Adam([params["colors"]], lr=args.color_lr),
+        "scales": torch.optim.Adam([params["scales"]], lr=args.scale_lr),
+        "opacities": torch.optim.Adam([params["opacities"]], lr=args.opacity_lr),
+        "quats": torch.optim.Adam([params["quats"]], lr=args.quat_lr),
+    }
 
-    optimizer = torch.optim.Adam(
-        [
-            {"params": [means], "lr": args.mean_lr},
-            {"params": [color_logits], "lr": args.color_lr},
-            {"params": [log_scales], "lr": args.scale_lr},
-            {"params": [opacity_logits], "lr": args.opacity_lr},
-        ]
-    )
+    strategy = None
+    strategy_state: dict[str, Any] = {}
+    if args.densify_strategy == "default":
+        strategy = DefaultStrategy(
+            prune_opa=args.prune_opa,
+            grow_grad2d=args.grow_grad2d,
+            grow_scale3d=args.grow_scale3d,
+            refine_start_iter=args.refine_start_iter,
+            refine_stop_iter=args.refine_stop_iter,
+            refine_every=args.refine_every,
+            reset_every=args.reset_every,
+            absgrad=args.absgrad,
+        )
+        strategy.check_sanity(params, optimizers)
+        strategy_state = strategy.initialize_state(scene_scale=scene_scale)
 
     loss_samples: list[dict[str, Any]] = []
+    densification_samples: list[dict[str, Any]] = []
+    cap_pruned_gaussians = 0
     last_render = None
     last_target = None
     last_camera_index = 0
     for iteration in range(1, args.iterations + 1):
         camera_index = (iteration - 1) % targets.shape[0]
-        colors = torch.sigmoid(color_logits)
-        scales = torch.exp(log_scales).clamp(1.0e-5, 1.0e3)
-        opacities = torch.sigmoid(opacity_logits)
-        rendered, _alphas, _info = rasterization(
-            means=means,
+        colors = torch.sigmoid(params["colors"])
+        scales = torch.exp(params["scales"]).clamp(1.0e-5, 1.0e3)
+        opacities = torch.sigmoid(params["opacities"])
+        quats = torch.nn.functional.normalize(params["quats"], dim=-1)
+        rendered, _alphas, info = rasterization(
+            means=params["means"],
             quats=quats,
             scales=scales,
             opacities=opacities,
@@ -460,19 +508,42 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             height=height,
             backgrounds=backgrounds[camera_index : camera_index + 1],
             packed=False,
+            absgrad=args.absgrad,
             rasterize_mode="classic",
         )
         prediction = rendered[0, :, :, :3]
         target = targets[camera_index]
         loss = torch.nn.functional.l1_loss(prediction, target)
 
-        optimizer.zero_grad(set_to_none=True)
+        for optimizer in optimizers.values():
+            optimizer.zero_grad(set_to_none=True)
+        if strategy is not None:
+            strategy.step_pre_backward(params, optimizers, strategy_state, iteration, info)
         loss.backward()
-        optimizer.step()
+        for optimizer in optimizers.values():
+            optimizer.step()
+
+        before_refine_count = int(params["means"].shape[0])
+        if strategy is not None:
+            strategy.step_post_backward(params, optimizers, strategy_state, iteration, info, packed=False)
+            cap_pruned = prune_to_gaussian_cap(params, optimizers, strategy_state, args.max_gaussians, remove_gaussians)
+            cap_pruned_gaussians += cap_pruned
+            after_refine_count = int(params["means"].shape[0])
+            if cap_pruned or after_refine_count != before_refine_count:
+                densification_samples.append(
+                    {
+                        "iteration": iteration,
+                        "before": before_refine_count,
+                        "after": after_refine_count,
+                        "capPruned": cap_pruned,
+                    }
+                )
+
         with torch.no_grad():
-            log_scales.clamp_(math.log(1.0e-5), math.log(max(scale_value * 20.0, 1.0e-4)))
-            opacity_logits.clamp_(-8.0, 8.0)
-            color_logits.clamp_(-8.0, 8.0)
+            params["scales"].clamp_(math.log(1.0e-5), math.log(max(scale_value * 20.0, 1.0e-4)))
+            params["opacities"].clamp_(-8.0, 8.0)
+            params["colors"].clamp_(-8.0, 8.0)
+            params["quats"].div_(params["quats"].norm(dim=-1, keepdim=True).clamp_min(1.0e-8))
 
         if iteration == 1 or iteration == args.iterations or iteration % args.sample_every == 0:
             loss_samples.append(
@@ -480,6 +551,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                     "iteration": iteration,
                     "cameraIndex": int(camera_index),
                     "loss": float(loss.detach().cpu().item()),
+                    "gaussianCount": int(params["means"].shape[0]),
                 }
             )
         last_render = prediction.detach()
@@ -498,13 +570,14 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     if last_target is not None:
         save_image(sample_target_path, last_target)
 
-    final_colors = torch.sigmoid(color_logits).detach()
+    final_colors = torch.sigmoid(params["colors"]).detach()
+    final_count = int(params["means"].shape[0])
     sh0 = ((final_colors - 0.5) / SH_C0).unsqueeze(1)
-    shN = torch.empty((len(points), 0, 3), dtype=torch.float32, device=device)
-    final_log_scales = log_scales.detach()
-    final_opacity_logits = opacity_logits.detach()
-    final_quats = quats.detach()
-    final_means = means.detach()
+    shN = torch.empty((final_count, 0, 3), dtype=torch.float32, device=device)
+    final_log_scales = params["scales"].detach()
+    final_opacity_logits = params["opacities"].detach()
+    final_quats = torch.nn.functional.normalize(params["quats"].detach(), dim=-1)
+    final_means = params["means"].detach()
 
     torch.save(
         {
@@ -520,8 +593,11 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                 "selectedImages": selected_images,
             },
             "training": {
+                "profile": args.profile,
+                "densifyStrategy": args.densify_strategy,
                 "iterations": args.iterations,
                 "lossSamples": loss_samples,
+                "densificationSamples": densification_samples,
                 "renderWidth": width,
                 "renderHeight": height,
             },
@@ -546,7 +622,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             {
                 "id": "training_run",
                 "status": "pass",
-                "summary": "minimal gsplat training completed",
+                "summary": "gsplat training completed",
             },
             {
                 "id": "exported_splat",
@@ -584,9 +660,17 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
             "selectedImages": selected_images,
             "renderWidth": width,
             "renderHeight": height,
-            "gaussianCount": len(points),
+            "profile": args.profile,
+            "densifyStrategy": args.densify_strategy,
+            "initialGaussianCount": len(points),
+            "gaussianCount": final_count,
+            "gaussianGrowthFactor": round(final_count / max(len(points), 1), 4),
+            "maxGaussians": args.max_gaussians,
+            "capPrunedGaussianCount": cap_pruned_gaussians,
             "initialScale": scale_value,
+            "sceneScale": scene_scale,
             "lossSamples": loss_samples,
+            "densificationSamples": densification_samples,
             "initialLoss": loss_samples[0]["loss"] if loss_samples else None,
             "finalLoss": loss_samples[-1]["loss"] if loss_samples else None,
             "lastCameraIndex": last_camera_index,
@@ -606,16 +690,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-dir", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--result-json", required=True)
+    parser.add_argument("--profile", default="smoke")
     parser.add_argument("--iterations", type=int, default=40)
     parser.add_argument("--max-images", type=int, default=8)
     parser.add_argument("--max-points", type=int, default=6000)
     parser.add_argument("--max-render-size", type=int, default=384)
+    parser.add_argument("--max-gaussians", type=int, default=6000)
     parser.add_argument("--sample-every", type=int, default=5)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--mean-lr", type=float, default=0.0005)
     parser.add_argument("--color-lr", type=float, default=0.02)
     parser.add_argument("--scale-lr", type=float, default=0.001)
     parser.add_argument("--opacity-lr", type=float, default=0.01)
+    parser.add_argument("--quat-lr", type=float, default=0.0005)
+    parser.add_argument("--densify-strategy", choices=["none", "default"], default="none")
+    parser.add_argument("--refine-start-iter", type=int, default=500)
+    parser.add_argument("--refine-stop-iter", type=int, default=15000)
+    parser.add_argument("--refine-every", type=int, default=100)
+    parser.add_argument("--reset-every", type=int, default=3000)
+    parser.add_argument("--grow-grad2d", type=float, default=0.0002)
+    parser.add_argument("--grow-scale3d", type=float, default=0.01)
+    parser.add_argument("--prune-opa", type=float, default=0.005)
+    parser.add_argument("--absgrad", action="store_true")
     return parser
 
 

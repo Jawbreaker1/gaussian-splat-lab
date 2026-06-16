@@ -110,7 +110,7 @@ Golden-path order:
 11. input-quality experiments
 12. capture preflight
 
-Current technical baseline: `outputs/jobs/static-room-orbit-001-20260614T100535Z` passes environment, frame sampling, SfM, splat training, packaging and viewer validation. The viewer is a dependency-free WebGL point-splat scene, not a production Gaussian Splat renderer. The quality report remains `warning` because the capture/framework state is not product-ready.
+Current technical baseline: `outputs/jobs/static-room-orbit-001-20260614T100535Z` passes environment, frame sampling, SfM, baseline splat training, packaging and viewer validation. Baseline training uses `gsplat` DefaultStrategy densification and currently grows the local-test-only capture from `2423` sparse points to `26985` exported gaussians. The viewer is a dependency-free WebGL point-splat inspection scene, not a production covariance/screen-space Gaussian Splat renderer. The quality report remains `warning` because the capture/framework state is not product-ready.
 
 Avoid big-bang integration. Every stage must be runnable and inspectable before the next stage depends on it.
 
