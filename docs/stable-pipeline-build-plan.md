@@ -23,13 +23,13 @@ Already in place:
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
 - minimal gsplat training orchestration with checkpoint/PLY/sample-render validation on the RTX 5090
 - artifact packaging that writes a viewer manifest with PLY hash, byte size and header metadata
-- local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders an interactive point preview
+- local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders an interactive WebGL point-splat scene
 - capture readiness reporting for local file/provenance status before intake
 
 Not yet real:
 
 - a clean commercially reusable capture; the current imported phone video is local-test-only evidence
-- production-grade Gaussian Splat rendering; the current viewer is a local binary-PLY point preview for validation and inspection
+- production-grade covariance/screen-space Gaussian Splat rendering; the current viewer is a local binary-PLY WebGL point-splat scene for validation and inspection
 - screenshot/canvas-pixel browser automation for viewer QA across viewports
 
 ## Current Environment Result
@@ -57,7 +57,7 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 Move from technical golden path to controlled quality experiments and product-readiness hardening.
 
-Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains, packaging writes a viewer manifest, and the local UI can fetch and render the exported binary PLY as an interactive point preview. The current end-to-end quality status is `warning` because the capture is local-test-only and framework/commercial notices still need product review.
+Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains, packaging writes a viewer manifest, and the local UI can fetch and render the exported binary PLY as an interactive WebGL point-splat scene. The current end-to-end quality status is `warning` because the capture is local-test-only and framework/commercial notices still need product review.
 
 Why next:
 

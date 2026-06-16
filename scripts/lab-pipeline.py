@@ -2201,9 +2201,9 @@ def build_viewer_manifest(
         "device": training_report.get("device", {}),
         "versions": training_report.get("versions", {}),
         "viewer": {
-            "implementation": "local_canvas_binary_ply_points",
-            "supports": ["orbit", "zoom", "reset_view"],
-            "loads": "binary_little_endian PLY vertex positions and SH DC color fields",
+            "implementation": "local_webgl_binary_ply_point_splats",
+            "supports": ["orbit", "pan", "zoom", "reset_view"],
+            "loads": "binary_little_endian PLY vertex positions, SH DC color fields, opacity and scale into a WebGL point-splat scene",
         },
     }
 
@@ -2428,8 +2428,8 @@ def build_viewer_report(job_path: Path, accept_warning: bool = False, allow_heav
         },
         {
             "id": "local_viewer_app",
-            "status": "pass" if app_html.exists() and app_css.exists() and "parseBinaryPly" in app_text and "viewerArtifact" in app_text else "fail",
-            "summary": "local UI contains binary PLY viewer hooks" if app_html.exists() and app_css.exists() and "parseBinaryPly" in app_text and "viewerArtifact" in app_text else "local UI is missing viewer hooks",
+            "status": "pass" if app_html.exists() and app_css.exists() and "parseBinaryPly" in app_text and "initWebGLScene" in app_text and "gl_PointSize" in app_text and "viewerArtifact" in app_text else "fail",
+            "summary": "local UI contains WebGL binary PLY viewer hooks" if app_html.exists() and app_css.exists() and "parseBinaryPly" in app_text and "initWebGLScene" in app_text and "gl_PointSize" in app_text and "viewerArtifact" in app_text else "local UI is missing WebGL viewer hooks",
         },
     ]
     base["checks"].extend(checks)

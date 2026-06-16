@@ -59,9 +59,15 @@ Viewer validation now checks:
 - artifact hash matches the manifest
 - binary PLY header is readable and includes `x`, `y`, `z`
 - sample render exists
-- local UI contains binary PLY viewer hooks
+- local UI contains WebGL binary PLY viewer hooks
 
-The UI server exposes job artifacts only under `/api/artifacts/...` paths that resolve inside `outputs/jobs`. `/api/state` includes the latest `viewerArtifact`, and the local frontend reads the exported binary PLY into an interactive canvas point preview.
+Viewer implementation recorded in the manifest:
+
+```text
+local_webgl_binary_ply_point_splats
+```
+
+The UI server exposes job artifacts only under `/api/artifacts/...` paths that resolve inside `outputs/jobs`. `/api/state` includes the latest `viewerArtifact`, and the local frontend reads the exported binary PLY into an interactive WebGL point-splat scene. This is a true browser 3D scene for inspection, but still not a production-grade covariance/screen-space Gaussian Splat renderer.
 
 ## HTTP Smoke
 
@@ -76,3 +82,4 @@ Smoke result:
 - `GET /api/state`: returned `viewerArtifact` with `viewerStatus=pass`
 - `GET /api/artifacts/outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260615T193148Z/trained_splats.ply`: returned HTTP `200` and `ply` file prefix
 - `GET /`: returned HTML containing `splatCanvas` and `viewerStatusPill`
+- `GET /app.js`: returned code containing `initWebGLScene`, `gl_PointSize`, `createSceneLines` and `getContext('webgl')`
