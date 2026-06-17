@@ -21,7 +21,7 @@ Already in place:
 - video intake stage with explicit missing-file and metadata stop conditions
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
-- gsplat training orchestration with `smoke`, `baseline`, `quality_probe` and `rtx_reference` profiles, including DefaultStrategy densification and render-review evidence for non-smoke runs
+- gsplat training orchestration with `smoke`, `baseline`, `quality_probe`, `rtx_reference`, `rtx_high_quality` and `rtx_max_quality` profiles, including DefaultStrategy densification and render-review evidence for non-smoke runs
 - artifact packaging that writes a viewer manifest with PLY hash, byte size, header metadata and COLMAP/training reference camera views
 - local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders it through Spark + Three.js as an interactive Gaussian Splat scene
 - debug browser UI mode that still renders an interactive WebGL PLY point cloud for artifact-scale and malformed-export diagnosis
@@ -61,7 +61,7 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 Move from technical golden path to controlled quality experiments and product-readiness hardening.
 
-Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains with a fast `smoke` profile, a densifying `baseline` profile, a stronger `quality_probe` profile and an overnight/reference `rtx_reference` profile. Packaging writes a viewer manifest with reference camera views, and the local UI can fetch and render the exported binary PLY as an interactive Spark + Three.js Gaussian Splat scene. The UI also keeps the point-debug mode, latest render/target pair and multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture/framework state is not product-ready.
+Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains with a fast `smoke` profile, a densifying `baseline` profile, a stronger `quality_probe` profile, a stable `rtx_reference` profile, a balanced `rtx_high_quality` profile and a heavy `rtx_max_quality` lab profile. `rtx_high_quality` targets the likely sweet spot at `18000` iterations, `112` images and `1000000` gaussians. `rtx_max_quality` raises the cap to `30000` iterations, `160` images, `1600` max render size and `2500000` gaussians so the workstation can stress the upper ceiling before product/user caps are exposed. Packaging writes a viewer manifest with reference camera views, and the local UI can fetch and render the exported binary PLY as an interactive Spark + Three.js Gaussian Splat scene. The UI also keeps the point-debug mode, latest render/target pair and multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture/framework state is not product-ready.
 
 Why next:
 
@@ -96,6 +96,7 @@ Next viewer step:
 - add browser automation that captures reference-camera Spark screenshots and compares them against the `gsplat` render-review sheet
 - add explicit viewer diagnostics for camera-pose mismatch, blank canvas and point-debug/render disagreement
 - keep the Spark dependency path isolated and pinned until product packaging/notices are finalized
+- expose user-selectable quality caps only after the lab has stable quality/performance measurements for `quality_probe`, `rtx_reference`, `rtx_high_quality` and `rtx_max_quality`
 
 ## Golden Path Implementation Sequence
 
@@ -206,7 +207,7 @@ Inputs:
 
 Components:
 
-- repo-local `gsplat` trainer with explicit `smoke`, `baseline`, `quality_probe` and `rtx_reference` profiles
+- repo-local `gsplat` trainer with explicit `smoke`, `baseline`, `quality_probe`, `rtx_reference`, `rtx_high_quality` and `rtx_max_quality` profiles
 - Nerfstudio/Splatfacto remains a later alternative once dependency impact is justified
 
 Output:

@@ -44,6 +44,8 @@ const els = {
   viewerMeta: document.querySelector('#viewerMeta'),
   viewerModeSparkButton: document.querySelector('#viewerModeSparkButton'),
   viewerModeDebugButton: document.querySelector('#viewerModeDebugButton'),
+  viewerNavWalkButton: document.querySelector('#viewerNavWalkButton'),
+  viewerNavOrbitButton: document.querySelector('#viewerNavOrbitButton'),
   sparkViewport: document.querySelector('#sparkViewport'),
   sparkCanvas: document.querySelector('#sparkCanvas'),
   sparkOverlay: document.querySelector('#sparkOverlay'),
@@ -81,6 +83,7 @@ const viewerScene = {
   sparkController: null,
   sparkArtifactUrl: null,
   sparkFailed: false,
+  sparkNavigationMode: 'walk',
   cameraViewCount: 0,
   activeCameraView: null,
   uploadedArtifactUrl: null,
@@ -545,6 +548,12 @@ function viewerQuality(status, training = {}, runConfig = {}) {
   if (profile === 'rtx_reference') {
     return { text: training.renderReview?.status === 'pass' ? 'reference inspect' : 'reference warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
   }
+  if (profile === 'rtx_high_quality') {
+    return { text: training.renderReview?.status === 'pass' ? 'high inspect' : 'high warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
+  }
+  if (profile === 'rtx_max_quality') {
+    return { text: training.renderReview?.status === 'pass' ? 'max inspect' : 'max warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
+  }
   return { text: 'baseline inspect', type: 'pass' };
 }
 
@@ -815,6 +824,7 @@ async function ensureSparkController() {
       if (viewerScene.mode === 'spark' && text) setViewerStatus(text, type);
     },
   });
+  viewerScene.sparkController.setNavigationMode(viewerScene.sparkNavigationMode);
   renderViewerMeta({ pointCount: viewerScene.pointCount });
   return viewerScene.sparkController;
 }
@@ -1232,6 +1242,17 @@ function setViewerMode(mode) {
   renderViewerMeta({ pointCount: viewerScene.pointCount });
 }
 
+function setSparkNavigationMode(mode) {
+  viewerScene.sparkNavigationMode = mode === 'orbit' ? 'orbit' : 'walk';
+  els.viewerNavWalkButton.classList.toggle('active', viewerScene.sparkNavigationMode === 'walk');
+  els.viewerNavOrbitButton.classList.toggle('active', viewerScene.sparkNavigationMode === 'orbit');
+  els.viewerNavWalkButton.setAttribute('aria-pressed', String(viewerScene.sparkNavigationMode === 'walk'));
+  els.viewerNavOrbitButton.setAttribute('aria-pressed', String(viewerScene.sparkNavigationMode === 'orbit'));
+  if (viewerScene.sparkController && !viewerScene.sparkFailed) {
+    viewerScene.sparkController.setNavigationMode(viewerScene.sparkNavigationMode);
+  }
+}
+
 function panActiveViewer(deltaX, deltaY) {
   if (viewerScene.mode === 'spark' && viewerScene.sparkController && !viewerScene.sparkFailed) {
     viewerScene.sparkController.pan(deltaX, deltaY);
@@ -1325,6 +1346,8 @@ els.viewerZoomInButton.addEventListener('click', () => {
 });
 els.viewerModeSparkButton.addEventListener('click', () => setViewerMode('spark'));
 els.viewerModeDebugButton.addEventListener('click', () => setViewerMode('debug'));
+els.viewerNavWalkButton.addEventListener('click', () => setSparkNavigationMode('walk'));
+els.viewerNavOrbitButton.addEventListener('click', () => setSparkNavigationMode('orbit'));
 
 els.captureSelect.addEventListener('change', () => {
   captureSelectionTouched = true;

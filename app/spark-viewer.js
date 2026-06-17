@@ -68,6 +68,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   controls.screenSpacePanning = true;
   controls.minDistance = 0.015;
   controls.maxDistance = 14;
+  controls.enabled = false;
 
   const grid = new THREE.GridHelper(2.2, 16, 0x315c66, 0x24323a);
   grid.position.y = -0.82;
@@ -87,6 +88,13 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   let cameraViews = [];
   let cameraViewsToken = '';
   let activeCameraViewIndex = 0;
+  let navigationMode = 'walk';
+  let draggingLook = false;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
+  let walkYaw = 0;
+  let walkPitch = 0;
+  let walkFocusDistance = 1;
   let disposed = false;
   let lastRenderMs = 0;
   const minFrameMs = 1000 / 24;
@@ -94,9 +102,18 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   const right = new THREE.Vector3();
   const up = new THREE.Vector3();
   const move = new THREE.Vector3();
+  const forward = new THREE.Vector3();
   const target = new THREE.Vector3();
   const offset = new THREE.Vector3();
+  const walkBaseForward = new THREE.Vector3();
+  const walkBaseUp = new THREE.Vector3();
+  const walkBaseRight = new THREE.Vector3();
+  const walkYawQuat = new THREE.Quaternion();
+  const walkPitchQuat = new THREE.Quaternion();
+  const pressedKeys = new Set();
   const spherical = new THREE.Spherical();
+
+  canvas.tabIndex = canvas.tabIndex >= 0 ? canvas.tabIndex : 0;
 
   function setOverlay(text, type = 'neutral') {
     overlay.textContent = text;
@@ -112,6 +129,57 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
+  }
+
+  function setWalkBasisFromCamera() {
+    camera.getWorldDirection(walkBaseForward).normalize();
+    walkBaseUp.copy(camera.up).normalize();
+    walkBaseRight.crossVectors(walkBaseForward, walkBaseUp);
+    if (walkBaseRight.lengthSq() <= 1e-10) {
+      walkBaseRight.setFromMatrixColumn(camera.matrixWorld, 0);
+    }
+    walkBaseRight.normalize();
+    walkBaseUp.crossVectors(walkBaseRight, walkBaseForward).normalize();
+    walkYaw = 0;
+    walkPitch = 0;
+    walkFocusDistance = clamp(camera.position.distanceTo(controls.target) || 1, 0.08, 8);
+  }
+
+  function syncTargetToCamera() {
+    camera.getWorldDirection(forward).normalize();
+    controls.target.copy(camera.position).add(forward.multiplyScalar(walkFocusDistance));
+  }
+
+  function applyWalkLook() {
+    walkYawQuat.setFromAxisAngle(walkBaseUp, walkYaw);
+    const yawedForward = walkBaseForward.clone().applyQuaternion(walkYawQuat).normalize();
+    const yawedRight = walkBaseRight.clone().applyQuaternion(walkYawQuat).normalize();
+    walkPitchQuat.setFromAxisAngle(yawedRight, walkPitch);
+    const nextForward = yawedForward.applyQuaternion(walkPitchQuat).normalize();
+    const nextUp = new THREE.Vector3().crossVectors(yawedRight, nextForward).normalize();
+    camera.up.copy(nextUp);
+    camera.lookAt(camera.position.clone().add(nextForward));
+    syncTargetToCamera();
+  }
+
+  function rotateWalk(deltaX, deltaY) {
+    if (navigationMode !== 'walk') return;
+    const sensitivity = 0.0021;
+    walkYaw -= deltaX * sensitivity;
+    walkPitch = clamp(walkPitch - deltaY * sensitivity, -1.42, 1.42);
+    applyWalkLook();
+  }
+
+  function setNavigationMode(mode = 'walk') {
+    navigationMode = mode === 'orbit' ? 'orbit' : 'walk';
+    controls.enabled = navigationMode === 'orbit';
+    draggingLook = false;
+    pressedKeys.clear();
+    if (navigationMode === 'walk') {
+      setWalkBasisFromCamera();
+      syncTargetToCamera();
+    }
+    return { mode: navigationMode };
   }
 
   function setCameraViews(views = []) {
@@ -151,6 +219,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     camera.far = 100;
     camera.updateProjectionMatrix();
     controls.update();
+    setWalkBasisFromCamera();
   }
 
   function applyCameraView(index = activeCameraViewIndex) {
@@ -181,6 +250,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     camera.lookAt(nextTarget);
     controls.target.copy(nextTarget);
     controls.update();
+    setWalkBasisFromCamera();
     return true;
   }
 
@@ -204,6 +274,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     mesh.updateMatrixWorld(true);
 
     if (!applyCameraView(activeCameraViewIndex)) applyDefaultView();
+    setNavigationMode(navigationMode);
   }
 
   async function load({ url, cameraViews: nextCameraViews = [] }) {
@@ -254,6 +325,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     camera.position.add(move);
     controls.target.add(move);
     controls.update();
+    if (navigationMode === 'walk') setWalkBasisFromCamera();
   }
 
   function orbit(deltaX, deltaY) {
@@ -265,6 +337,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     offset.setFromSpherical(spherical);
     camera.position.copy(target).add(offset);
     controls.update();
+    if (navigationMode === 'walk') setWalkBasisFromCamera();
   }
 
   function zoom(factor) {
@@ -273,6 +346,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     offset.multiplyScalar(1 / factor);
     camera.position.copy(target).add(offset);
     controls.update();
+    if (navigationMode === 'walk') setWalkBasisFromCamera();
   }
 
   function reset() {
@@ -298,20 +372,139 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     return setCameraView(activeCameraViewIndex + delta);
   }
 
+  function keyboardTargetIsEditable(event) {
+    const element = event.target;
+    if (!(element instanceof HTMLElement)) return false;
+    return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(element.tagName) || element.isContentEditable;
+  }
+
+  function isWalkKey(code) {
+    return [
+      'KeyW',
+      'KeyA',
+      'KeyS',
+      'KeyD',
+      'KeyQ',
+      'KeyE',
+      'Space',
+      'ShiftLeft',
+      'ShiftRight',
+      'ControlLeft',
+      'ControlRight',
+    ].includes(code);
+  }
+
+  function canUseWalkKeyboard(event) {
+    if (navigationMode !== 'walk' || keyboardTargetIsEditable(event)) return false;
+    return document.activeElement === canvas || document.pointerLockElement === canvas;
+  }
+
+  function onKeyDown(event) {
+    if (!isWalkKey(event.code) || !canUseWalkKeyboard(event)) return;
+    pressedKeys.add(event.code);
+    event.preventDefault();
+  }
+
+  function onKeyUp(event) {
+    if (!isWalkKey(event.code)) return;
+    pressedKeys.delete(event.code);
+  }
+
+  function updateWalkMovement(deltaSeconds) {
+    if (navigationMode !== 'walk' || !pressedKeys.size) return;
+    move.set(0, 0, 0);
+    camera.getWorldDirection(forward).normalize();
+    right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+    up.copy(camera.up).normalize();
+    if (pressedKeys.has('KeyW')) move.add(forward);
+    if (pressedKeys.has('KeyS')) move.sub(forward);
+    if (pressedKeys.has('KeyD')) move.add(right);
+    if (pressedKeys.has('KeyA')) move.sub(right);
+    if (pressedKeys.has('KeyE') || pressedKeys.has('Space')) move.add(up);
+    if (pressedKeys.has('KeyQ')) move.sub(up);
+    if (move.lengthSq() <= 1e-12) return;
+
+    const fast = pressedKeys.has('ShiftLeft') || pressedKeys.has('ShiftRight');
+    const slow = pressedKeys.has('ControlLeft') || pressedKeys.has('ControlRight');
+    const speed = 0.72 * (fast ? 3.2 : 1) * (slow ? 0.3 : 1);
+    move.normalize().multiplyScalar(speed * deltaSeconds);
+    camera.position.add(move);
+    syncTargetToCamera();
+  }
+
+  function moveAlongView(amount) {
+    if (navigationMode !== 'walk') return;
+    camera.getWorldDirection(forward).normalize();
+    camera.position.addScaledVector(forward, amount);
+    syncTargetToCamera();
+  }
+
+  function onPointerDown(event) {
+    if (navigationMode !== 'walk' || event.button !== 0) return;
+    canvas.focus({ preventScroll: true });
+    draggingLook = true;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+    canvas.setPointerCapture(event.pointerId);
+  }
+
+  function onPointerMove(event) {
+    if (navigationMode !== 'walk') return;
+    if (!draggingLook) return;
+    rotateWalk(event.clientX - lastPointerX, event.clientY - lastPointerY);
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+  }
+
+  function onLockedMouseMove(event) {
+    if (navigationMode !== 'walk' || document.pointerLockElement !== canvas) return;
+    rotateWalk(event.movementX, event.movementY);
+  }
+
+  function onPointerUp(event) {
+    if (!draggingLook) return;
+    draggingLook = false;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  }
+
+  function onDoubleClick() {
+    if (navigationMode === 'walk' && document.pointerLockElement !== canvas) {
+      canvas.requestPointerLock?.();
+    }
+  }
+
+  function onWheel(event) {
+    if (navigationMode !== 'walk') return;
+    event.preventDefault();
+    moveAlongView(event.deltaY > 0 ? -0.11 : 0.11);
+  }
+
   function frame(now = performance.now()) {
     if (disposed) return;
     if (document.hidden) return;
     if (now - lastRenderMs < minFrameMs) return;
+    const deltaSeconds = Math.min((now - lastRenderMs) / 1000, 0.08);
     lastRenderMs = now;
     resize();
+    updateWalkMovement(deltaSeconds);
     controls.update();
     renderer.render(scene, camera);
   }
 
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup', onKeyUp);
+  document.addEventListener('mousemove', onLockedMouseMove);
+  canvas.addEventListener('pointerdown', onPointerDown);
+  canvas.addEventListener('pointermove', onPointerMove);
+  canvas.addEventListener('pointerup', onPointerUp);
+  canvas.addEventListener('pointercancel', onPointerUp);
+  canvas.addEventListener('dblclick', onDoubleClick);
+  canvas.addEventListener('wheel', onWheel, { passive: false });
   renderer.setAnimationLoop(frame);
 
   return {
     load,
+    setNavigationMode,
     setCameraViews,
     previousCameraView: () => nextCameraView(-1),
     nextCameraView: () => nextCameraView(1),
@@ -323,6 +516,15 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
       disposed = true;
       renderer.setAnimationLoop(null);
       if (splat) splat.dispose();
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
+      document.removeEventListener('mousemove', onLockedMouseMove);
+      canvas.removeEventListener('pointerdown', onPointerDown);
+      canvas.removeEventListener('pointermove', onPointerMove);
+      canvas.removeEventListener('pointerup', onPointerUp);
+      canvas.removeEventListener('pointercancel', onPointerUp);
+      canvas.removeEventListener('dblclick', onDoubleClick);
+      canvas.removeEventListener('wheel', onWheel);
       controls.dispose();
       renderer.dispose();
     },
