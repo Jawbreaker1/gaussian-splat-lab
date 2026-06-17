@@ -17,6 +17,14 @@ const els = {
   blockedCount: document.querySelector('#blockedCount'),
   complianceGrid: document.querySelector('#complianceGrid'),
   viewerStatusPill: document.querySelector('#viewerStatusPill'),
+  viewerPanLeftButton: document.querySelector('#viewerPanLeftButton'),
+  viewerPanRightButton: document.querySelector('#viewerPanRightButton'),
+  viewerPanUpButton: document.querySelector('#viewerPanUpButton'),
+  viewerPanDownButton: document.querySelector('#viewerPanDownButton'),
+  viewerOrbitLeftButton: document.querySelector('#viewerOrbitLeftButton'),
+  viewerOrbitRightButton: document.querySelector('#viewerOrbitRightButton'),
+  viewerOrbitUpButton: document.querySelector('#viewerOrbitUpButton'),
+  viewerOrbitDownButton: document.querySelector('#viewerOrbitDownButton'),
   viewerResetButton: document.querySelector('#viewerResetButton'),
   viewerZoomOutButton: document.querySelector('#viewerZoomOutButton'),
   viewerZoomInButton: document.querySelector('#viewerZoomInButton'),
@@ -983,6 +991,21 @@ function resetViewer() {
   viewerScene.zoom = 1.05;
 }
 
+function panViewer(deltaX, deltaY) {
+  const step = 0.09 / viewerScene.zoom;
+  viewerScene.panX += deltaX * step;
+  viewerScene.panY += deltaY * step;
+}
+
+function orbitViewer(deltaX, deltaY) {
+  viewerScene.rotationY += deltaX * 0.16;
+  viewerScene.rotationX = clamp(viewerScene.rotationX + deltaY * 0.16, -1.4, 1.4);
+}
+
+function zoomViewer(factor) {
+  viewerScene.zoom = clamp(viewerScene.zoom * factor, 0.35, 5);
+}
+
 els.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 els.canvas.addEventListener('pointerdown', (event) => {
   viewerScene.dragging = true;
@@ -1013,14 +1036,22 @@ els.canvas.addEventListener('pointerup', (event) => {
 });
 els.canvas.addEventListener('wheel', (event) => {
   event.preventDefault();
-  viewerScene.zoom = clamp(viewerScene.zoom * (event.deltaY > 0 ? 0.9 : 1.1), 0.35, 5);
+  zoomViewer(event.deltaY > 0 ? 0.9 : 1.1);
 }, { passive: false });
+els.viewerPanLeftButton.addEventListener('click', () => panViewer(-1, 0));
+els.viewerPanRightButton.addEventListener('click', () => panViewer(1, 0));
+els.viewerPanUpButton.addEventListener('click', () => panViewer(0, 1));
+els.viewerPanDownButton.addEventListener('click', () => panViewer(0, -1));
+els.viewerOrbitLeftButton.addEventListener('click', () => orbitViewer(-1, 0));
+els.viewerOrbitRightButton.addEventListener('click', () => orbitViewer(1, 0));
+els.viewerOrbitUpButton.addEventListener('click', () => orbitViewer(0, -1));
+els.viewerOrbitDownButton.addEventListener('click', () => orbitViewer(0, 1));
 els.viewerResetButton.addEventListener('click', resetViewer);
 els.viewerZoomOutButton.addEventListener('click', () => {
-  viewerScene.zoom = clamp(viewerScene.zoom * 0.86, 0.35, 5);
+  zoomViewer(0.86);
 });
 els.viewerZoomInButton.addEventListener('click', () => {
-  viewerScene.zoom = clamp(viewerScene.zoom * 1.16, 0.35, 5);
+  zoomViewer(1.16);
 });
 
 els.captureSelect.addEventListener('change', () => {

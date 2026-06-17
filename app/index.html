@@ -73,43 +73,55 @@
           </div>
         </section>
 
-        <aside class="side-panel">
-          <section class="panel preview-panel" aria-labelledby="previewTitle">
-            <div class="panel-head">
-              <h2 id="previewTitle">Artifact Inspect</h2>
-              <span class="pill neutral" id="viewerStatusPill">pending</span>
+        <section class="panel preview-panel" aria-labelledby="previewTitle">
+          <div class="panel-head">
+            <h2 id="previewTitle">Artifact Inspect</h2>
+            <span class="pill neutral" id="viewerStatusPill">pending</span>
+          </div>
+          <div class="viewer-controls" aria-label="Viewer controls">
+            <div class="viewer-control-group" aria-label="Pan controls">
+              <button class="icon-button" id="viewerPanLeftButton" title="Move left" aria-label="Move left">←</button>
+              <button class="icon-button" id="viewerPanUpButton" title="Move up" aria-label="Move up">↑</button>
+              <button class="icon-button" id="viewerPanDownButton" title="Move down" aria-label="Move down">↓</button>
+              <button class="icon-button" id="viewerPanRightButton" title="Move right" aria-label="Move right">→</button>
             </div>
-            <div class="viewer-toolbar" aria-label="Viewer controls">
+            <div class="viewer-control-group" aria-label="Orbit controls">
+              <button class="icon-button" id="viewerOrbitLeftButton" title="Rotate left" aria-label="Rotate left">↶</button>
+              <button class="icon-button" id="viewerOrbitUpButton" title="Rotate up" aria-label="Rotate up">⇧</button>
+              <button class="icon-button" id="viewerOrbitDownButton" title="Rotate down" aria-label="Rotate down">⇩</button>
+              <button class="icon-button" id="viewerOrbitRightButton" title="Rotate right" aria-label="Rotate right">↷</button>
+            </div>
+            <div class="viewer-control-group" aria-label="Zoom controls">
               <button class="icon-button" id="viewerResetButton" title="Reset view" aria-label="Reset view">⟲</button>
               <button class="icon-button" id="viewerZoomOutButton" title="Zoom out" aria-label="Zoom out">−</button>
               <button class="icon-button" id="viewerZoomInButton" title="Zoom in" aria-label="Zoom in">+</button>
             </div>
-            <canvas id="splatCanvas" width="640" height="420" aria-label="Gaussian splat inspection scene"></canvas>
-            <div class="render-compare" id="renderCompare" hidden>
-              <figure id="sampleRenderFigure">
-                <div class="render-frame"><img id="sampleRenderImage" alt="gsplat rendered sample" /></div>
-                <figcaption>Render</figcaption>
-              </figure>
-              <figure id="sampleTargetFigure">
-                <div class="render-frame"><img id="sampleTargetImage" alt="training target frame" /></div>
-                <figcaption>Target</figcaption>
-              </figure>
-            </div>
-            <figure class="review-sheet" id="renderReviewFigure" hidden>
-              <div class="review-frame"><img id="renderReviewImage" alt="multi-view render target diff review" /></div>
-              <figcaption>Render review (gsplat)</figcaption>
+          </div>
+          <canvas id="splatCanvas" width="960" height="640" aria-label="Gaussian splat inspection scene"></canvas>
+          <div class="render-compare" id="renderCompare" hidden>
+            <figure id="sampleRenderFigure">
+              <div class="render-frame"><img id="sampleRenderImage" alt="gsplat rendered sample" /></div>
+              <figcaption>Render</figcaption>
             </figure>
-            <div class="viewer-meta" id="viewerMeta"></div>
-          </section>
+            <figure id="sampleTargetFigure">
+              <div class="render-frame"><img id="sampleTargetImage" alt="training target frame" /></div>
+              <figcaption>Target</figcaption>
+            </figure>
+          </div>
+          <figure class="review-sheet" id="renderReviewFigure" hidden>
+            <div class="review-frame"><img id="renderReviewImage" alt="multi-view render target diff review" /></div>
+            <figcaption>Render review (gsplat)</figcaption>
+          </figure>
+          <div class="viewer-meta" id="viewerMeta"></div>
+        </section>
 
-          <section class="panel compliance-panel" aria-labelledby="complianceTitle">
-            <div class="panel-head">
-              <h2 id="complianceTitle">Compliance</h2>
-              <span class="pill" id="blockedCount">0 blocked</span>
-            </div>
-            <div class="compliance-grid" id="complianceGrid"></div>
-          </section>
-        </aside>
+        <section class="panel compliance-panel" aria-labelledby="complianceTitle">
+          <div class="panel-head">
+            <h2 id="complianceTitle">Compliance</h2>
+            <span class="pill" id="blockedCount">0 blocked</span>
+          </div>
+          <div class="compliance-grid" id="complianceGrid"></div>
+        </section>
       </main>
     </div>
 
