@@ -110,7 +110,7 @@ Golden-path order:
 11. input-quality experiments
 12. capture preflight
 
-Current technical baseline: `outputs/jobs/static-room-orbit-001-20260614T100535Z` passes environment, frame sampling, SfM, `quality_probe` splat training, packaging and viewer validation. The latest `quality_probe` run uses `gsplat` DefaultStrategy densification and grows the local-test-only capture from `2423` sparse points to `99328` exported gaussians, with render-review mean MAE `16.3499`. The viewer canvas is a dependency-free WebGL PLY point-debug scene, not a production covariance/screen-space Gaussian Splat renderer. The `gsplat` render/target/diff review sheet is the current visual quality reference. The quality report remains `warning` because the capture/framework state is not product-ready.
+Current technical baseline: `outputs/jobs/static-room-orbit-001-20260614T100535Z` passes environment, frame sampling, SfM, `rtx_reference` splat training, packaging and viewer validation. The latest `rtx_reference` run uses `gsplat` DefaultStrategy densification and grows the local-test-only capture from `2423` sparse points to `400000` exported gaussians at `1280x720`, with render-review mean MAE `13.0491`. Use `quality_probe` for faster quality checks and `rtx_reference` for local RTX 5090 reference runs. The viewer canvas is a dependency-free WebGL PLY point-debug scene, not a production covariance/screen-space Gaussian Splat renderer. The `gsplat` render/target/diff review sheet is the current visual quality reference. The quality report remains `warning` because the capture/framework state is not product-ready.
 
 Avoid big-bang integration. Every stage must be runnable and inspectable before the next stage depends on it.
 

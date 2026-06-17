@@ -422,6 +422,9 @@ function viewerQuality(status, training = {}, runConfig = {}) {
   if (profile === 'quality_probe') {
     return { text: training.renderReview?.status === 'pass' ? 'quality inspect' : 'quality warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
   }
+  if (profile === 'rtx_reference') {
+    return { text: training.renderReview?.status === 'pass' ? 'reference inspect' : 'reference warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
+  }
   return { text: 'baseline inspect', type: 'pass' };
 }
 

@@ -15,7 +15,7 @@ Goal: prove that the local RTX workstation can run the lab pipeline from existin
 ## Commands
 
 ```bash
-.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy --training-profile quality_probe
+.venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy --training-profile rtx_reference
 .venv/bin/python scripts/lab-pipeline.py run-stage packaging --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json
 .venv/bin/python scripts/lab-pipeline.py run-stage viewer --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json --allow-heavy
 .venv/bin/python scripts/lab-pipeline.py run-stage quality_report --job outputs/jobs/static-room-orbit-001-20260614T100535Z/job.json
@@ -33,30 +33,31 @@ The warning is expected for the current fixture because framework/commercial rev
 ## Produced Local Artifacts
 
 ```text
-outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T181446Z/checkpoint.pt
-outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T181446Z/trained_splats.ply
-outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T181446Z/sample_render.png
-outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T181446Z/sample_target.png
-outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T181446Z/render_review/contact_sheet.png
+outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260617T005232Z/checkpoint.pt
+outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260617T005232Z/trained_splats.ply
+outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260617T005232Z/sample_render.png
+outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260617T005232Z/sample_target.png
+outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260617T005232Z/render_review/contact_sheet.png
 outputs/jobs/static-room-orbit-001-20260614T100535Z/viewer/viewer-manifest.json
 ```
 
 Recorded artifact facts:
 
-- PLY size: `5562729` bytes
-- PLY SHA256: `4f40ff095712290e6c816c37b1f64bd2428b35112ffb71ad61dffffebbde8999`
+- PLY size: `22400362` bytes
+- PLY SHA256: `ab87ed8ee07bbc6fd6ba30d5d75aa3f2163c7f5ca95ae0d7ced3ab768ffa0707`
 - PLY format: `binary_little_endian`
-- Vertex count: `99328`
-- Sample render: `768x432`, RGB, `242117` bytes
-- Sample target: `768x432`, RGB, `251780` bytes
-- Render review contact sheet: `1008x1332`, RGB, `1556578` bytes
-- Training profile: `quality_probe`
-- Training run: `2500` iterations, `42` images, RTX 5090
-- Densification: `gsplat DefaultStrategy`, `2423` initial gaussians to `99328` exported gaussians, `40.9938x` growth
-- Loss: `0.28157898783683777` initial to `0.06988848000764847` final
-- Render review: `pass`, mean MAE `16.3499`, mean RMSE `26.1794`, mean luminance delta `5.4782`
+- Vertex count: `400000`
+- Sample render: `1280x720`, RGB, `425739` bytes
+- Sample target: `1280x720`, RGB, `515412` bytes
+- Render review contact sheet: `1008x2212`, RGB, `2494515` bytes
+- Training profile: `rtx_reference`
+- Training run: `9000` iterations, `42` images, RTX 5090
+- Densification: `gsplat DefaultStrategy`, `2423` initial gaussians to `400000` exported gaussians, `165.0846x` growth
+- Loss: `0.28722822666168213` initial to `0.07884305715560913` final
+- Render review: `pass`, mean MAE `13.0491`, mean RMSE `22.7755`, mean luminance delta `-1.0692`
+- Peak PyTorch CUDA allocation: `1557.59 MiB`
 
-Visual inspection of the render-review contact sheet shows that `quality_probe` captures the main geometry and view alignment much better than the earlier baseline. It is still visibly soft and loses sharp reflections/fine detail, with camera index `0` remaining the weakest reviewed view. Treat this as the current technical reference, not final end-user visual quality.
+Visual inspection of the render-review contact sheet shows that `rtx_reference` is the strongest current technical reference. It uses full capture-frame render resolution and greatly improves the earlier `quality_probe` metrics (`16.3499` mean MAE to `13.0491`). The main camera alignment and object structure are consistent across reviewed views, but foreground occluders are still soft and reflective/high-frequency detail is not product-showcase quality. Two rejected experiment profiles were tested locally: an overly sharp variant collapsed late views, and a balanced variant was stable but softer than `rtx_reference`.
 
 ## Viewer Handoff
 
@@ -91,8 +92,8 @@ Temporary server command:
 
 Smoke result:
 
-- `GET /api/state`: returned `viewerArtifact` with `viewerStatus=pass`, `trainingProfile=quality_probe`, `strategy=default`, `vertexCount=99328`, `renderReview.status=pass` and `renderReview.meanMae=16.3499`
-- `GET /api/artifacts/outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T181446Z/trained_splats.ply`: returned HTTP `200` and `ply` file prefix
-- `GET /api/artifacts/outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260616T181446Z/render_review/contact_sheet.png`: returned HTTP `200` and PNG file prefix
+- `GET /api/state`: returned `viewerArtifact` with `viewerStatus=pass`, `trainingProfile=rtx_reference`, `strategy=default`, `vertexCount=400000`, `renderReview.status=pass` and `renderReview.meanMae=13.0491`
+- `GET /api/artifacts/outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260617T005232Z/trained_splats.ply`: returned HTTP `200` and `ply` file prefix
+- `GET /api/artifacts/outputs/jobs/static-room-orbit-001-20260614T100535Z/splats/20260617T005232Z/render_review/contact_sheet.png`: returned HTTP `200` and PNG file prefix
 - `GET /`: returned HTML containing `Artifact Inspect`, `splatCanvas`, `sampleRenderImage`, `sampleTargetImage` and `renderReviewImage`
 - `GET /app.js`: returned code containing `initWebGLScene`, `gl_PointSize`, `createSceneLines`, `getContext('webgl')` and `renderSampleComparison`

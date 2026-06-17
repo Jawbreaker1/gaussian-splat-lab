@@ -21,7 +21,7 @@ Already in place:
 - video intake stage with explicit missing-file and metadata stop conditions
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
-- gsplat training orchestration with `smoke`, `baseline` and `quality_probe` profiles, including DefaultStrategy densification and render-review evidence for non-smoke runs
+- gsplat training orchestration with `smoke`, `baseline`, `quality_probe` and `rtx_reference` profiles, including DefaultStrategy densification and render-review evidence for non-smoke runs
 - artifact packaging that writes a viewer manifest with PLY hash, byte size and header metadata
 - local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders an interactive WebGL PLY point-debug scene
 - capture readiness reporting for local file/provenance status before intake
@@ -45,8 +45,9 @@ As of 2026-06-16, the repo-local `.venv` and workstation validate:
 - the installed Ubuntu FFmpeg build includes `--enable-gpl`; keep it as a lab-only system tool until redistribution/build flags are reviewed
 - frame sampling passed a synthetic CLI smoke test; evidence is recorded in `docs/validation/phase-1-frame-sampling-smoke.md`
 - SfM has a runnable COLMAP stage wrapper; the first post-PSU test produced a passing sparse reconstruction from local frame input
-- `splat_training`, `packaging` and `viewer` now pass on the local-test-only capture; the current technical reference is the `quality_probe` profile with `2500` iterations, `42` images at `768x432`, growth from `2423` to `99328` gaussians and a `5.6 MB` binary PLY
-- render-review validation now writes a multi-view render/target/diff contact sheet; the current `quality_probe` run passes the initial visual threshold with mean MAE `16.3499`, but remains visibly soft and not product-showcase quality
+- `splat_training`, `packaging` and `viewer` now pass on the local-test-only capture; the current technical reference is the `rtx_reference` profile with `9000` iterations, `42` images at `1280x720`, growth from `2423` to `400000` gaussians and a `22.4 MB` binary PLY
+- `quality_probe` remains the faster quality check profile: `2500` iterations, `768x432`, `99328` gaussians and mean MAE `16.3499`
+- render-review validation now writes a multi-view render/target/diff contact sheet; the current `rtx_reference` run passes the initial visual threshold with mean MAE `13.0491`, but remains visibly soft in foreground occluders and is not product-showcase quality
 - quality remains `warning` because framework/capture provenance is not product-ready
 
 ## Workload Safety
@@ -59,7 +60,7 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 Move from technical golden path to controlled quality experiments and product-readiness hardening.
 
-Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains with a fast `smoke` profile, a densifying `baseline` profile and a stronger `quality_probe` profile, packaging writes a viewer manifest, and the local UI can fetch and render the exported binary PLY as an interactive WebGL point-debug scene. The UI also shows the latest render/target pair and the multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture is local-test-only and framework/commercial notices still need product review.
+Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains with a fast `smoke` profile, a densifying `baseline` profile, a stronger `quality_probe` profile and an overnight/reference `rtx_reference` profile, packaging writes a viewer manifest, and the local UI can fetch and render the exported binary PLY as an interactive WebGL point-debug scene. The UI also shows the latest render/target pair and the multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture is local-test-only and framework/commercial notices still need product review.
 
 Why next:
 
@@ -204,7 +205,7 @@ Inputs:
 
 Components:
 
-- repo-local `gsplat` trainer with explicit `smoke`, `baseline` and `quality_probe` profiles
+- repo-local `gsplat` trainer with explicit `smoke`, `baseline`, `quality_probe` and `rtx_reference` profiles
 - Nerfstudio/Splatfacto remains a later alternative once dependency impact is justified
 
 Output:
