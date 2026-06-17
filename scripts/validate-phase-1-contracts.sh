@@ -13,7 +13,7 @@ python3 -m py_compile "${repo_root}/scripts/lab-pipeline.py"
 python3 "${repo_root}/scripts/lab-pipeline.py" describe >/dev/null
 python3 "${repo_root}/scripts/lab-pipeline.py" list-captures   --capture-manifest data/manifests/captures.example.json   >"${phase1_tmp_dir}"/captures.txt
 python3 -m json.tool "${phase1_tmp_dir}"/captures.txt >/dev/null
-grep -q "pexels-empty-coffee-shop-interior-14227022" "${phase1_tmp_dir}"/captures.txt
+grep -q "nerfstudio-dozer-reference" "${phase1_tmp_dir}"/captures.txt
 python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --dry-run   >/dev/null
 
 import_manifest="$(mktemp)"
@@ -61,7 +61,7 @@ grep -q "import_video_status=pass" "${phase1_tmp_dir}"/import-video.txt
 import_report="$(sed -n 's/^import_video_report=//p' "${phase1_tmp_dir}"/import-video.txt)"
 python3 -m json.tool "${import_report}" >/dev/null
 
-python3 "${repo_root}/scripts/lab-pipeline.py" import-video   --capture-manifest data/manifests/captures.example.json   --capture-id pexels-empty-coffee-shop-interior-14227022   --input "${import_source}"   --dry-run   >"${phase1_tmp_dir}"/import-warning.txt || true
+python3 "${repo_root}/scripts/lab-pipeline.py" import-video   --capture-manifest data/manifests/captures.example.json   --capture-id nerfstudio-dozer-reference   --input "${import_source}"   --dry-run   >"${phase1_tmp_dir}"/import-warning.txt || true
 grep -q "import_video_status=blocked_license" "${phase1_tmp_dir}"/import-warning.txt
 
 tmp_jobs_dir="$(mktemp -d)"

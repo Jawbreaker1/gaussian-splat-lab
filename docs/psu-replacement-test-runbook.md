@@ -1,6 +1,6 @@
 # PSU Replacement Test Runbook
 
-Verified: 2026-06-08
+Verified: 2026-06-17
 
 Purpose: provide a controlled sequence for the first heavier local pipeline test after the workstation PSU is replaced.
 
@@ -8,7 +8,7 @@ This runbook separates preflight, light media stages and heavy stages. Do not sk
 
 ## Current Readiness
 
-Ready to test after a local video has been imported:
+Ready to test after a local video or derived dataset video has been imported:
 
 - dependency/license preflight report
 - RTX workstation/environment report
@@ -16,30 +16,24 @@ Ready to test after a local video has been imported:
 - deterministic frame sampling with `ffmpeg`
 - guarded COLMAP SfM wrapper
 - quality report summarizing the first blocking boundary
-
-Not yet implemented as real heavy work:
-
-- splat training orchestration
-- artifact packaging/conversion
-- real browser splat viewer validation
-
-The `splat_training` and `viewer` stages intentionally report guarded/setup states until those implementations are added.
+- gsplat-based training wrapper
+- artifact packaging and real browser splat viewer validation
 
 ## 0. Confirm Inputs
 
-Use a self-captured clip for the cleanest commercial chain, or the documented Pexels candidate for technical validation only.
+Use a self-captured clip for the cleanest commercial chain. For the next high-quality technical reference, use the Nerfstudio `dozer` dataset and derive `data/videos/nerfstudio-dozer-reference.mp4` from its image sequence as a temporary compatibility layer.
 
 ```bash
 cd /home/engwall/projects/gaussian-splat-lab
 .venv/bin/python scripts/lab-pipeline.py list-captures --capture-manifest data/manifests/captures.example.json
 ```
 
-If the chosen file is not present, import it:
+If a derived MP4 has been created outside the repo, import it with provenance:
 
 ```bash
 .venv/bin/python scripts/lab-pipeline.py import-video \
-  --capture-id pexels-empty-coffee-shop-interior-14227022 \
-  --input /path/to/downloaded-video.mp4 \
+  --capture-id nerfstudio-dozer-reference \
+  --input /path/to/nerfstudio-dozer-reference.mp4 \
   --accept-warning \
   --overwrite
 ```
@@ -50,7 +44,7 @@ Stop if `list-captures` still shows `source_file=setup_gap` for the chosen captu
 
 ```bash
 .venv/bin/python scripts/lab-pipeline.py init-job \
-  --capture-id pexels-empty-coffee-shop-interior-14227022
+  --capture-id nerfstudio-dozer-reference
 ```
 
 Copy the printed `job_manifest=` path into the commands below.
@@ -87,11 +81,11 @@ print(report.get('frameManifestPath'))
 PY
 ```
 
-Stop if the contact sheet shows motion blur, repeated frames, non-orbit motion, people/logos/private documents, or too little texture.
+Stop if the contact sheet shows motion blur, repeated frames, non-orbit motion, people/logos/private documents, or too little texture. For the `dozer` reference, also stop if the derived MP4 does not preserve enough of the original image-sequence coverage.
 
 ## 4. Heavy Stage: SfM Only
 
-Run this only after the PSU replacement and an explicit go-ahead.
+Run this only after an explicit go-ahead. This can sustain high CPU and GPU load.
 
 ```bash
 .venv/bin/python scripts/lab-pipeline.py run-stage sfm --job "$JOB" --allow-heavy
@@ -102,13 +96,13 @@ Stop after SfM. Record whether COLMAP registers enough frames. Treat 50-70% regi
 
 ## 5. Expected Boundary After SfM
 
-After SfM passes, the next expected boundary is `splat_training`:
+After SfM passes, the next expected boundary is `splat_training`. This can run from minutes to hours depending on frame count and training profile:
 
 ```bash
 .venv/bin/python scripts/lab-pipeline.py run-stage splat_training --job "$JOB" --allow-heavy
 ```
 
-After the 2026-06-15 trainer update, this launches the minimal gsplat training wrapper only when `--allow-heavy` is supplied. In the current WSL environment it should still stop at `setup_gap` until `nvcc` or a compatible prebuilt gsplat wheel is available.
+After the 2026-06-15 trainer update, this launches the gsplat training wrapper only when `--allow-heavy` is supplied. Confirm RTX 5090 device use in the training report and with `nvidia-smi` before letting a long run continue.
 
 ## Validation Commands
 

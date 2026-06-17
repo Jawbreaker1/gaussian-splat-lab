@@ -1,31 +1,40 @@
 # Sample Capture Candidates
 
-Verified: 2026-06-08
+Verified: 2026-06-17
 
-The preferred golden-path input is still self-captured footage: 20-40 seconds, slow orbit, static textured scene, no people, no logos, no recognizable third-party artwork and no private documents. That gives the cleanest commercial chain of custody.
+The preferred golden-path input for commercial evaluation is still self-captured footage: 20-40 seconds, slow orbit, static textured scene, no people, no logos, no recognizable third-party artwork and no private documents. That gives the cleanest chain of custody.
 
-## Candidate: Pexels Empty Coffee Shop Interior
+For technical quality work, prefer a capture/dataset built for neural rendering over ordinary stock footage. Stock videos often look good to humans while being weak SfM inputs.
 
-- Capture id: `pexels-empty-coffee-shop-interior-14227022`
-- Source page: https://www.pexels.com/video/an-empty-coffee-shop-interior-14227022/
-- License page: https://www.pexels.com/license/
-- Terms page: https://www.pexels.com/terms-of-service/
-- Author shown on Pexels: Connor Scott McManus
-- Local target path: `data/videos/pexels-empty-coffee-shop-interior-14227022.mp4`
-- Intended use: technical pipeline validation only, not commercial showcase material.
+## Preferred Technical Candidate: Nerfstudio Dozer
 
-Why it is a reasonable technical candidate:
+- Capture id: `nerfstudio-dozer-reference`
+- Source docs: https://docs.nerf.studio/reference/cli/ns_download_data.html
+- Source command: `ns-download-data nerfstudio --capture-name=dozer`
+- Local dataset target: `data/datasets/nerfstudio/dozer`
+- Derived video target: `data/videos/nerfstudio-dozer-reference.mp4`
+- Intended use: high-quality local technical validation only until exact dataset license evidence is attached.
 
-- Page is marked `Free to use`.
-- Tags include empty/no people/interior/cafe/chairs/wooden floor/natural light.
-- The scene appears more useful for SfM than abstract footage because it has furniture, edges and texture.
+Why it is the preferred technical candidate:
+
+- It comes from a real-world neural-rendering dataset rather than a generic stock clip.
+- The scene should be static, textured and outdoor, which is closer to the eventual room/outdoor use case than the hardware close-up.
+- A dataset image sequence gives us more control over frame selection than a compressed stock MP4.
+- It is a better stress test for the Spark/Three.js splat viewer because the resulting scene should be recognizable from many camera angles.
 
 License posture:
 
-- Pexels says photos and videos can be downloaded and used for free, attribution is not required, and modification is allowed.
-- Pexels Terms describe a non-exclusive, royalty-free license for commercial and non-commercial use, subject to prohibited uses.
-- Pexels also restricts uses such as standalone resale/distribution, implying endorsement, redistribution on stock platforms, and trademark/service-mark use.
-- Treat this as acceptable for local technical validation only. For product demos, marketing or commercial evidence, use self-captured footage or obtain a separately reviewed asset.
+- The Nerfstudio paper states that associated code and data are publicly available with open-source licensing.
+- The Nerfstudio repository license is Apache-2.0, but that alone does not prove the exact downloaded capture is commercially cleared.
+- Treat this as technical-validation-only until the downloaded dataset archive, license evidence, source command and hashes are stored with the capture.
+
+Manual next step when ready:
+
+1. Download the `dozer` capture through Nerfstudio tooling or a documented manual equivalent.
+2. Store the original image sequence and metadata under `data/datasets/nerfstudio/dozer`.
+3. Derive `data/videos/nerfstudio-dozer-reference.mp4` only as a compatibility layer for the current video-first pipeline.
+4. Import or record provenance for the derived MP4 before starting a job.
+5. Run preflight plus `intake` and `frame_sampling`; inspect contact sheets before any heavy SfM/training run.
 
 Readiness check:
 
@@ -33,19 +42,29 @@ Readiness check:
 .venv/bin/python scripts/lab-pipeline.py list-captures --capture-manifest data/manifests/captures.example.json
 ```
 
-Manual next step when ready:
-
-1. Download the chosen Pexels quality manually from the source page.
-2. Import it through the GUI `Import video` control, or through the provenance-aware CLI command:
+Initial job command after the derived MP4 exists:
 
 ```bash
-.venv/bin/python scripts/lab-pipeline.py import-video \
+.venv/bin/python scripts/lab-pipeline.py init-job \
   --capture-manifest data/manifests/captures.example.json \
-  --capture-id pexels-empty-coffee-shop-interior-14227022 \
-  --input /path/to/downloaded-video.mp4 \
-  --accept-warning \
-  --overwrite
+  --capture-id nerfstudio-dozer-reference
 ```
 
-3. Run `list-captures`, then create a job and run preflight checks (`framework_license`, `environment`) followed by media stages (`intake`, `frame_sampling`).
-4. Do not run `sfm`, training or viewer validation until the workstation power issue is resolved and `--allow-heavy` is intentionally supplied.
+## Benchmark Cross-Check: Mip-NeRF 360
+
+- Source page: https://jonbarron.info/mipnerf360/
+- Useful scenes: `garden`, `bicycle`, `stump`
+- Intended use: benchmark comparison only until dataset license evidence is recorded.
+
+Mip-NeRF 360 is highly relevant because it targets 360-degree view synthesis around real scenes. It is not a normal video source, so it should be used once the pipeline supports image-sequence/dataset input or when we intentionally derive a video for compatibility testing.
+
+## Stock Fallback: Pexels Empty Coffee Shop Interior
+
+- Capture id: `pexels-empty-coffee-shop-interior-14227022`
+- Source page: https://www.pexels.com/video/an-empty-coffee-shop-interior-14227022/
+- License page: https://www.pexels.com/license/
+- Terms page: https://www.pexels.com/terms-of-service/
+- Local target path: `data/videos/pexels-empty-coffee-shop-interior-14227022.mp4`
+- Intended use: UI import and generic video validation only, not high-quality reference generation.
+
+Keep this as a fallback, not a golden path. It is closer to the intended domain than the CPU-fan clip, but a stock video is not necessarily captured with enough overlap, parallax or reconstruction-friendly motion.

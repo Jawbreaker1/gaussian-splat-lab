@@ -41,7 +41,7 @@
     },
     {
       "id": "pexels-empty-coffee-shop-interior-14227022",
-      "displayName": "Recommended reference: empty cafe interior",
+      "displayName": "Stock fallback: empty cafe interior",
       "source": {
         "kind": "local_file",
         "path": "data/videos/pexels-empty-coffee-shop-interior-14227022.mp4",
@@ -80,7 +80,58 @@
           ]
         }
       },
-      "status": "recommended-reference-candidate"
+      "status": "stock-fallback-candidate"
+    },
+    {
+      "id": "nerfstudio-dozer-reference",
+      "displayName": "Purpose-built reference: Nerfstudio dozer",
+      "source": {
+        "kind": "local_file",
+        "path": "data/videos/nerfstudio-dozer-reference.mp4",
+        "sourceUrl": "https://docs.nerf.studio/reference/cli/ns_download_data.html",
+        "license": "nerfstudio-open-source-data-license-unverified",
+        "licenseNotes": "Preferred technical reference candidate because it comes from the Nerfstudio real-world neural-rendering dataset, not a generic stock clip. The Nerfstudio paper says the associated code and data are publicly available with open-source licensing, and the repository license is Apache-2.0, but the exact downloaded dataset archive must still be retained and reviewed before commercial demo use. Use this for local technical validation only until that evidence is attached.",
+        "licenseSourceUrl": "https://arxiv.org/abs/2302.04264",
+        "repositoryLicenseUrl": "https://github.com/nerfstudio-project/nerfstudio/blob/main/LICENSE",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "nerfstudio_capture",
+        "captureName": "dozer",
+        "downloadCommand": "ns-download-data nerfstudio --capture-name=dozer",
+        "expectedLocalDatasetPath": "data/datasets/nerfstudio/dozer",
+        "videoDerivation": "Create data/videos/nerfstudio-dozer-reference.mp4 from the downloaded image sequence only as a compatibility layer for the current video-first pipeline. Keep the original images and transforms/COLMAP data as source evidence."
+      },
+      "capture": {
+        "subject": "outdoor real-world dozer scene from a neural-rendering dataset",
+        "motion": "multi-view capture with strong parallax; derive a slow reference video only after dataset download",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "dataset-provided images; derived video resolution TBD"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "targetFps": 3,
+          "maxFrames": 360
+        },
+        "sfm": {
+          "backend": "colmap",
+          "requiresExplicitHeavyApproval": true
+        },
+        "training": {
+          "backend": "gsplat",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "ksplat",
+            "splat"
+          ]
+        }
+      },
+      "status": "preferred-technical-reference-candidate"
     }
   ]
 }

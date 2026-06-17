@@ -16,21 +16,36 @@ The next reference should be a room-scale or outdoor-space capture with:
 - no identifiable people unless releases and usage rights are recorded
 - documented source rights compatible with commercial evaluation
 
-## Current Candidate
+## Selected Technical Reference
 
-Manifest id: `pexels-empty-coffee-shop-interior-14227022`
+Manifest id: `nerfstudio-dozer-reference`
 
-Reason: this is closer to the intended product use than the hardware close-up. It is an empty interior candidate, likely to exercise room-scale structure and viewer navigation more realistically. The manifest records the Pexels source URL, license URL and terms URL. It is still a candidate, not production evidence, because the exact downloaded file and camera motion must be validated locally before SfM/training.
+Reason: use a purpose-built neural-rendering capture instead of a generic stock video. Nerfstudio exposes downloadable real-world captures through `ns-download-data nerfstudio --capture-name=dozer`, and the `dozer` scene is a better match for 3DGS validation because it should have real-world geometry, outdoor texture, strong parallax and no obvious reliance on a close-up glossy subject.
+
+The current pipeline is still video-first, so the manifest records a derived MP4 target at `data/videos/nerfstudio-dozer-reference.mp4`. Treat that MP4 as a compatibility artifact only. Keep the original downloaded image sequence, metadata and provenance as the source of truth. A near-term pipeline improvement should add image-sequence/dataset input as a first-class source so benchmark datasets do not need to be flattened into video.
+
+License posture: technical validation only until the exact downloaded dataset license evidence is attached. The Nerfstudio paper states that associated code and data are publicly available with open-source licensing, and the Nerfstudio repository is Apache-2.0 licensed, but that is not enough by itself to call a specific downloaded capture commercially cleared. Record the downloaded archive, source page, command, hash and license evidence before using it in a commercial demo.
 
 Stop conditions before using it as reference evidence:
 
-- file must be imported locally through the UI or CLI import path
-- intake must report duration, resolution, frame rate and hash
+- dataset must be downloaded through a documented command or manually imported with provenance
+- derived MP4, if used, must be reproducible from the original image sequence
+- intake must report duration, resolution, frame rate and hash for the derived MP4
 - sampled frames must show enough parallax and low blur
 - SfM must register enough frames with acceptable reprojection error
 - splat training must report RTX 5090 device use
 - quality report must compare render review against the previous baseline
 
+## Benchmark Cross-Check
+
+Mip-NeRF 360 remains the strongest external benchmark family to compare against because it is designed around unbounded 360-degree view synthesis. Scenes such as `garden`, `bicycle` and `stump` are better quality targets than random internet videos. Use them as benchmark references only after the dataset license and source evidence are recorded. They are image-sequence datasets, not normal video clips, so they also argue for adding dataset/image-sequence input to this lab.
+
+## Downgraded Stock Fallback
+
+Manifest id: `pexels-empty-coffee-shop-interior-14227022`
+
+This is now a fallback candidate, not the recommended reference. It can still help test the UI import flow and generic video handling, but it is less suitable for high-quality splats because stock footage is usually optimized for visual composition rather than multi-view reconstruction. It may have insufficient parallax, cuts, exposure shifts or motion that make SfM and training worse.
+
 ## Preferred Production Evidence
 
-For commercial demonstrations, prefer self-captured footage from the actual target environment. That gives the clearest provenance and avoids stock-license ambiguity. The stock candidate is useful for pipeline development, but not a substitute for a controlled capture policy.
+For commercial demonstrations, prefer self-captured footage from the actual target environment. That gives the clearest provenance and avoids stock-license ambiguity. The dataset candidate is useful for technical quality validation; self-capture is still the cleanest commercial chain of custody.
