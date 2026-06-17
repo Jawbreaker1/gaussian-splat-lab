@@ -55,6 +55,7 @@ let importingVideo = false;
 let viewerLoadToken = 0;
 let viewerReadyResolved = false;
 let resolveViewerReady = null;
+let captureSelectionTouched = false;
 const viewerReadyPromise = new Promise((resolve) => {
   resolveViewerReady = resolve;
 });
@@ -168,12 +169,20 @@ function renderStatus() {
 
 function renderCaptures() {
   const captures = state?.captures ?? [];
+  const previousCaptureId = els.captureSelect.value;
+  const activeCaptureId = activeJob?.job?.captureId;
   els.captureSelect.replaceChildren();
   for (const capture of captures) {
     const option = document.createElement('option');
     option.value = capture.id;
     option.textContent = capture.displayName || capture.id;
     els.captureSelect.append(option);
+  }
+  const captureIds = new Set(captures.map((capture) => capture.id));
+  if (!captureSelectionTouched && activeCaptureId && captureIds.has(activeCaptureId)) {
+    els.captureSelect.value = activeCaptureId;
+  } else if (captureIds.has(previousCaptureId)) {
+    els.captureSelect.value = previousCaptureId;
   }
   els.planJobButton.disabled = captures.length === 0;
   renderCaptureMeta();
@@ -1292,6 +1301,7 @@ els.viewerModeSparkButton.addEventListener('click', () => setViewerMode('spark')
 els.viewerModeDebugButton.addEventListener('click', () => setViewerMode('debug'));
 
 els.captureSelect.addEventListener('change', () => {
+  captureSelectionTouched = true;
   els.acceptCaptureWarning.checked = false;
   els.importStatus.textContent = '';
   renderCaptureMeta();

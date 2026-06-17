@@ -53,10 +53,21 @@ Initial job command after the derived MP4 exists:
 ## Benchmark Cross-Check: Mip-NeRF 360
 
 - Source page: https://jonbarron.info/mipnerf360/
-- Useful scenes: `garden`, `bicycle`, `stump`
+- Useful scenes: `flowers`, `treehill`, `garden`, `bicycle`, `stump`
+- Active tested capture id: `mipnerf360-flowers-reference`
+- Active tested archive: `data/datasets/mipnerf360/360_extra_scenes.zip`
+- Active derived video: `data/videos/mipnerf360-flowers-reference.mp4`
 - Intended use: benchmark comparison only until dataset license evidence is recorded.
 
 Mip-NeRF 360 is highly relevant because it targets 360-degree view synthesis around real scenes. It is not a normal video source, so it should be used once the pipeline supports image-sequence/dataset input or when we intentionally derive a video for compatibility testing.
+
+2026-06-17 validation notes:
+
+- Nerfstudio `dozer` Google Drive download was blocked from CLI automation.
+- Mip-NeRF 360 `360_extra_scenes.zip` was downloaded from Google Cloud Storage instead.
+- `flowers/images_4` was converted into a 3 fps MP4 to exercise the product's video-first pipeline.
+- The run passed frame sampling, SfM, `rtx_reference` training, packaging and Spark viewer validation.
+- The resulting splat is recognizable but soft; use it as a baseline for trainer/viewer improvement, not as commercial showcase material.
 
 ## Stock Fallback: Pexels Empty Coffee Shop Interior
 

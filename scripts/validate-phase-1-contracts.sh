@@ -14,6 +14,7 @@ python3 "${repo_root}/scripts/lab-pipeline.py" describe >/dev/null
 python3 "${repo_root}/scripts/lab-pipeline.py" list-captures   --capture-manifest data/manifests/captures.example.json   >"${phase1_tmp_dir}"/captures.txt
 python3 -m json.tool "${phase1_tmp_dir}"/captures.txt >/dev/null
 grep -q "nerfstudio-dozer-reference" "${phase1_tmp_dir}"/captures.txt
+grep -q "mipnerf360-flowers-reference" "${phase1_tmp_dir}"/captures.txt
 python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --dry-run   >/dev/null
 
 import_manifest="$(mktemp)"

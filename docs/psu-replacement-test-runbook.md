@@ -21,7 +21,7 @@ Ready to test after a local video or derived dataset video has been imported:
 
 ## 0. Confirm Inputs
 
-Use a self-captured clip for the cleanest commercial chain. For the next high-quality technical reference, use the Nerfstudio `dozer` dataset and derive `data/videos/nerfstudio-dozer-reference.mp4` from its image sequence as a temporary compatibility layer.
+Use a self-captured clip for the cleanest commercial chain. For the current high-quality technical reference, use `mipnerf360-flowers-reference`; Nerfstudio `dozer` remains preferred if Google Drive access becomes available, but Mip-NeRF 360 `flowers` is the active tested fallback.
 
 ```bash
 cd /home/engwall/projects/gaussian-splat-lab
@@ -32,8 +32,8 @@ If a derived MP4 has been created outside the repo, import it with provenance:
 
 ```bash
 .venv/bin/python scripts/lab-pipeline.py import-video \
-  --capture-id nerfstudio-dozer-reference \
-  --input /path/to/nerfstudio-dozer-reference.mp4 \
+  --capture-id mipnerf360-flowers-reference \
+  --input /path/to/mipnerf360-flowers-reference.mp4 \
   --accept-warning \
   --overwrite
 ```
@@ -44,7 +44,7 @@ Stop if `list-captures` still shows `source_file=setup_gap` for the chosen captu
 
 ```bash
 .venv/bin/python scripts/lab-pipeline.py init-job \
-  --capture-id nerfstudio-dozer-reference
+  --capture-id mipnerf360-flowers-reference
 ```
 
 Copy the printed `job_manifest=` path into the commands below.
@@ -81,7 +81,7 @@ print(report.get('frameManifestPath'))
 PY
 ```
 
-Stop if the contact sheet shows motion blur, repeated frames, non-orbit motion, people/logos/private documents, or too little texture. For the `dozer` reference, also stop if the derived MP4 does not preserve enough of the original image-sequence coverage.
+Stop if the contact sheet shows motion blur, repeated frames, non-orbit motion, people/logos/private documents, or too little texture. For dataset-derived references, also stop if the derived MP4 does not preserve enough of the original image-sequence coverage.
 
 ## 4. Heavy Stage: SfM Only
 

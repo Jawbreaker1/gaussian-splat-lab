@@ -348,3 +348,27 @@ Validation: `npm ls --depth=0`, `npm run check:js`, `./scripts/validate-ui-contr
 Revert plan: remove tracked `package.json`/`package-lock.json` changes if abandoning the Spark viewer, delete ignored `node_modules/`, and remove any UI/server routes that serve local npm modules.
 Result: pass. `npm ls --depth=0` reports `@sparkjsdev/spark 2.1.0` and `three 0.180.0`; lockfile records transitive `fflate 0.8.3`. `npm run check:js`, `./scripts/validate-ui-contracts.sh`, `./scripts/validate-architecture-contracts.sh` and `./scripts/validate-phase-1-contracts.sh` passed. PowerShell/Chrome visual QA reached `spark|reference inspect|` and wrote `C:\Users\engwa\AppData\Local\Temp\gslab-spark-cdp-capped.png`.
 Notes: The app does not import CDN resources; browser imports resolve to local project `node_modules` through the local UI server. Initial `lod: "quality"` caused Spark to load the 22 MB PLY to 100% but not finish initialization in QA, so the first stable renderer path uses `lod: false`. The viewer render loop is capped to 24 fps and pauses when hidden to avoid unnecessary RTX load while the UI is idle.
+
+## Entry: 2026-06-17 Install gdown dataset helper and Mip-NeRF 360 flowers reference
+
+Date: 2026-06-17
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Attempt Nerfstudio `dozer` dataset download, then use a reproducible Mip-NeRF 360 reference capture when Google Drive access was unavailable.
+Dependency: Python package `gdown 6.1.0` with transitive packages `beautifulsoup4 4.15.0`, `certifi 2026.6.17`, `charset_normalizer 3.4.7`, `idna 3.18`, `PySocks 1.7.1`, `requests 2.34.2`, `soupsieve 2.8.4`, `tqdm 4.68.3`, `urllib3 2.7.0`
+Commercial decision: `gdown` is MIT licensed and accepted as a repo-local dataset download helper only. Downloaded datasets are separate inputs and remain technical-validation-only until exact dataset license evidence is reviewed.
+Commands:
+
+```bash
+.venv/bin/python -m pip install --disable-pip-version-check gdown
+.venv/bin/gdown 1jQJPz5PhzTH--LOcCxvfzV_SDLEp1de3 -O data/datasets/nerfstudio/dozer.zip
+curl -L -C - --fail https://storage.googleapis.com/gresearch/refraw360/360_extra_scenes.zip -o data/datasets/mipnerf360/360_extra_scenes.zip
+ffmpeg -y -framerate 3 -start_number 9040 -i data/datasets/mipnerf360/flowers/images_4/_DSC%04d.JPG -c:v libx264 -preset medium -crf 16 -pix_fmt yuv420p data/videos/mipnerf360-flowers-reference.mp4
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: install ignored venv packages; write ignored dataset/video artifacts under `data/datasets/mipnerf360/` and `data/videos/`; update tracked manifests/docs separately.
+Validation: `.venv/bin/python -m pip show gdown`, `sha256sum data/datasets/mipnerf360/360_extra_scenes.zip data/videos/mipnerf360-flowers-reference.mp4`, pipeline run `mipnerf360-flowers-reference-20260617T142004Z`, and PowerShell/Chrome visual QA reaching `spark|reference inspect|`.
+Revert plan: remove `gdown` and its transitive packages from the venv if they are not needed by other tooling; delete ignored local artifacts `data/datasets/mipnerf360/`, `data/videos/mipnerf360-flowers-reference.mp4`, `data/videos/.provenance/mipnerf360-flowers-reference.mp4.derived.json`, and `outputs/jobs/mipnerf360-flowers-reference-20260617T142004Z/`; revert tracked manifest/docs changes if abandoning this reference.
+Result: partial pass. Nerfstudio `dozer` failed through `gdown` because Google Drive did not expose a retrievable public file URL to CLI automation. Mip-NeRF 360 `360_extra_scenes.zip` downloaded from Google Cloud Storage and extracted `flowers`; derived MP4 SHA-256 is `adabc37325e0182770f104a7222af6b8d74e12bc27ba57ce96dea8b617e80153`, archive SHA-256 is `f8d42b372d7cc589928c3d22849f958c1e2ae948c21e89c6a32c904cefba2fa4`.
+Notes: The active technical run passed frame sampling, SfM, `rtx_reference` training, packaging and viewer validation. SfM registered 173/173 frames with 43,287 sparse points and mean reprojection error 0.477 px. `rtx_reference` used RTX 5090, 9,000 iterations, 64 images, 400,000 gaussians, 67.7 seconds wall time and produced a 22.4 MB binary PLY. Visual review shows a recognizable but still soft scene; this is a pipeline-quality baseline, not commercial showcase material.

@@ -17,6 +17,7 @@ build/
 
 # Heavy lab inputs and generated artifacts
 data/videos/
+data/datasets/
 data/frames/
 data/sfm/
 data/checkpoints/

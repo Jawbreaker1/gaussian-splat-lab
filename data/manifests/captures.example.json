@@ -132,6 +132,58 @@
         }
       },
       "status": "preferred-technical-reference-candidate"
+    },
+    {
+      "id": "mipnerf360-flowers-reference",
+      "displayName": "Purpose-built reference: Mip-NeRF 360 flowers",
+      "source": {
+        "kind": "local_file",
+        "path": "data/videos/mipnerf360-flowers-reference.mp4",
+        "sourceUrl": "https://jonbarron.info/mipnerf360/",
+        "license": "mipnerf360-dataset-license-unverified",
+        "licenseNotes": "Fallback technical reference used when Nerfstudio Google Drive access is unavailable. The scene comes from the Mip-NeRF 360 extra scenes archive hosted by Google Research and is designed for 360-degree view synthesis. Use for local technical validation only until dataset license evidence is recorded.",
+        "licenseSourceUrl": "https://jonbarron.info/mipnerf360/",
+        "repositoryLicenseUrl": "https://github.com/google-research/multinerf/blob/main/LICENSE",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "mipnerf360_scene",
+        "archiveUrl": "https://storage.googleapis.com/gresearch/refraw360/360_extra_scenes.zip",
+        "archivePath": "data/datasets/mipnerf360/360_extra_scenes.zip",
+        "scenePath": "data/datasets/mipnerf360/flowers",
+        "imageSequencePath": "data/datasets/mipnerf360/flowers/images_4",
+        "videoDerivation": "Create data/videos/mipnerf360-flowers-reference.mp4 from images_4 at 3 fps as a compatibility layer for the current video-first pipeline. Keep the original image sequence, sparse model and archive hash as source evidence."
+      },
+      "capture": {
+        "subject": "outdoor flowers scene from a 360-degree neural-rendering benchmark dataset",
+        "motion": "ordered multi-view image sequence with strong parallax; derived as a slow 3 fps reference video",
+        "expectedDurationSeconds": 58,
+        "expectedResolution": "1256x828 derived from images_4"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "targetFps": 3,
+          "maxFrames": 360
+        },
+        "sfm": {
+          "backend": "colmap",
+          "requiresExplicitHeavyApproval": true
+        },
+        "training": {
+          "backend": "gsplat",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "ksplat",
+            "splat"
+          ]
+        }
+      },
+      "status": "active-technical-reference-candidate"
     }
   ]
 }

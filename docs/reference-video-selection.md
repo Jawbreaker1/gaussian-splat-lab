@@ -16,7 +16,7 @@ The next reference should be a room-scale or outdoor-space capture with:
 - no identifiable people unless releases and usage rights are recorded
 - documented source rights compatible with commercial evaluation
 
-## Selected Technical Reference
+## Preferred Technical Reference
 
 Manifest id: `nerfstudio-dozer-reference`
 
@@ -35,6 +35,23 @@ Stop conditions before using it as reference evidence:
 - SfM must register enough frames with acceptable reprojection error
 - splat training must report RTX 5090 device use
 - quality report must compare render review against the previous baseline
+
+## Active Technical Fallback
+
+Manifest id: `mipnerf360-flowers-reference`
+
+Nerfstudio `dozer` remains preferred for a construction/outdoor-object reference, but Google Drive access was not available from the CLI environment during the 2026-06-17 run. The active tested fallback is Mip-NeRF 360 `flowers`, downloaded from the Google Research Cloud Storage archive `360_extra_scenes.zip`.
+
+Run evidence from 2026-06-17:
+
+- derived video: `data/videos/mipnerf360-flowers-reference.mp4`, 57.67 seconds, 1256x828, 173 frames at 3 fps
+- source dataset: `data/datasets/mipnerf360/flowers/images_4`
+- SfM: 173/173 frames registered, 43,287 sparse points, mean reprojection error 0.477 px
+- training: `rtx_reference`, 9,000 iterations, 64 images, 400,000 gaussians, RTX 5090, 67.7 seconds
+- artifact: `outputs/jobs/mipnerf360-flowers-reference-20260617T142004Z/splats/20260617T151122Z/trained_splats.ply`
+- viewer: Spark mode reached `reference inspect`
+
+Visual posture: this is a strong technical pipeline reference and a clear improvement over the close-up hardware clip. It is still not product-showcase quality because the current mini-trainer render is recognizable but soft in high-frequency grass, leaves and flower detail.
 
 ## Benchmark Cross-Check
 

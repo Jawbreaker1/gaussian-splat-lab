@@ -171,6 +171,25 @@
       "reviewRequiredBeforeProduction": true
     },
     {
+      "id": "gdown",
+      "name": "gdown",
+      "role": "repo-local dataset download helper for Google Drive-hosted reference captures",
+      "license": "MIT",
+      "decision": "accepted",
+      "reason": "Permissive helper used only to attempt reproducible reference-dataset downloads; it is not a product runtime dependency.",
+      "officialSources": [
+        "https://github.com/wkentaro/gdown"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep MIT license notice if this helper is distributed.",
+        "Do not treat downloaded datasets as commercially cleared merely because the downloader is MIT licensed.",
+        "Prefer direct HTTPS/cloud-storage URLs over Google Drive when possible for reproducible automation."
+      ],
+      "distributionRisk": "low",
+      "reviewRequiredBeforeProduction": false
+    },
+    {
       "id": "nvidia-cuda",
       "name": "NVIDIA CUDA Toolkit/driver",
       "role": "RTX workstation GPU runtime",
