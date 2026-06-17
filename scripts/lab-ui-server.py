@@ -20,6 +20,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "app"
+NODE_MODULES_ROOT = REPO_ROOT / "node_modules"
 CAPTURE_MANIFEST = REPO_ROOT / "data/manifests/captures.example.json"
 FRAMEWORK_MANIFEST = REPO_ROOT / "data/manifests/framework-evaluation.json"
 GATES_MANIFEST = REPO_ROOT / "data/manifests/pipeline-gates.json"
@@ -73,6 +74,16 @@ def resolve_artifact_path(raw_path: str) -> Path:
     path.relative_to(JOBS_DIR.resolve())
     if not path.exists() or not path.is_file():
         raise ValueError("artifact path must point at an existing job artifact")
+    return path
+
+
+def resolve_node_module_path(raw_path: str) -> Path:
+    if not raw_path:
+        raise ValueError("node module path is required")
+    path = (NODE_MODULES_ROOT / unquote(raw_path)).resolve()
+    path.relative_to(NODE_MODULES_ROOT.resolve())
+    if not path.exists() or not path.is_file():
+        raise ValueError("node module path must point at an installed local package file")
     return path
 
 
@@ -281,10 +292,28 @@ def validate_ui_contracts() -> None:
 
     for path in [APP_ROOT / "index.html", APP_ROOT / "app.js", APP_ROOT / "styles.css"]:
         text = path.read_text(encoding="utf-8")
-        blocked_markers = ["https://", "http://", "unpkg.com", "cdn", "importmap"]
+        blocked_markers = ["https://", "http://", "unpkg.com", "cdn.jsdelivr", "cdnjs"]
         for marker in blocked_markers:
             if marker in text:
                 raise SystemExit(f"external UI dependency marker {marker!r} found in {path}")
+
+    package_manifest = REPO_ROOT / "package.json"
+    if package_manifest.exists():
+        packages = read_json(package_manifest).get("dependencies", {})
+        expected = {
+            "@sparkjsdev/spark": "2.1.0",
+            "three": "0.180.0",
+        }
+        for name, version in expected.items():
+            if packages.get(name) != version:
+                raise SystemExit(f"UI package dependency {name} must be pinned to {version}")
+
+        package_lock = REPO_ROOT / "package-lock.json"
+        if package_lock.exists():
+            locked_packages = read_json(package_lock).get("packages", {})
+            locked_fflate = locked_packages.get("node_modules/fflate", {}).get("version")
+            if locked_fflate != "0.8.3":
+                raise SystemExit("UI transitive dependency fflate must be locked to 0.8.3")
 
     state = build_state()
     if not state["captures"]:
@@ -326,6 +355,26 @@ class LabUiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_node_module(self, raw_path: str) -> None:
+        try:
+            module_file = resolve_node_module_path(raw_path)
+        except ValueError:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+
+        body = module_file.read_bytes()
+        content_type = mimetypes.guess_type(str(module_file))[0] or "application/octet-stream"
+        if module_file.suffix in {".js", ".mjs"}:
+            content_type = "text/javascript; charset=utf-8"
+        elif module_file.suffix == ".map":
+            content_type = "application/json; charset=utf-8"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_static(self, path: Path) -> None:
         try:
             resolved = path.resolve()
@@ -343,6 +392,7 @@ class LabUiHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -357,6 +407,9 @@ class LabUiHandler(BaseHTTPRequestHandler):
         route = self.path.split("?", 1)[0]
         if route.startswith("/api/artifacts/"):
             self.send_artifact(route.removeprefix("/api/artifacts/"))
+            return
+        if route.startswith("/node_modules/"):
+            self.send_node_module(route.removeprefix("/node_modules/"))
             return
         if route == "/":
             self.send_static(APP_ROOT / "index.html")

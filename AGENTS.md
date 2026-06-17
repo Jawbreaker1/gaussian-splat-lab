@@ -80,7 +80,8 @@ Use these documents as the source of truth:
 - `docs/commercial-compliance.md`: commercial-readiness checklist
 - `docs/installation-and-revert-ledger.md`: install/revert ledger and rollback policy
 - `docs/pipeline-gates.md`: stage contracts and stop conditions
-- `docs/end-user-ui.md`: dependency-free local UI scope
+- `docs/end-user-ui.md`: local UI scope and viewer runtime
+- `docs/reference-video-selection.md`: reference capture criteria and current room-scale candidate
 - `docs/input-quality-experiments.md`: post-golden-path degradation experiments
 - `docs/phases.md`: long-range phase plan
 - `docs/validation/`: recorded validation evidence
@@ -110,7 +111,7 @@ Golden-path order:
 11. input-quality experiments
 12. capture preflight
 
-Current technical baseline: `outputs/jobs/static-room-orbit-001-20260614T100535Z` passes environment, frame sampling, SfM, `rtx_reference` splat training, packaging and viewer validation. The latest `rtx_reference` run uses `gsplat` DefaultStrategy densification and grows the local-test-only capture from `2423` sparse points to `400000` exported gaussians at `1280x720`, with render-review mean MAE `13.0491`. Use `quality_probe` for faster quality checks and `rtx_reference` for local RTX 5090 reference runs. The viewer canvas is a dependency-free WebGL PLY point-debug scene, not a production covariance/screen-space Gaussian Splat renderer. The `gsplat` render/target/diff review sheet is the current visual quality reference. The quality report remains `warning` because the capture/framework state is not product-ready.
+Current technical baseline: `outputs/jobs/static-room-orbit-001-20260614T100535Z` passes environment, frame sampling, SfM, `rtx_reference` splat training, packaging and viewer validation. The latest `rtx_reference` run uses `gsplat` DefaultStrategy densification and grows the local-test-only capture from `2423` sparse points to `400000` exported gaussians at `1280x720`, with render-review mean MAE `13.0491`. Use `quality_probe` for faster quality checks and `rtx_reference` for local RTX 5090 reference runs. The primary browser viewer is now a local Spark + Three.js Gaussian Splat renderer, with the older WebGL PLY point-debug scene retained as Debug mode. The `gsplat` render/target/diff review sheet is the current visual quality reference. The quality report remains `warning` because the capture/framework state is not product-ready.
 
 Avoid big-bang integration. Every stage must be runnable and inspectable before the next stage depends on it.
 
@@ -128,9 +129,9 @@ A downstream stage may only read upstream output after the upstream report is `p
 
 ## UI Rule
 
-The current UI is a dependency-free local lab console under `app/`, served by `scripts/lab-ui-server.py`.
+The current UI is a local lab console under `app/`, served by `scripts/lab-ui-server.py`.
 
-Do not introduce React, Vite, npm dependencies, CDNs or external UI frameworks until the framework/commercial gate has been updated and validated.
+The approved local viewer dependency set is pinned in `package.json`/`package-lock.json`: `@sparkjsdev/spark 2.1.0`, `three 0.180.0` and transitive `fflate 0.8.3`. Do not introduce React, Vite, new npm packages, CDNs or external UI frameworks until the framework/commercial gate has been updated and validated.
 
 ## Testing
 

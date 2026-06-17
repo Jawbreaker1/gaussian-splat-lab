@@ -5,6 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Gaussian Splat Lab</title>
     <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/node_modules/three/build/three.module.js",
+          "three/addons/": "/node_modules/three/examples/jsm/",
+          "@sparkjsdev/spark": "/node_modules/@sparkjsdev/spark/dist/spark.module.js",
+          "fflate": "/node_modules/fflate/esm/browser.js"
+        }
+      }
+    </script>
   </head>
   <body>
     <div class="shell">
@@ -19,7 +29,7 @@
       <main class="workspace">
         <section class="capture-panel panel" aria-labelledby="captureTitle">
           <div class="panel-head">
-            <h2 id="captureTitle">Capture</h2>
+            <h2 id="captureTitle">Source</h2>
             <button class="icon-button" id="refreshButton" title="Refresh" aria-label="Refresh">↻</button>
           </div>
 
@@ -28,7 +38,7 @@
             <select id="captureSelect"></select>
           </label>
 
-          <div class="capture-meta" id="captureMeta"></div>
+          <div class="source-summary" id="captureSummary"></div>
 
           <label class="field">
             <span>Video file</span>
@@ -45,15 +55,33 @@
 
           <button class="primary-action" id="planJobButton">Plan job</button>
 
-          <div class="job-box" id="jobBox">
-            <div class="muted">No active job</div>
-          </div>
+          <details class="collapsible" id="captureDetails">
+            <summary>Capture details</summary>
+            <div class="capture-meta" id="captureMeta"></div>
+          </details>
+
+          <details class="collapsible" id="jobDetails">
+            <summary>Active job</summary>
+            <div class="job-box" id="jobBox">
+              <div class="muted">No active job</div>
+            </div>
+          </details>
         </section>
 
         <section class="pipeline-panel panel" aria-labelledby="pipelineTitle">
           <div class="panel-head">
-            <h2 id="pipelineTitle">Preflight & Pipeline</h2>
+            <h2 id="pipelineTitle">Pipeline</h2>
             <span class="pill neutral" id="gateCount">0 checks</span>
+          </div>
+
+          <div class="pipeline-progress" aria-label="Pipeline progress">
+            <div class="pipeline-progress-copy">
+              <span id="pipelineProgressText">No job planned</span>
+              <span id="pipelineCurrentStage">Ready for source selection</span>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-bar" id="pipelineProgressBar"></div>
+            </div>
           </div>
 
           <div class="stage-section">
@@ -75,8 +103,12 @@
 
         <section class="panel preview-panel" aria-labelledby="previewTitle">
           <div class="panel-head">
-            <h2 id="previewTitle">Artifact Inspect</h2>
+            <h2 id="previewTitle">3D Scene</h2>
             <span class="pill neutral" id="viewerStatusPill">pending</span>
+          </div>
+          <div class="viewer-mode-switch" aria-label="Viewer mode">
+            <button class="mode-button active" id="viewerModeSparkButton" type="button">Render</button>
+            <button class="mode-button" id="viewerModeDebugButton" type="button">Debug</button>
           </div>
           <div class="viewer-controls" aria-label="Viewer controls">
             <div class="viewer-control-group" aria-label="Pan controls">
@@ -97,7 +129,11 @@
               <button class="icon-button" id="viewerZoomInButton" title="Zoom in" aria-label="Zoom in">+</button>
             </div>
           </div>
-          <canvas id="splatCanvas" width="960" height="640" aria-label="Gaussian splat inspection scene"></canvas>
+          <div class="spark-viewport" id="sparkViewport">
+            <canvas id="sparkCanvas" width="960" height="640" aria-label="Production Gaussian splat render scene"></canvas>
+            <div class="viewer-overlay" id="sparkOverlay">Loading Spark renderer</div>
+          </div>
+          <canvas id="splatCanvas" width="960" height="640" aria-label="Gaussian splat debug inspection scene" hidden></canvas>
           <div class="render-compare" id="renderCompare" hidden>
             <figure id="sampleRenderFigure">
               <div class="render-frame"><img id="sampleRenderImage" alt="gsplat rendered sample" /></div>
@@ -112,16 +148,20 @@
             <div class="review-frame"><img id="renderReviewImage" alt="multi-view render target diff review" /></div>
             <figcaption>Render review (gsplat)</figcaption>
           </figure>
-          <div class="viewer-meta" id="viewerMeta"></div>
+
+          <details class="collapsible viewer-metadata" id="viewerMetadata">
+            <summary>Artifact metadata</summary>
+            <div class="viewer-meta" id="viewerMeta"></div>
+          </details>
         </section>
 
-        <section class="panel compliance-panel" aria-labelledby="complianceTitle">
-          <div class="panel-head">
+        <details class="panel compliance-panel" aria-labelledby="complianceTitle">
+          <summary class="panel-head">
             <h2 id="complianceTitle">Compliance</h2>
             <span class="pill" id="blockedCount">0 blocked</span>
-          </div>
+          </summary>
           <div class="compliance-grid" id="complianceGrid"></div>
-        </section>
+        </details>
       </main>
     </div>
 

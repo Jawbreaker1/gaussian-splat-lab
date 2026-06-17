@@ -327,3 +327,24 @@ dpkg-query -W -f='${Package} ${Version}\n' bubblewrap
 Revert plan: remove with `sudo apt-get remove bubblewrap` if Codex sandbox support is no longer needed; review apt's proposed autoremove list before accepting any additional removals.
 Result: pass; `/usr/bin/bwrap` exists, `bwrap --version` reports `bubblewrap 0.9.0`, dpkg reports `bubblewrap 0.9.0-1ubuntu0.1`, `view_image` successfully opened the render-review contact sheet, and `apply_patch` successfully edited tracked files after install.
 Notes: This fixes the local Codex tooling issue only. It does not affect the video-to-splat runtime pipeline or commercial framework decision surface.
+
+## Entry: 2026-06-17 Install local Spark/Three.js viewer dependencies
+
+Date: 2026-06-17
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Add a production-style browser Gaussian Splat viewer while keeping the existing PLY point-debug viewer available as a fallback/debug mode.
+Dependency: npm packages `@sparkjsdev/spark 2.1.0`, `three 0.180.0`, and transitive `fflate 0.8.3`
+Commercial decision: `sparkjsdev-spark` is `preferred` / `allowed_with_notice`; `threejs` and `fflate` are `accepted` / `allowed_with_notice` in `framework-evaluation.json`.
+Command:
+
+```bash
+npm install
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: create ignored `node_modules/`, create/update tracked `package-lock.json`, and leave exact package versions reproducible from `package.json`/lockfile.
+Validation: `npm ls --depth=0`, `npm run check:js`, `./scripts/validate-ui-contracts.sh`, browser screenshot/visual QA of Spark viewer mode.
+Revert plan: remove tracked `package.json`/`package-lock.json` changes if abandoning the Spark viewer, delete ignored `node_modules/`, and remove any UI/server routes that serve local npm modules.
+Result: pass. `npm ls --depth=0` reports `@sparkjsdev/spark 2.1.0` and `three 0.180.0`; lockfile records transitive `fflate 0.8.3`. `npm run check:js`, `./scripts/validate-ui-contracts.sh`, `./scripts/validate-architecture-contracts.sh` and `./scripts/validate-phase-1-contracts.sh` passed. PowerShell/Chrome visual QA reached `spark|reference inspect|` and wrote `C:\Users\engwa\AppData\Local\Temp\gslab-spark-cdp-capped.png`.
+Notes: The app does not import CDN resources; browser imports resolve to local project `node_modules` through the local UI server. Initial `lod: "quality"` caused Spark to load the 22 MB PLY to 100% but not finish initialization in QA, so the first stable renderer path uses `lod: false`. The viewer render loop is capped to 24 fps and pauses when hidden to avoid unnecessary RTX load while the UI is idle.

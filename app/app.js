@@ -2,6 +2,7 @@ const els = {
   machineLabel: document.querySelector('#machineLabel'),
   statusStrip: document.querySelector('#statusStrip'),
   captureSelect: document.querySelector('#captureSelect'),
+  captureSummary: document.querySelector('#captureSummary'),
   captureMeta: document.querySelector('#captureMeta'),
   videoFileInput: document.querySelector('#videoFileInput'),
   acceptCaptureWarning: document.querySelector('#acceptCaptureWarning'),
@@ -14,6 +15,9 @@ const els = {
   preflightList: document.querySelector('#preflightList'),
   pipelineList: document.querySelector('#pipelineList'),
   gateCount: document.querySelector('#gateCount'),
+  pipelineProgressText: document.querySelector('#pipelineProgressText'),
+  pipelineCurrentStage: document.querySelector('#pipelineCurrentStage'),
+  pipelineProgressBar: document.querySelector('#pipelineProgressBar'),
   blockedCount: document.querySelector('#blockedCount'),
   complianceGrid: document.querySelector('#complianceGrid'),
   viewerStatusPill: document.querySelector('#viewerStatusPill'),
@@ -36,6 +40,11 @@ const els = {
   sampleTargetImage: document.querySelector('#sampleTargetImage'),
   renderReviewImage: document.querySelector('#renderReviewImage'),
   viewerMeta: document.querySelector('#viewerMeta'),
+  viewerModeSparkButton: document.querySelector('#viewerModeSparkButton'),
+  viewerModeDebugButton: document.querySelector('#viewerModeDebugButton'),
+  sparkViewport: document.querySelector('#sparkViewport'),
+  sparkCanvas: document.querySelector('#sparkCanvas'),
+  sparkOverlay: document.querySelector('#sparkOverlay'),
   canvas: document.querySelector('#splatCanvas'),
 };
 
@@ -44,8 +53,14 @@ let activeJob = null;
 let runningStage = null;
 let importingVideo = false;
 let viewerLoadToken = 0;
+let viewerReadyResolved = false;
+let resolveViewerReady = null;
+const viewerReadyPromise = new Promise((resolve) => {
+  resolveViewerReady = resolve;
+});
 
 const viewerScene = {
+  mode: 'spark',
   pointData: null,
   pointCount: 0,
   artifactUrl: null,
@@ -60,6 +75,9 @@ const viewerScene = {
   lastX: 0,
   lastY: 0,
   renderer: null,
+  sparkController: null,
+  sparkArtifactUrl: null,
+  sparkFailed: false,
   uploadedArtifactUrl: null,
   webglFailed: false,
 };
@@ -78,11 +96,29 @@ const fallbackStageNames = {
   quality_report: 'Quality Report',
 };
 
+function statusType(status) {
+  if (status === 'pass' || status === 'accepted' || status === 'preferred') return 'pass';
+  if (status === 'warning' || status === 'conditional' || status === 'deferred' || status === 'setup_gap') return 'warning';
+  if (status === 'fail' || status === 'blocked' || status === 'blocked_license' || status === 'blocked_workload') return 'fail';
+  return 'neutral';
+}
+
 function pill(text, type = 'neutral') {
   const span = document.createElement('span');
   span.className = `pill ${type}`;
   span.textContent = text;
   return span;
+}
+
+function sourceSummary(title, value) {
+  const div = document.createElement('div');
+  div.className = 'source-summary-item';
+  const label = document.createElement('span');
+  const text = document.createElement('strong');
+  label.textContent = title;
+  text.textContent = value ?? '-';
+  div.append(label, text);
+  return div;
 }
 
 function row(label, value) {
@@ -143,15 +179,41 @@ function renderCaptures() {
   renderCaptureMeta();
 }
 
+function renderCaptureSummary(capture, readiness) {
+  els.captureSummary.replaceChildren();
+  if (!capture) {
+    els.captureSummary.append(sourceSummary('State', 'No source selected'));
+    return;
+  }
+
+  const header = document.createElement('div');
+  header.className = 'source-summary-head';
+  const name = document.createElement('strong');
+  name.textContent = capture.displayName || capture.id;
+  header.append(name, pill(readiness?.status ?? capture.status ?? 'unknown', statusType(readiness?.status ?? capture.status)));
+
+  const source = capture.source?.license === 'local-test-only'
+    ? 'Technical baseline only'
+    : capture.source?.license ?? 'License unknown';
+  els.captureSummary.append(
+    header,
+    sourceSummary('Use', source),
+    sourceSummary('Scene', capture.capture?.subject ?? '-'),
+    sourceSummary('Motion', capture.capture?.motion ?? '-'),
+  );
+}
+
 function renderCaptureMeta() {
   const capture = selectedCapture();
   els.captureMeta.replaceChildren();
   if (!capture) {
+    renderCaptureSummary(null, null);
     els.captureMeta.append(row('Status', 'No capture'));
     return;
   }
 
   const readiness = selectedCaptureReadiness();
+  renderCaptureSummary(capture, readiness);
   updateImportControls();
   els.captureMeta.append(
     row('Capture ID', capture.id),
@@ -180,7 +242,8 @@ function stageGroup(gate) {
 function buildStageItem(gate, index, jobStages) {
   const stage = jobStages.find((item) => item.id === gate.id);
   const item = document.createElement('article');
-  item.className = 'stage-item';
+  const stageStatus = stage?.status ?? 'planned';
+  item.className = `stage-item stage-${statusType(stageStatus)}`;
 
   const number = document.createElement('div');
   number.className = 'stage-index';
@@ -195,7 +258,7 @@ function buildStageItem(gate, index, jobStages) {
   contract.textContent = `${gate.inputContract} → ${gate.outputContract}`;
   body.append(title, contract);
 
-  const status = pill(stage?.status ?? 'gate', stage?.status ?? 'neutral');
+  const status = pill(stage?.status ?? 'planned', statusType(stage?.status ?? 'planned'));
   if (runnableStages.has(gate.id)) {
     const action = document.createElement('button');
     action.className = 'stage-action';
@@ -211,6 +274,43 @@ function buildStageItem(gate, index, jobStages) {
   return item;
 }
 
+function renderPipelineProgress(gates, jobStages) {
+  if (!activeJob) {
+    els.pipelineProgressText.textContent = 'No job planned';
+    els.pipelineCurrentStage.textContent = 'Select a source and plan a job';
+    els.pipelineProgressBar.style.width = '0%';
+    return;
+  }
+
+  const stageById = new Map(jobStages.map((stage) => [stage.id, stage]));
+  let passed = 0;
+  let warnings = 0;
+  let blocked = 0;
+  let currentGate = null;
+  for (const gate of gates) {
+    const status = stageById.get(gate.id)?.status ?? 'planned';
+    if (status === 'pass') passed += 1;
+    else if (status === 'warning') warnings += 1;
+    else if (['fail', 'blocked', 'blocked_license', 'blocked_workload', 'setup_gap'].includes(status)) blocked += 1;
+    if (!currentGate && status !== 'pass' && status !== 'warning') currentGate = gate;
+  }
+
+  const total = Math.max(1, gates.length);
+  const percent = Math.round((passed / total) * 100);
+  els.pipelineProgressText.textContent = `${passed}/${gates.length} passed${warnings ? `, ${warnings} warning` : ''}`;
+  els.pipelineProgressBar.style.width = `${percent}%`;
+
+  if (runningStage) {
+    els.pipelineCurrentStage.textContent = `Running ${stageDisplayName({ id: runningStage })}`;
+  } else if (blocked) {
+    els.pipelineCurrentStage.textContent = `Needs attention: ${stageDisplayName(currentGate ?? gates[0])}`;
+  } else if (currentGate) {
+    els.pipelineCurrentStage.textContent = `Next: ${stageDisplayName(currentGate)}`;
+  } else {
+    els.pipelineCurrentStage.textContent = 'Pipeline complete';
+  }
+}
+
 function renderStages() {
   const gates = state?.gates ?? [];
   const jobStages = activeJob?.stages ?? [];
@@ -219,6 +319,7 @@ function renderStages() {
   els.preflightList.replaceChildren();
   els.pipelineList.replaceChildren();
   els.gateCount.textContent = `${preflight.length} preflight / ${pipeline.length} pipeline`;
+  renderPipelineProgress(gates, jobStages);
 
   preflight.forEach((gate, index) => {
     els.preflightList.append(buildStageItem(gate, index + 1, jobStages));
@@ -279,7 +380,13 @@ function renderAll() {
   renderCompliance();
   renderJob();
   renderViewerMeta();
-  loadViewerArtifact();
+  loadActiveViewerArtifact();
+}
+
+function markViewerReady() {
+  if (viewerReadyResolved) return;
+  viewerReadyResolved = true;
+  resolveViewerReady?.();
 }
 
 async function loadState() {
@@ -448,6 +555,15 @@ function renderSampleComparison(preview = {}) {
   setSampleImage(els.renderReviewImage, els.renderReviewFigure, reviewUrl);
 }
 
+function activeRendererLabel() {
+  if (viewerScene.mode === 'spark') {
+    if (viewerScene.sparkController && !viewerScene.sparkFailed) return 'Spark 3DGS render';
+    if (viewerScene.sparkFailed) return 'Spark unavailable';
+    return 'Spark loading';
+  }
+  return viewerScene.renderer ? 'PLY point debug' : 'debug loading';
+}
+
 function renderViewerMeta(extra = null) {
   els.viewerMeta.replaceChildren();
   const viewer = state?.viewerArtifact;
@@ -469,7 +585,7 @@ function renderViewerMeta(extra = null) {
   setViewerStatus(quality.text, quality.type);
   els.viewerMeta.append(
     row('Artifact', artifact.format ?? 'ply'),
-    row('Renderer', viewerScene.renderer ? 'PLY point debug' : 'loading'),
+    row('Renderer', activeRendererLabel()),
     row('Profile', training.profile ?? runConfig.profile ?? '-'),
     row('Strategy', training.densifyStrategy ?? runConfig.densifyStrategy ?? '-'),
     row('Gaussians', formatCount(extra?.pointCount ?? (viewerScene.pointCount || ply.vertexCount))),
@@ -630,6 +746,7 @@ async function loadViewerArtifact() {
     viewerScene.pointCount = 0;
     viewerScene.artifactUrl = null;
     viewerScene.uploadedArtifactUrl = null;
+    markViewerReady();
     renderViewerMeta();
     return;
   }
@@ -659,6 +776,72 @@ async function loadViewerArtifact() {
     viewerScene.uploadedArtifactUrl = null;
     setViewerStatus('viewer error', 'fail');
     els.viewerMeta.replaceChildren(row('Error', error.message));
+    markViewerReady();
+  }
+}
+
+function loadActiveViewerArtifact() {
+  if (viewerScene.mode === 'spark') {
+    loadSparkArtifact();
+    return;
+  }
+  loadViewerArtifact();
+}
+
+async function ensureSparkController() {
+  if (viewerScene.sparkController) return viewerScene.sparkController;
+  if (viewerScene.sparkFailed) throw new Error('Spark renderer failed to initialize');
+  const module = await import('./spark-viewer.js');
+  viewerScene.sparkController = module.createSparkViewer({
+    canvas: els.sparkCanvas,
+    overlay: els.sparkOverlay,
+    onStatus: (text, type = 'neutral') => {
+      if (viewerScene.mode === 'spark' && text) setViewerStatus(text, type);
+    },
+  });
+  renderViewerMeta({ pointCount: viewerScene.pointCount });
+  return viewerScene.sparkController;
+}
+
+async function loadSparkArtifact() {
+  const artifact = state?.viewerArtifact?.manifest?.artifact;
+  const url = artifact?.url;
+  if (!url) {
+    markViewerReady();
+    return;
+  }
+  if (viewerScene.mode !== 'spark') return;
+  try {
+    setViewerStatus('Spark loading', 'neutral');
+    const controller = await ensureSparkController();
+    if (viewerScene.sparkArtifactUrl === url) {
+      const quality = viewerQuality(
+        state?.viewerArtifact?.viewerStatus ?? 'pass',
+        state?.viewerArtifact?.manifest?.training ?? {},
+        state?.viewerArtifact?.manifest?.runConfig ?? {},
+      );
+      setViewerStatus(quality.text, quality.type);
+      markViewerReady();
+      return;
+    }
+    const result = await controller.load({ url });
+    viewerScene.sparkArtifactUrl = url;
+    viewerScene.sparkFailed = false;
+    if (result?.splats) viewerScene.pointCount = result.splats;
+    const status = state?.viewerArtifact?.viewerStatus ?? 'pass';
+    const training = state?.viewerArtifact?.manifest?.training ?? {};
+    const runConfig = state?.viewerArtifact?.manifest?.runConfig ?? {};
+    const quality = viewerQuality(status, training, runConfig);
+    setViewerStatus(quality.text, quality.type);
+    renderViewerMeta({ pointCount: viewerScene.pointCount });
+    markViewerReady();
+  } catch (error) {
+    viewerScene.sparkFailed = true;
+    els.sparkOverlay.hidden = false;
+    els.sparkOverlay.textContent = `Spark unavailable: ${error.message}`;
+    setViewerStatus('Spark unavailable', 'warning');
+    renderViewerMeta({ pointCount: viewerScene.pointCount });
+    markViewerReady();
   }
 }
 
@@ -951,6 +1134,10 @@ function bindAttribute(gl, buffer, location, size) {
 }
 
 function drawPreviewFrame() {
+  if (viewerScene.mode !== 'debug') {
+    requestAnimationFrame(drawPreviewFrame);
+    return;
+  }
   const renderer = initWebGLScene();
   const { width, height, scale } = resizeCanvasToDisplaySize(els.canvas);
   if (!renderer) {
@@ -1009,6 +1196,51 @@ function zoomViewer(factor) {
   viewerScene.zoom = clamp(viewerScene.zoom * factor, 0.35, 5);
 }
 
+function setViewerMode(mode) {
+  viewerScene.mode = mode;
+  const isSpark = mode === 'spark';
+  els.sparkViewport.hidden = !isSpark;
+  els.canvas.hidden = isSpark;
+  els.viewerModeSparkButton.classList.toggle('active', isSpark);
+  els.viewerModeDebugButton.classList.toggle('active', !isSpark);
+  els.viewerModeSparkButton.setAttribute('aria-pressed', String(isSpark));
+  els.viewerModeDebugButton.setAttribute('aria-pressed', String(!isSpark));
+  if (isSpark) loadSparkArtifact();
+  renderViewerMeta({ pointCount: viewerScene.pointCount });
+}
+
+function panActiveViewer(deltaX, deltaY) {
+  if (viewerScene.mode === 'spark' && viewerScene.sparkController && !viewerScene.sparkFailed) {
+    viewerScene.sparkController.pan(deltaX, deltaY);
+    return;
+  }
+  panViewer(deltaX, deltaY);
+}
+
+function orbitActiveViewer(deltaX, deltaY) {
+  if (viewerScene.mode === 'spark' && viewerScene.sparkController && !viewerScene.sparkFailed) {
+    viewerScene.sparkController.orbit(deltaX, deltaY);
+    return;
+  }
+  orbitViewer(deltaX, deltaY);
+}
+
+function zoomActiveViewer(factor) {
+  if (viewerScene.mode === 'spark' && viewerScene.sparkController && !viewerScene.sparkFailed) {
+    viewerScene.sparkController.zoom(factor);
+    return;
+  }
+  zoomViewer(factor);
+}
+
+function resetActiveViewer() {
+  if (viewerScene.mode === 'spark' && viewerScene.sparkController && !viewerScene.sparkFailed) {
+    viewerScene.sparkController.reset();
+    return;
+  }
+  resetViewer();
+}
+
 els.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 els.canvas.addEventListener('pointerdown', (event) => {
   viewerScene.dragging = true;
@@ -1041,21 +1273,23 @@ els.canvas.addEventListener('wheel', (event) => {
   event.preventDefault();
   zoomViewer(event.deltaY > 0 ? 0.9 : 1.1);
 }, { passive: false });
-els.viewerPanLeftButton.addEventListener('click', () => panViewer(-1, 0));
-els.viewerPanRightButton.addEventListener('click', () => panViewer(1, 0));
-els.viewerPanUpButton.addEventListener('click', () => panViewer(0, 1));
-els.viewerPanDownButton.addEventListener('click', () => panViewer(0, -1));
-els.viewerOrbitLeftButton.addEventListener('click', () => orbitViewer(-1, 0));
-els.viewerOrbitRightButton.addEventListener('click', () => orbitViewer(1, 0));
-els.viewerOrbitUpButton.addEventListener('click', () => orbitViewer(0, -1));
-els.viewerOrbitDownButton.addEventListener('click', () => orbitViewer(0, 1));
-els.viewerResetButton.addEventListener('click', resetViewer);
+els.viewerPanLeftButton.addEventListener('click', () => panActiveViewer(-1, 0));
+els.viewerPanRightButton.addEventListener('click', () => panActiveViewer(1, 0));
+els.viewerPanUpButton.addEventListener('click', () => panActiveViewer(0, 1));
+els.viewerPanDownButton.addEventListener('click', () => panActiveViewer(0, -1));
+els.viewerOrbitLeftButton.addEventListener('click', () => orbitActiveViewer(-1, 0));
+els.viewerOrbitRightButton.addEventListener('click', () => orbitActiveViewer(1, 0));
+els.viewerOrbitUpButton.addEventListener('click', () => orbitActiveViewer(0, -1));
+els.viewerOrbitDownButton.addEventListener('click', () => orbitActiveViewer(0, 1));
+els.viewerResetButton.addEventListener('click', resetActiveViewer);
 els.viewerZoomOutButton.addEventListener('click', () => {
-  zoomViewer(0.86);
+  zoomActiveViewer(0.86);
 });
 els.viewerZoomInButton.addEventListener('click', () => {
-  zoomViewer(1.16);
+  zoomActiveViewer(1.16);
 });
+els.viewerModeSparkButton.addEventListener('click', () => setViewerMode('spark'));
+els.viewerModeDebugButton.addEventListener('click', () => setViewerMode('debug'));
 
 els.captureSelect.addEventListener('change', () => {
   els.acceptCaptureWarning.checked = false;
@@ -1069,7 +1303,7 @@ els.planJobButton.addEventListener('click', createJob);
 els.refreshButton.addEventListener('click', loadState);
 
 requestAnimationFrame(drawPreviewFrame);
-loadState().catch((error) => {
+const bootPromise = loadState().catch((error) => {
   els.statusStrip.replaceChildren(pill('server error', 'fail'));
   els.jobBox.replaceChildren();
   const message = document.createElement('div');
@@ -1077,3 +1311,9 @@ loadState().catch((error) => {
   message.textContent = error.message;
   els.jobBox.append(message);
 });
+
+if (new URLSearchParams(window.location.search).has('waitForViewer')) {
+  await bootPromise;
+  await viewerReadyPromise;
+  document.documentElement.dataset.viewerReady = 'true';
+}

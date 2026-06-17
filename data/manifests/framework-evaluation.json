@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "verifiedAt": "2026-06-16",
+  "verifiedAt": "2026-06-17",
   "licensePolicy": {
     "preferredSpdx": [
       "MIT",
@@ -192,7 +192,7 @@
     {
       "id": "sparkjsdev-spark",
       "name": "Spark",
-      "role": "preferred production-style browser Gaussian Splat viewer spike after the current point-debug UI",
+      "role": "primary production-style browser Gaussian Splat viewer, with the point renderer retained as debug fallback",
       "license": "MIT",
       "decision": "preferred",
       "reason": "Active Three.js-based renderer with support for PLY, SPZ, SPLAT, KSPLAT and SOG formats; latest checked package version is 2.1.0.",
@@ -220,6 +220,24 @@
       "commercialUse": "allowed_with_notice",
       "commercialConditions": [
         "Keep MIT license and copyright notice in distributed app or notices bundle."
+      ],
+      "distributionRisk": "low",
+      "reviewRequiredBeforeProduction": true
+    },
+    {
+      "id": "fflate",
+      "name": "fflate",
+      "role": "browser compression/decompression dependency used transitively by Spark",
+      "license": "MIT",
+      "decision": "accepted",
+      "reason": "Permissive license; required by Spark 2.1.0 for compressed asset support in the browser viewer.",
+      "officialSources": [
+        "https://github.com/101arrowz/fflate"
+      ],
+      "commercialUse": "allowed_with_notice",
+      "commercialConditions": [
+        "Keep MIT license and copyright notice in distributed app or notices bundle.",
+        "Keep exact npm version locked before shipping."
       ],
       "distributionRisk": "low",
       "reviewRequiredBeforeProduction": true

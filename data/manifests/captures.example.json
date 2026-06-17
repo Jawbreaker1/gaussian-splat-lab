@@ -3,7 +3,7 @@
   "captures": [
     {
       "id": "static-room-orbit-001",
-      "displayName": "Static room orbit sample",
+      "displayName": "Technical baseline: close-up hardware orbit",
       "source": {
         "kind": "local_file",
         "path": "data/videos/static-room-orbit-001.mp4",
@@ -12,10 +12,10 @@
         "licenseNotes": "Replace with a known-good capture that has documented commercial compatibility before using as Phase 1 evidence."
       },
       "capture": {
-        "subject": "small static indoor scene",
+        "subject": "close-up computer hardware; smoke-test only",
         "motion": "slow orbit",
         "expectedDurationSeconds": 30,
-        "expectedResolution": "1920x1080"
+        "expectedResolution": "1280x720"
       },
       "pipeline": {
         "frameSampling": {
@@ -37,11 +37,11 @@
           ]
         }
       },
-      "status": "placeholder"
+      "status": "technical-baseline"
     },
     {
       "id": "pexels-empty-coffee-shop-interior-14227022",
-      "displayName": "Pexels empty coffee shop interior candidate",
+      "displayName": "Recommended reference: empty cafe interior",
       "source": {
         "kind": "local_file",
         "path": "data/videos/pexels-empty-coffee-shop-interior-14227022.mp4",
@@ -54,7 +54,7 @@
       },
       "capture": {
         "subject": "empty cafe interior",
-        "motion": "unknown stock video camera motion; verify with intake before SfM",
+        "motion": "room-scale camera move candidate; verify parallax and blur before SfM",
         "expectedDurationSeconds": null,
         "expectedResolution": "4K or HD download, exact file chosen manually"
       },
@@ -80,7 +80,7 @@
           ]
         }
       },
-      "status": "external-candidate"
+      "status": "recommended-reference-candidate"
     }
   ]
 }
