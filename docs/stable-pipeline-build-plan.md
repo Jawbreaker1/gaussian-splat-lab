@@ -22,14 +22,15 @@ Already in place:
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
 - gsplat training orchestration with `smoke`, `baseline`, `quality_probe` and `rtx_reference` profiles, including DefaultStrategy densification and render-review evidence for non-smoke runs
-- artifact packaging that writes a viewer manifest with PLY hash, byte size and header metadata
-- local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders an interactive WebGL PLY point-debug scene
+- artifact packaging that writes a viewer manifest with PLY hash, byte size, header metadata and COLMAP/training reference camera views
+- local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders it through Spark + Three.js as an interactive Gaussian Splat scene
+- debug browser UI mode that still renders an interactive WebGL PLY point cloud for artifact-scale and malformed-export diagnosis
 - capture readiness reporting for local file/provenance status before intake
 
 Not yet real:
 
-- a clean commercially reusable capture; the current imported phone video is local-test-only evidence
-- production-grade covariance/screen-space Gaussian Splat rendering; the current viewer is a local binary-PLY WebGL point-debug scene for validation and inspection
+- a clean commercially reusable capture; the current reference assets are technical validation evidence
+- commercial showcase visual quality; the current Spark render is navigable and scene-like but still visibly soft on the reference run
 - screenshot/canvas-pixel browser automation for viewer QA across viewports
 
 ## Current Environment Result
@@ -45,9 +46,9 @@ As of 2026-06-16, the repo-local `.venv` and workstation validate:
 - the installed Ubuntu FFmpeg build includes `--enable-gpl`; keep it as a lab-only system tool until redistribution/build flags are reviewed
 - frame sampling passed a synthetic CLI smoke test; evidence is recorded in `docs/validation/phase-1-frame-sampling-smoke.md`
 - SfM has a runnable COLMAP stage wrapper; the first post-PSU test produced a passing sparse reconstruction from local frame input
-- `splat_training`, `packaging` and `viewer` now pass on the local-test-only capture; the current technical reference is the `rtx_reference` profile with `9000` iterations, `42` images at `1280x720`, growth from `2423` to `400000` gaussians and a `22.4 MB` binary PLY
-- `quality_probe` remains the faster quality check profile: `2500` iterations, `768x432`, `99328` gaussians and mean MAE `16.3499`
-- render-review validation now writes a multi-view render/target/diff contact sheet; the current `rtx_reference` run passes the initial visual threshold with mean MAE `13.0491`, but remains visibly soft in foreground occluders and is not product-showcase quality
+- `splat_training`, `packaging` and `viewer` now pass on the Mip-NeRF 360 flowers reference capture; the current technical reference is the `rtx_reference` profile with `9000` iterations, `64` images at `1256x828`, growth from `43287` sparse points to `400000` gaussians and a `22.4 MB` binary PLY
+- `quality_probe` remains the faster quality check profile: `2500` iterations, `48` images, `120000` gaussians and mean MAE `18.8967`
+- render-review validation now writes a multi-view render/target/diff contact sheet; the current Mip-NeRF flowers `rtx_reference` run passes the initial visual threshold with mean MAE `17.1369`, but remains visibly soft and is not product-showcase quality
 - quality remains `warning` because framework/capture provenance is not product-ready
 
 ## Workload Safety
@@ -60,7 +61,7 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 Move from technical golden path to controlled quality experiments and product-readiness hardening.
 
-Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains with a fast `smoke` profile, a densifying `baseline` profile, a stronger `quality_probe` profile and an overnight/reference `rtx_reference` profile, packaging writes a viewer manifest, and the local UI can fetch and render the exported binary PLY as an interactive WebGL point-debug scene. The UI also shows the latest render/target pair and the multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture is local-test-only and framework/commercial notices still need product review.
+Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains with a fast `smoke` profile, a densifying `baseline` profile, a stronger `quality_probe` profile and an overnight/reference `rtx_reference` profile. Packaging writes a viewer manifest with reference camera views, and the local UI can fetch and render the exported binary PLY as an interactive Spark + Three.js Gaussian Splat scene. The UI also keeps the point-debug mode, latest render/target pair and multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture/framework state is not product-ready.
 
 Why next:
 
@@ -85,16 +86,16 @@ outputs/jobs/<job_id>/viewer/viewer-manifest.json
 
 Stop condition:
 
-- do not treat local-test-only capture output as commercial showcase material
+- do not treat technical-reference capture output as commercial showcase material
 - do not install or redistribute NVIDIA CUDA Toolkit components without recording the exact install source and terms in the installation ledger
-- do not treat the current PLY point-debug canvas as final visual quality
-- do not replace the local point preview with a third-party viewer library until install/revert steps and npm/transitive license review are recorded
+- do not treat the current soft Spark render as final visual quality
+- do not add or replace viewer dependencies until install/revert steps and npm/transitive license review are recorded
 
 Next viewer step:
 
-- spike Spark + Three.js as the first real browser Gaussian Splat renderer because both are currently recorded as MIT-compatible in the framework gate
-- keep it isolated from the existing dependency-free lab console until the install ledger, package lock, notices and revert plan are documented
-- validate it against the same packaged `trained_splats.ply` and compare the browser view against the `gsplat` render-review sheet
+- add browser automation that captures reference-camera Spark screenshots and compares them against the `gsplat` render-review sheet
+- add explicit viewer diagnostics for camera-pose mismatch, blank canvas and point-debug/render disagreement
+- keep the Spark dependency path isolated and pinned until product packaging/notices are finalized
 
 ## Golden Path Implementation Sequence
 

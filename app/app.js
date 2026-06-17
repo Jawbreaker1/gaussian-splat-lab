@@ -32,6 +32,8 @@ const els = {
   viewerResetButton: document.querySelector('#viewerResetButton'),
   viewerZoomOutButton: document.querySelector('#viewerZoomOutButton'),
   viewerZoomInButton: document.querySelector('#viewerZoomInButton'),
+  viewerCameraPrevButton: document.querySelector('#viewerCameraPrevButton'),
+  viewerCameraNextButton: document.querySelector('#viewerCameraNextButton'),
   renderCompare: document.querySelector('#renderCompare'),
   sampleRenderFigure: document.querySelector('#sampleRenderFigure'),
   sampleTargetFigure: document.querySelector('#sampleTargetFigure'),
@@ -79,6 +81,8 @@ const viewerScene = {
   sparkController: null,
   sparkArtifactUrl: null,
   sparkFailed: false,
+  cameraViewCount: 0,
+  activeCameraView: null,
   uploadedArtifactUrl: null,
   webglFailed: false,
 };
@@ -588,6 +592,8 @@ function renderViewerMeta(extra = null) {
   const ply = artifact.ply ?? {};
   const training = manifest?.training ?? {};
   const runConfig = manifest?.runConfig ?? {};
+  const cameraViews = Array.isArray(manifest?.cameraViews) ? manifest.cameraViews : [];
+  const activeView = extra?.activeCameraView ?? viewerScene.activeCameraView;
   renderSampleComparison(manifest?.preview ?? {});
   const status = viewer.viewerStatus ?? viewer.packagingStatus ?? 'packaged';
   const quality = viewerQuality(status, training, runConfig);
@@ -598,6 +604,7 @@ function renderViewerMeta(extra = null) {
     row('Profile', training.profile ?? runConfig.profile ?? '-'),
     row('Strategy', training.densifyStrategy ?? runConfig.densifyStrategy ?? '-'),
     row('Gaussians', formatCount(extra?.pointCount ?? (viewerScene.pointCount || ply.vertexCount))),
+    row('Reference views', cameraViews.length ? `${formatCount(cameraViews.length)}${activeView?.imageName ? ` (${activeView.imageName})` : ''}` : '-'),
     row('Growth', formatGrowth(training)),
     row('Review MAE', training.renderReview?.meanMae ?? '-'),
     row('Size', formatBytes(artifact.sizeBytes)),
@@ -814,6 +821,7 @@ async function ensureSparkController() {
 
 async function loadSparkArtifact() {
   const artifact = state?.viewerArtifact?.manifest?.artifact;
+  const cameraViews = Array.isArray(state?.viewerArtifact?.manifest?.cameraViews) ? state.viewerArtifact.manifest.cameraViews : [];
   const url = artifact?.url;
   if (!url) {
     markViewerReady();
@@ -824,25 +832,31 @@ async function loadSparkArtifact() {
     setViewerStatus('Spark loading', 'neutral');
     const controller = await ensureSparkController();
     if (viewerScene.sparkArtifactUrl === url) {
+      const viewState = controller.setCameraViews(cameraViews);
+      viewerScene.cameraViewCount = viewState?.viewCount ?? cameraViews.length;
+      viewerScene.activeCameraView = viewState?.activeView ?? null;
       const quality = viewerQuality(
         state?.viewerArtifact?.viewerStatus ?? 'pass',
         state?.viewerArtifact?.manifest?.training ?? {},
         state?.viewerArtifact?.manifest?.runConfig ?? {},
       );
       setViewerStatus(quality.text, quality.type);
+      renderViewerMeta({ pointCount: viewerScene.pointCount, activeCameraView: viewerScene.activeCameraView });
       markViewerReady();
       return;
     }
-    const result = await controller.load({ url });
+    const result = await controller.load({ url, cameraViews });
     viewerScene.sparkArtifactUrl = url;
     viewerScene.sparkFailed = false;
     if (result?.splats) viewerScene.pointCount = result.splats;
+    viewerScene.cameraViewCount = result?.viewCount ?? cameraViews.length;
+    viewerScene.activeCameraView = result?.activeView ?? null;
     const status = state?.viewerArtifact?.viewerStatus ?? 'pass';
     const training = state?.viewerArtifact?.manifest?.training ?? {};
     const runConfig = state?.viewerArtifact?.manifest?.runConfig ?? {};
     const quality = viewerQuality(status, training, runConfig);
     setViewerStatus(quality.text, quality.type);
-    renderViewerMeta({ pointCount: viewerScene.pointCount });
+    renderViewerMeta({ pointCount: viewerScene.pointCount, activeCameraView: viewerScene.activeCameraView });
     markViewerReady();
   } catch (error) {
     viewerScene.sparkFailed = true;
@@ -1250,6 +1264,16 @@ function resetActiveViewer() {
   resetViewer();
 }
 
+function stepReferenceCamera(delta) {
+  if (viewerScene.mode !== 'spark' || !viewerScene.sparkController || viewerScene.sparkFailed) return;
+  const result = delta < 0
+    ? viewerScene.sparkController.previousCameraView()
+    : viewerScene.sparkController.nextCameraView();
+  viewerScene.cameraViewCount = result?.viewCount ?? viewerScene.cameraViewCount;
+  viewerScene.activeCameraView = result?.activeView ?? viewerScene.activeCameraView;
+  renderViewerMeta({ pointCount: viewerScene.pointCount, activeCameraView: viewerScene.activeCameraView });
+}
+
 els.canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 els.canvas.addEventListener('pointerdown', (event) => {
   viewerScene.dragging = true;
@@ -1291,6 +1315,8 @@ els.viewerOrbitRightButton.addEventListener('click', () => orbitActiveViewer(1, 
 els.viewerOrbitUpButton.addEventListener('click', () => orbitActiveViewer(0, -1));
 els.viewerOrbitDownButton.addEventListener('click', () => orbitActiveViewer(0, 1));
 els.viewerResetButton.addEventListener('click', resetActiveViewer);
+els.viewerCameraPrevButton.addEventListener('click', () => stepReferenceCamera(-1));
+els.viewerCameraNextButton.addEventListener('click', () => stepReferenceCamera(1));
 els.viewerZoomOutButton.addEventListener('click', () => {
   zoomActiveViewer(0.86);
 });

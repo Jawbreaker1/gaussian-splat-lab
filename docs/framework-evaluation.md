@@ -40,7 +40,7 @@ Blocked by default:
 | Training smoke | Nerfstudio Splatfacto | Accepted for lab | Apache-2.0, already wraps data parsing/training/export; good first end-to-end path. |
 | Training core | `gsplat` | Accepted | Apache-2.0 CUDA rasterization library; good target if we need a narrower custom trainer after the MVP. |
 | PyTorch companion | TorchVision | Accepted | Installed with the GPU smoke environment; keep notices and avoid bundled datasets/model weights unless separately licensed. |
-| Viewer | Spark + Three.js | Preferred viewer spike | MIT, active, Three.js-based, supports common splat formats including PLY/SPZ/SPLAT/KSPLAT/SOG. This is the next real 3DGS browser viewer path after the current PLY point-debug UI. |
+| Viewer | Spark + Three.js | Preferred current viewer | MIT, active, Three.js-based, supports common splat formats including PLY/SPZ/SPLAT/KSPLAT/SOG. This is the current browser 3DGS viewer path; the older local WebGL PLY renderer is retained as point-debug fallback. |
 | Viewer/editor fallback | SuperSplat viewer/editor and `splat-transform` | Accepted | MIT open-source pieces; avoid the hosted PlayCanvas publishing platform for core pipeline. |
 | Legacy viewer fallback | `mkkellogg/GaussianSplats3D` | Accepted fallback | MIT and mature, but the maintainer notes it is no longer actively developed. |
 

@@ -4,7 +4,7 @@ Verified: 2026-06-17
 
 The first user interface is a local lab console. It lets a user select a capture, import a local video into the manifest target path, create a planned job, inspect preflight/media pipeline gates and see commercial/compliance status before heavy reconstruction work starts.
 
-As of 2026-06-17, the UI can also show packaged splat artifacts. The central scene is a Spark + Three.js Gaussian Splat viewer loaded from local npm packages, with pan, orbit, zoom and reset controls. The older PLY WebGL point renderer remains available as `Debug` mode because it is useful for diagnosing malformed exports, sparse geometry and scale problems. The visual quality reference remains the `gsplat` render/target pair and multi-view render-review sheet written by the training stage.
+As of 2026-06-17, the UI can also show packaged splat artifacts. The central scene is a Spark + Three.js Gaussian Splat viewer loaded from local npm packages, with pan, orbit, zoom, reset and reference-camera step controls. Packaging exports COLMAP/training camera poses into the viewer manifest so the first render starts from a real training/review camera instead of a generic object-fit view. The older PLY WebGL point renderer remains available as `Debug` mode because it is useful for diagnosing malformed exports, sparse geometry and scale problems. The visual quality reference remains the `gsplat` render/target pair and multi-view render-review sheet written by the training stage.
 
 The current visual direction is a dark RTX workstation console: the 3D scene is the primary workspace, the pipeline panel sits on the right as the live operator flow, and lower-priority capture/compliance/artifact metadata is collapsible. On narrow screens the UI switches to a single-column layout with the 3D scene first and compact stacked viewer controls.
 
@@ -18,7 +18,7 @@ The UI owns:
 - preflight and media pipeline gate visibility
 - commercial/compliance visibility
 - local RTX workstation status evidence
-- central packaged artifact inspection with Spark + Three.js Gaussian Splat orbit/pan/zoom/reset controls
+- central packaged artifact inspection with Spark + Three.js Gaussian Splat orbit/pan/zoom/reset controls and manifest-provided reference camera views
 - debug packaged artifact inspection with the older WebGL PLY point renderer
 - latest `gsplat` sample render/target images
 - latest `gsplat` multi-view render/target/diff review sheet

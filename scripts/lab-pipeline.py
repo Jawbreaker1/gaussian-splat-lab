@@ -2373,6 +2373,259 @@ def parse_ply_header(path: Path) -> dict[str, Any]:
     }
 
 
+def colmap_content_lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+
+def parse_colmap_cameras(path: Path) -> dict[int, dict[str, Any]]:
+    cameras: dict[int, dict[str, Any]] = {}
+    for line in colmap_content_lines(path):
+        fields = line.split()
+        if len(fields) < 5:
+            continue
+        camera_id = int(fields[0])
+        cameras[camera_id] = {
+            "cameraId": camera_id,
+            "model": fields[1],
+            "width": int(fields[2]),
+            "height": int(fields[3]),
+            "params": [float(value) for value in fields[4:]],
+        }
+    return cameras
+
+
+def parse_colmap_images(path: Path) -> dict[int, dict[str, Any]]:
+    lines = colmap_content_lines(path)
+    images: dict[int, dict[str, Any]] = {}
+    index = 0
+    while index < len(lines):
+        fields = lines[index].split()
+        if len(fields) >= 10:
+            image_id = int(fields[0])
+            images[image_id] = {
+                "imageId": image_id,
+                "qvec": [float(value) for value in fields[1:5]],
+                "tvec": [float(value) for value in fields[5:8]],
+                "cameraId": int(fields[8]),
+                "name": " ".join(fields[9:]),
+            }
+        index += 2
+    return images
+
+
+def qvec_to_rotmat(qvec: list[float]) -> list[list[float]]:
+    qw, qx, qy, qz = qvec
+    return [
+        [
+            1 - 2 * qy * qy - 2 * qz * qz,
+            2 * qx * qy - 2 * qw * qz,
+            2 * qz * qx + 2 * qw * qy,
+        ],
+        [
+            2 * qx * qy + 2 * qw * qz,
+            1 - 2 * qz * qz - 2 * qx * qx,
+            2 * qy * qz - 2 * qw * qx,
+        ],
+        [
+            2 * qz * qx - 2 * qw * qy,
+            2 * qy * qz + 2 * qw * qx,
+            1 - 2 * qx * qx - 2 * qy * qy,
+        ],
+    ]
+
+
+def transpose3(matrix: list[list[float]]) -> list[list[float]]:
+    return [[matrix[row][column] for row in range(3)] for column in range(3)]
+
+
+def mat3_vec(matrix: list[list[float]], vector: list[float]) -> list[float]:
+    return [
+        matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2],
+        matrix[1][0] * vector[0] + matrix[1][1] * vector[1] + matrix[1][2] * vector[2],
+        matrix[2][0] * vector[0] + matrix[2][1] * vector[1] + matrix[2][2] * vector[2],
+    ]
+
+
+def normalize3(vector: list[float]) -> list[float]:
+    length = math.sqrt(sum(value * value for value in vector))
+    if length <= 1.0e-12:
+        return [0.0, 0.0, 0.0]
+    return [value / length for value in vector]
+
+
+def rounded3(vector: list[float]) -> list[float]:
+    return [round(value, 8) for value in vector]
+
+
+def camera_intrinsics_for_manifest(
+    camera: dict[str, Any],
+    render_width: int | None,
+    render_height: int | None,
+) -> dict[str, Any]:
+    model = camera.get("model")
+    params = camera.get("params", [])
+    width = int(camera.get("width") or 0)
+    height = int(camera.get("height") or 0)
+    if model in {"SIMPLE_PINHOLE", "SIMPLE_RADIAL"} and len(params) >= 3:
+        fx = fy = float(params[0])
+        cx = float(params[1])
+        cy = float(params[2])
+    elif model in {"PINHOLE", "OPENCV", "OPENCV_FISHEYE", "FULL_OPENCV"} and len(params) >= 4:
+        fx = float(params[0])
+        fy = float(params[1])
+        cx = float(params[2])
+        cy = float(params[3])
+    else:
+        fx = fy = max(width, height, 1)
+        cx = width / 2
+        cy = height / 2
+
+    scaled_width = int(render_width or width or 1)
+    scaled_height = int(render_height or height or 1)
+    scale_x = scaled_width / width if width else 1.0
+    scale_y = scaled_height / height if height else 1.0
+    fy_scaled = max(fy * scale_y, 1.0e-6)
+    fov_y = math.degrees(2 * math.atan(scaled_height / (2 * fy_scaled)))
+    return {
+        "model": model,
+        "sourceWidth": width,
+        "sourceHeight": height,
+        "width": scaled_width,
+        "height": scaled_height,
+        "fx": round(fx * scale_x, 6),
+        "fy": round(fy * scale_y, 6),
+        "cx": round(cx * scale_x, 6),
+        "cy": round(cy * scale_y, 6),
+        "fovYDegrees": round(fov_y, 6),
+    }
+
+
+def camera_view_from_colmap(
+    *,
+    image: dict[str, Any],
+    camera: dict[str, Any],
+    selected_index: int,
+    render_width: int | None,
+    render_height: int | None,
+    review_sample: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    rotation = qvec_to_rotmat(image["qvec"])
+    camera_to_world = transpose3(rotation)
+    tvec = image["tvec"]
+    center = mat3_vec(camera_to_world, [-tvec[0], -tvec[1], -tvec[2]])
+    down = mat3_vec(camera_to_world, [0.0, 1.0, 0.0])
+    forward = mat3_vec(camera_to_world, [0.0, 0.0, 1.0])
+    up = [-down[0], -down[1], -down[2]]
+    intrinsics = camera_intrinsics_for_manifest(camera, render_width, render_height)
+    view = {
+        "selectedIndex": selected_index,
+        "imageId": image["imageId"],
+        "imageName": image["name"],
+        "cameraId": image["cameraId"],
+        "position": rounded3(center),
+        "forward": rounded3(normalize3(forward)),
+        "up": rounded3(normalize3(up)),
+        "intrinsics": intrinsics,
+        "fovYDegrees": intrinsics["fovYDegrees"],
+    }
+    if review_sample is not None:
+        view["referenceKind"] = "render_review"
+        view["reviewOrder"] = review_sample.get("order")
+        view["reviewMae"] = review_sample.get("mae")
+        view["renderPath"] = review_sample.get("renderPath")
+        view["targetPath"] = review_sample.get("targetPath")
+    else:
+        view["referenceKind"] = "training_selected"
+    return view
+
+
+def build_camera_views(training_report: dict[str, Any]) -> dict[str, Any]:
+    metrics = training_report.get("metrics", {})
+    if not isinstance(metrics, dict):
+        return {"status": "warning", "summary": "training metrics missing", "views": []}
+
+    training_dir_raw = training_report.get("trainingDirectory")
+    training_dir = Path(training_dir_raw) if isinstance(training_dir_raw, str) and training_dir_raw else None
+    if training_dir is None:
+        result_path_raw = training_report.get("trainingResultPath")
+        if isinstance(result_path_raw, str) and result_path_raw:
+            training_dir = Path(result_path_raw).parent
+    if training_dir is None:
+        return {"status": "warning", "summary": "training directory missing", "views": []}
+
+    colmap_text_dir = training_dir / "colmap_txt"
+    cameras = parse_colmap_cameras(colmap_text_dir / "cameras.txt")
+    images_by_id = parse_colmap_images(colmap_text_dir / "images.txt")
+    images_by_name = {image["name"]: image for image in images_by_id.values()}
+    selected_images = metrics.get("selectedImages", [])
+    if not isinstance(selected_images, list) or not selected_images:
+        return {"status": "warning", "summary": "selected training images missing", "views": []}
+
+    render_width = metrics.get("renderWidth")
+    render_height = metrics.get("renderHeight")
+    render_width = int(render_width) if isinstance(render_width, (int, float)) else None
+    render_height = int(render_height) if isinstance(render_height, (int, float)) else None
+    review = metrics.get("renderReview", {}) if isinstance(metrics.get("renderReview"), dict) else {}
+    review_samples = review.get("samples", []) if isinstance(review.get("samples"), list) else []
+
+    ordered_items: list[tuple[int, dict[str, Any] | None]] = []
+    seen_indices: set[int] = set()
+    for sample in review_samples:
+        if not isinstance(sample, dict):
+            continue
+        camera_index = sample.get("cameraIndex")
+        if isinstance(camera_index, int) and 0 <= camera_index < len(selected_images) and camera_index not in seen_indices:
+            ordered_items.append((camera_index, sample))
+            seen_indices.add(camera_index)
+    for selected_index in range(len(selected_images)):
+        if selected_index not in seen_indices:
+            ordered_items.append((selected_index, None))
+            seen_indices.add(selected_index)
+
+    views: list[dict[str, Any]] = []
+    for selected_index, review_sample in ordered_items:
+        selected = selected_images[selected_index]
+        if not isinstance(selected, dict):
+            continue
+        image_id = selected.get("imageId")
+        image_name = selected.get("name")
+        image = images_by_id.get(image_id) if isinstance(image_id, int) else None
+        if image is None and isinstance(image_name, str):
+            image = images_by_name.get(image_name)
+        if image is None:
+            continue
+        camera = cameras.get(image["cameraId"])
+        if camera is None:
+            continue
+        views.append(
+            camera_view_from_colmap(
+                image=image,
+                camera=camera,
+                selected_index=selected_index,
+                render_width=render_width,
+                render_height=render_height,
+                review_sample=review_sample,
+            )
+        )
+
+    return {
+        "status": "pass" if views else "warning",
+        "summary": f"{len(views)} COLMAP camera views exported" if views else "no COLMAP camera views could be exported",
+        "views": views,
+        "source": {
+            "colmapTextPath": str(colmap_text_dir),
+            "selectedImageCount": len(selected_images),
+            "renderReviewSampleCount": len(review_samples),
+        },
+    }
+
+
 def build_viewer_manifest(
     job_path: Path,
     training_report: dict[str, Any],
@@ -2386,6 +2639,7 @@ def build_viewer_manifest(
     sample_target_path = Path(sample_target_raw) if isinstance(sample_target_raw, str) and sample_target_raw else None
     render_review_path = Path(render_review_raw) if isinstance(render_review_raw, str) and render_review_raw else None
     ply_header = parse_ply_header(artifact)
+    camera_views = build_camera_views(training_report)
     return {
         "schemaVersion": 1,
         "generatedAt": utc_now(),
@@ -2413,14 +2667,20 @@ def build_viewer_manifest(
             "renderReviewRepoRelativePath": repo_relative_path(render_review_path) if render_review_path else None,
             "renderReviewSizeBytes": render_review_path.stat().st_size if render_review_path and render_review_path.exists() else None,
         },
+        "cameraViews": camera_views["views"],
+        "cameraViewSource": {
+            "status": camera_views["status"],
+            "summary": camera_views["summary"],
+            **camera_views.get("source", {}),
+        },
         "training": training_report.get("metrics", {}),
         "runConfig": training_report.get("runConfig", {}),
         "device": training_report.get("device", {}),
         "versions": training_report.get("versions", {}),
         "viewer": {
-            "implementation": "local_webgl_binary_ply_point_splats",
-            "supports": ["orbit", "pan", "zoom", "reset_view"],
-            "loads": "binary_little_endian PLY vertex positions, SH DC color fields, opacity and scale into a WebGL point-debug scene",
+            "implementation": "spark_webgl_gaussian_splat_renderer",
+            "supports": ["gaussian_splat_render", "reference_camera_views", "orbit", "pan", "zoom", "reset_view", "debug_point_cloud"],
+            "loads": "binary_little_endian PLY Gaussian splats into Spark for 3DGS rendering and exposes a point-cloud debug fallback",
         },
     }
 
@@ -2485,6 +2745,7 @@ def build_packaging_report(job_path: Path, accept_warning: bool = False) -> dict
     viewer_manifest = build_viewer_manifest(job_path, training_report, base, artifact)
     write_json(viewer_manifest_path, viewer_manifest)
     ply_header = viewer_manifest["artifact"].get("ply", {})
+    camera_view_source = viewer_manifest.get("cameraViewSource", {})
 
     base["artifact"] = {
         "path": str(artifact),
@@ -2514,6 +2775,12 @@ def build_packaging_report(job_path: Path, accept_warning: bool = False) -> dict
                 "status": "pass" if viewer_manifest_path.exists() else "fail",
                 "summary": "viewer manifest written" if viewer_manifest_path.exists() else "viewer manifest was not written",
                 "path": str(viewer_manifest_path),
+            },
+            {
+                "id": "camera_views",
+                "status": camera_view_source.get("status", "warning"),
+                "summary": camera_view_source.get("summary", "COLMAP camera views were not exported"),
+                "count": len(viewer_manifest.get("cameraViews", [])),
             },
         ]
     )
@@ -2603,6 +2870,7 @@ def build_viewer_report(job_path: Path, accept_warning: bool = False, allow_heav
     actual_sha = file_sha256(artifact_path) if artifact_exists and artifact_path else None
     ply_header = parse_ply_header(artifact_path) if artifact_exists and artifact_path else {"status": "fail", "summary": "artifact missing"}
     preview_info = viewer_manifest.get("preview", {}) if isinstance(viewer_manifest.get("preview"), dict) else {}
+    camera_views = viewer_manifest.get("cameraViews", []) if isinstance(viewer_manifest.get("cameraViews"), list) else []
     sample_render_raw = preview_info.get("sampleRenderPath")
     sample_render_path = Path(sample_render_raw) if isinstance(sample_render_raw, str) and sample_render_raw else None
     app_js = repo_root_from_script() / "app" / "app.js"
@@ -2636,6 +2904,11 @@ def build_viewer_report(job_path: Path, accept_warning: bool = False, allow_heav
             "summary": ply_header.get("summary", "PLY header could not be validated"),
             "format": ply_header.get("format"),
             "vertexCount": ply_header.get("vertexCount"),
+        },
+        {
+            "id": "viewer_camera_views",
+            "status": "pass" if camera_views else "warning",
+            "summary": f"{len(camera_views)} reference camera views available" if camera_views else "viewer manifest has no reference camera views",
         },
         {
             "id": "sample_render",
