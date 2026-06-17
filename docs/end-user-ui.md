@@ -6,6 +6,8 @@ The first user interface is a local, dependency-free lab console. It is intentio
 
 As of 2026-06-17, the UI can also show packaged splat artifacts. The central WebGL canvas is a PLY point-debug inspector with pan, orbit, zoom and reset controls; it is not the final production Gaussian Splat renderer. The visual quality reference is the `gsplat` render/target pair and multi-view render-review sheet written by the training stage.
 
+The current visual direction is a dark RTX workstation console: the artifact inspector is the primary workspace, side panels stay secondary, and the palette is restrained graphite/cyan rather than warm placeholder colors. On narrow screens the UI switches to a single-column layout with the artifact inspector first and compact stacked viewer controls.
+
 ## Scope
 
 The UI owns:

@@ -1,21 +1,22 @@
 :root {
   color-scheme: dark;
-  --bg: #101112;
-  --panel: #181a1d;
-  --panel-soft: #202328;
-  --panel-deep: #0b0d10;
+  --bg: #090b0f;
+  --panel: rgba(22, 25, 29, 0.92);
+  --panel-soft: rgba(33, 38, 45, 0.92);
+  --panel-deep: rgba(7, 10, 14, 0.96);
   --ink: #f2f5f3;
-  --muted: #9aa5a5;
-  --line: #30353b;
+  --muted: #9eaaa9;
+  --line: rgba(91, 103, 116, 0.42);
   --accent: #35d7c8;
-  --accent-soft: rgba(53, 215, 200, 0.16);
-  --amber: #d7b66a;
-  --amber-soft: rgba(215, 182, 106, 0.16);
+  --accent-strong: #6fffee;
+  --accent-soft: rgba(53, 215, 200, 0.14);
+  --amber: #e0c170;
+  --amber-soft: rgba(224, 193, 112, 0.14);
   --red: #ff7b72;
   --red-soft: rgba(255, 123, 114, 0.16);
-  --violet: #a99cff;
-  --violet-soft: rgba(169, 156, 255, 0.15);
-  --shadow: 0 18px 56px rgba(0, 0, 0, 0.34);
+  --violet: #b7a8ff;
+  --violet-soft: rgba(183, 168, 255, 0.14);
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
 }
 
 * {
@@ -43,9 +44,24 @@ select {
 }
 
 .shell {
+  position: relative;
+  isolation: isolate;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(53, 215, 200, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(53, 215, 200, 0.035) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.24) 78%, transparent);
 }
 
 .topbar {
@@ -56,8 +72,8 @@ select {
   gap: 24px;
   padding: 18px 28px;
   border-bottom: 1px solid var(--line);
-  background: rgba(16, 17, 18, 0.92);
-  backdrop-filter: blur(12px);
+  background: rgba(9, 11, 15, 0.88);
+  backdrop-filter: blur(16px);
 }
 
 h1,
@@ -107,7 +123,7 @@ h3 {
 .workspace {
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(520px, 1.5fr) minmax(280px, 360px);
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr) minmax(260px, 320px);
   grid-template-areas:
     "capture preview compliance"
     "pipeline preview compliance";
@@ -122,6 +138,7 @@ h3 {
   border-radius: 8px;
   box-shadow: var(--shadow);
   min-width: 0;
+  backdrop-filter: blur(18px);
 }
 
 .capture-panel,
@@ -163,7 +180,16 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 14px;
+  min-width: 0;
+}
+
+.panel-head h2 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .icon-button {
@@ -173,7 +199,7 @@ h3 {
   place-items: center;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--panel-soft);
+  background: linear-gradient(180deg, rgba(39, 45, 53, 0.94), rgba(25, 30, 37, 0.94));
   color: var(--ink);
   cursor: pointer;
 }
@@ -254,10 +280,11 @@ select {
   min-height: 42px;
   border: 0;
   border-radius: 8px;
-  background: var(--accent);
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
   color: #07100f;
   font-weight: 720;
   cursor: pointer;
+  box-shadow: 0 12px 32px rgba(53, 215, 200, 0.18);
 }
 
 .primary-action:disabled,
@@ -352,7 +379,7 @@ select {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.025);
+  background: rgba(255, 255, 255, 0.026);
 }
 
 .stage-index {
@@ -401,6 +428,8 @@ select {
   font-size: 12px;
   font-weight: 740;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .pill.pass,
@@ -433,9 +462,15 @@ select {
 
 .preview-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto auto auto auto auto;
   background: var(--panel-deep);
   border-color: rgba(53, 215, 200, 0.32);
+  overflow: hidden;
+}
+
+.preview-panel > * {
+  min-width: 0;
 }
 
 .viewer-controls {
@@ -445,6 +480,11 @@ select {
   gap: 8px;
   margin: -4px 0 10px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+#viewerStatusPill {
+  flex: 0 1 auto;
 }
 
 .viewer-control-group {
@@ -458,12 +498,14 @@ select {
 
 #splatCanvas {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: clamp(420px, 56vh, 720px);
   min-height: 420px;
   display: block;
   border: 1px solid rgba(53, 215, 200, 0.28);
   border-radius: 8px;
-  background: #050608;
+  background: #05070a;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 20px 60px rgba(0, 0, 0, 0.28);
   touch-action: none;
   cursor: grab;
@@ -487,10 +529,12 @@ select {
 .render-compare figure {
   min-width: 0;
   margin: 0;
+  overflow: hidden;
 }
 
 .render-frame {
   width: 100%;
+  min-width: 0;
   aspect-ratio: 16 / 9;
   overflow: hidden;
   border: 1px solid var(--line);
@@ -500,6 +544,7 @@ select {
 
 .render-frame img {
   width: 100%;
+  max-width: 100%;
   height: 100%;
   display: block;
   object-fit: cover;
@@ -523,6 +568,7 @@ select {
 
 .review-frame {
   width: 100%;
+  min-width: 0;
   max-height: 520px;
   overflow: auto;
   border: 1px solid var(--line);
@@ -532,7 +578,8 @@ select {
 
 .review-frame img {
   width: 100%;
-  min-width: 760px;
+  max-width: 100%;
+  min-width: 0;
   display: block;
 }
 
@@ -580,19 +627,46 @@ select {
   }
 
   .workspace {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "preview"
-      "capture"
-      "pipeline"
-      "compliance";
+    display: flex;
+    flex-direction: column;
+    padding: 12px;
+    overflow-x: hidden;
   }
 
-  .workspace {
-    padding: 12px;
+  .workspace > .panel {
+    width: 100%;
+    max-width: calc(100vw - 24px);
+    min-width: 0;
+  }
+
+  .preview-panel {
+    order: 1;
+  }
+
+  .capture-panel {
+    order: 2;
+  }
+
+  .pipeline-panel {
+    order: 3;
+  }
+
+  .compliance-panel {
+    order: 4;
+  }
+
+  .preview-panel .panel-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  #viewerStatusPill {
+    max-width: calc(100vw - 56px);
   }
 
   #splatCanvas {
+    max-width: calc(100vw - 56px);
     height: 340px;
     min-height: 320px;
   }
@@ -616,11 +690,22 @@ select {
   }
 
   .viewer-controls {
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
   }
 
   .viewer-control-group {
-    flex: 1 1 auto;
-    justify-content: center;
+    width: auto;
+    max-width: calc(100vw - 56px);
+    min-width: 0;
+    justify-content: flex-start;
+  }
+
+  .viewer-control-group .icon-button {
+    flex: 0 0 40px;
+    width: 40px;
+    min-width: 0;
+    max-width: 40px;
   }
 }
