@@ -1,14 +1,16 @@
 # Gaussian Splat Lab
 
-Local video-to-Gaussian-Splat reconstruction lab for an RTX workstation.
+Local video-to-3DGS reconstruction lab for an RTX workstation.
 
-Gaussian Splat Lab exists to answer one practical question: can we take ordinary video or structured capture data, run the full reconstruction pipeline locally on a Windows/WSL2 RTX 5090 workstation, and produce an interactive 3D Gaussian Splat environment that can be inspected, exported and eventually embedded in a product experience?
+Gaussian Splat Lab is a local test bed for turning video or structured captures into interactive Gaussian Splat scenes on an RTX workstation.
 
-The project is intentionally built as an inspectable lab, not a black-box demo. Every stage writes a report, validates its own boundary, and must be accepted before later stages depend on it. That matters because Gaussian Splat quality is highly sensitive to capture quality, camera solve quality, training profile, licensing posture and viewer correctness.
+The repo exists for a practical reason: we want to understand how far a Windows/WSL2 RTX 5090 machine can take us from raw capture to a navigable 3DGS scene, with enough evidence along the way to debug quality, exports and future product use.
+
+This is meant to be inspectable work, not a black-box demo. Each step writes a report before the next step uses its output. That discipline matters because 3DGS quality can fall apart for ordinary reasons: weak capture data, poor camera poses, the wrong training profile, unclear source rights or a viewer that hides rendering mistakes.
 
 ## Current Status
 
-Status: Phase 1 local pipeline with working browser viewer.
+Status: working local pipeline with browser viewer.
 
 Current reference job:
 
@@ -23,7 +25,7 @@ Current active viewer artifact:
 - navigation: Walk, Orbit, mouse-look, wheel zoom, reference cameras and debug point-cloud mode
 - export: streamed PLY and viewer-manifest download
 
-The quality report can still be `warning` because the current public reference capture and some commercial-use evidence are not product-ready. That warning is expected; training, packaging and viewer validation pass for the active technical reference.
+The quality report may still be `warning` because the current public reference capture and some commercial-use evidence are not product-ready. That is useful signal rather than a broken run; training, packaging and viewer validation pass for the active technical reference.
 
 ## GUI Screenshots
 
@@ -35,25 +37,25 @@ Rendered 3DGS view from the active `rtx_ultra_quality` splat:
 
 ![Gaussian Splat Lab 3DGS render GUI](docs/assets/screenshots/gui-desktop-ultra.png)
 
-The two views are intentionally shown together: Debug mode exposes the sampled point cloud for inspection, while Render mode shows the interactive Gaussian Splat scene that users navigate.
+These screenshots are paired on purpose: Debug mode shows the sampled point cloud, while Render mode shows the Gaussian Splat scene users actually navigate.
 
 ## Why This Project Exists
 
-The long-term product need is a reliable path from capture media to an interactive 3D environment. In practice that means:
+The product goal is straightforward: a dependable path from capture media to an interactive 3D environment. For this project, that means:
 
-- video-first input, because video is the most likely user capture format
-- support for structured datasets, because good reference data is needed for quality ceilings
-- local GPU execution, because reconstruction is heavy and we want to test RTX workstation limits
-- commercial-aware dependency choices, because the output may later be used in a commercial setting
-- a simple end-user interface, because the pipeline should eventually be operated by non-engineers
-- exportable scene artifacts, because generated environments need to be embedded, handed off or archived
-- an agent-invokable worker boundary, because Swoqer-style integrations may need to wake an AI agent that runs the pipeline through `swoqerd` and returns 3DGS artifacts
+- video-first input, since video is likely to be the easiest capture format for users
+- support for structured datasets, so we have clean reference material when we test quality ceilings
+- local GPU execution, because reconstruction is heavy and we want to learn the real RTX workstation limits
+- dependency choices we can defend if the work becomes commercial
+- a simple end-user interface, so the workflow can later be run by non-engineers
+- exportable scene artifacts that can be embedded, handed off or archived
+- a worker-style interface that an agent can call through `swoqerd` for Swoqer-style integrations
 
-The repo is separate from other product code so reconstruction decisions, generated artifacts, licensing checks and heavy GPU experiments stay isolated.
+The repo is kept apart from product code so reconstruction choices, generated artifacts, licensing checks and heavy GPU experiments stay easy to reason about.
 
 ## What It Does
 
-Gaussian Splat Lab can currently:
+Gaussian Splat Lab can now:
 
 - track known captures in manifests
 - import local videos into controlled capture paths
@@ -71,21 +73,21 @@ Large generated files remain outside git. The repo commits scripts, manifests, d
 
 ## Pipeline
 
-The golden path is deliberately stage-gated:
+The workflow is boring on purpose: one step writes evidence, the next step reads it.
 
-| Order | Stage | Responsibility | Output | Self-validation |
+| Order | Step | What it does | Output | What we check |
 | ---: | --- | --- | --- | --- |
 | 1 | Framework and license review | Decide which tools are allowed and which are blocked for commercial use. | `framework_license.json` | Flags blocked, conditional and review-required dependencies. |
 | 2 | Workstation check | Verify the local RTX workstation, CUDA/PyTorch visibility, COLMAP, FFmpeg and GPU baseline. | `environment.json` | Confirms RTX 5090 visibility and warns if GPU is already busy. |
-| 3 | Video intake | Confirm the selected source exists and has acceptable capture/commercial posture for the current purpose. | `intake.json` | Blocks missing files and records source/license warnings. |
+| 3 | Video intake | Confirm the selected source exists and that capture quality/source rights are acceptable for the current purpose. | `intake.json` | Blocks missing files and records source/license warnings. |
 | 4 | Frame sampling | Extract frames deterministically from video. | `frames/`, frame manifest, contact sheet | Verifies frame count, hashes and extraction metadata. |
 | 5 | SfM camera solve | Run COLMAP feature extraction, matching and mapping. | sparse COLMAP model | Verifies registered images, sparse points and model analyzer output. |
 | 6 | Splat training | Train Gaussian Splats with `gsplat` on the RTX GPU. | checkpoint, PLY, sample render, render-review sheet | Verifies CUDA, training completion, exported PLY and render/target review metrics. |
 | 7 | Packaging | Build the browser viewer manifest around the active splat artifact. | `viewer-manifest.json` | Verifies PLY hash, size, header and reference camera views. |
 | 8 | Viewer validation | Confirm the local browser viewer can load the packaged artifact. | `viewer.json` | Verifies manifest, artifact hash, camera views and viewer hooks. |
-| 9 | Quality report | Summarize the whole pipeline boundary. | `quality_report.json` | Classifies the run as usable, weak, incomplete, blocked or failed. |
+| 9 | Quality report | Summarize the whole run. | `quality_report.json` | Classifies the run as usable, weak, incomplete, blocked or failed. |
 
-Each stage can be run independently, and later stages refuse to proceed unless upstream failures are resolved or warnings are explicitly accepted.
+Each step can be run on its own. Later steps stop when earlier ones fail, unless the warning has been reviewed and explicitly accepted.
 
 ## Quality Profiles
 
@@ -146,9 +148,9 @@ The primary export today is a viewer environment bundle:
 
 This is not a triangle mesh or GLB export yet. The current goal is high-quality Gaussian Splat viewing and handoff. Mesh conversion or GLB packaging can be added later as a separate export stage if product needs require it.
 
-## Commercial and Licensing Posture
+## Licensing and Commercial Use
 
-This repo is commercial-aware but not a legal opinion. The pipeline records license posture for frameworks and captures so we can avoid accidentally building on non-commercial-only code or unclear source material.
+This repo tracks commercial-use risk, but it is not a legal opinion. The pipeline records framework and capture-source notes so we do not accidentally build product work on non-commercial code or unclear media.
 
 Current rules:
 
@@ -164,13 +166,13 @@ Relevant docs:
 - [docs/commercial-compliance.md](docs/commercial-compliance.md)
 - [docs/installation-and-revert-ledger.md](docs/installation-and-revert-ledger.md)
 
-## Swoqer Integration Possibility
+## Where Swoqer Fits
 
-The pipeline is intentionally separated from any product backend so it can later run as a capability behind [swoqer.com](https://swoqer.com/).
+The reconstruction work is separated from any product backend so it can later sit behind [swoqer.com](https://swoqer.com/).
 
-Swoqer is expected to act as an identity-based integration platform for distributed agentic applications. In that model, Gaussian Splat Lab is not the user-facing integration layer. It is the local or remote reconstruction worker that can be invoked by an authenticated agent workflow.
+Swoqer is the identity-based integration platform. Gaussian Splat Lab would not be the user-facing integration layer; it would be the local or remote worker that turns an authorized video or dataset into 3DGS artifacts.
 
-Possible flow:
+A typical flow would look like this:
 
 1. An external service or user identity sends large dataset/video payloads through Swoqer.
 2. Swoqer authorizes, routes and tracks that integration event.
@@ -181,13 +183,13 @@ Possible flow:
 7. The generated 3DGS artifacts are returned: PLY splat, viewer manifest, diagnostics and quality reports.
 8. The calling service can use those artifacts as an interactive 3D environment or hand them to another agent/application.
 
-In this architecture, Swoqer provides identity, integration routing, large-file handoff and distributed agent activation. Gaussian Splat Lab provides the reconstruction capability and the self-validating pipeline boundary.
+Put another way: Swoqer handles identity, routing, large-file handoff and agent activation. Gaussian Splat Lab handles the reconstruction job and leaves behind the evidence needed to inspect what happened.
 
-That integration is not implemented in this repo yet. The current work is to make the local pipeline robust enough that `swoqerd` or a similar agent runtime can invoke it predictably and return auditable 3DGS results.
+That wiring is not implemented in this repo yet. The current work is to make the worker side reliable: given a capture, run the 3DGS job, produce artifacts, and leave enough diagnostics to debug quality and licensing later.
 
 ## Key Commands
 
-Architecture and phase validation:
+Basic checks:
 
 ```bash
 ./scripts/validate-architecture-contracts.sh
@@ -220,7 +222,7 @@ Run a pipeline stage:
   --accept-warning
 ```
 
-Run heavy splat training intentionally:
+Run heavy splat training on purpose:
 
 ```bash
 .venv/bin/python scripts/lab-pipeline.py run-stage splat_training \
@@ -249,9 +251,9 @@ Mac:
 
 ## Documentation Map
 
-- [docs/mvp-pipeline.md](docs/mvp-pipeline.md): MVP pipeline contract
-- [docs/stable-pipeline-build-plan.md](docs/stable-pipeline-build-plan.md): golden-path implementation plan
-- [docs/pipeline-gates.md](docs/pipeline-gates.md): validation gates
+- [docs/mvp-pipeline.md](docs/mvp-pipeline.md): MVP workflow contract
+- [docs/stable-pipeline-build-plan.md](docs/stable-pipeline-build-plan.md): stable workflow build plan
+- [docs/pipeline-gates.md](docs/pipeline-gates.md): checks between pipeline steps
 - [docs/end-user-ui.md](docs/end-user-ui.md): UI behavior and responsibilities
 - [docs/quality-ceiling-results.md](docs/quality-ceiling-results.md): current quality-ceiling measurements
 - [docs/rtx-workstation-setup.md](docs/rtx-workstation-setup.md): workstation setup notes
