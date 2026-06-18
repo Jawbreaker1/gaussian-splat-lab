@@ -113,14 +113,6 @@ h3 {
   font-size: 13px;
 }
 
-.status-strip {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .workspace {
   flex: 1;
   display: grid;
@@ -1048,10 +1040,6 @@ details.panel .compliance-grid {
     align-items: flex-start;
     flex-direction: column;
     padding: 16px;
-  }
-
-  .status-strip {
-    justify-content: flex-start;
   }
 
   .workspace {

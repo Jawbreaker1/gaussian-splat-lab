@@ -1,6 +1,5 @@
 const els = {
   machineLabel: document.querySelector('#machineLabel'),
-  statusStrip: document.querySelector('#statusStrip'),
   captureSelect: document.querySelector('#captureSelect'),
   captureSummary: document.querySelector('#captureSummary'),
   captureMeta: document.querySelector('#captureMeta'),
@@ -300,16 +299,6 @@ function updateImportControls() {
   els.importVideoButton.textContent = importingVideo ? 'Importing' : 'Import video';
 }
 
-function renderStatus() {
-  els.statusStrip.replaceChildren();
-  const validation = state?.validation ?? {};
-  els.statusStrip.append(
-    pill(validation.architecture ? 'architecture pass' : 'architecture missing', validation.architecture ? 'pass' : 'warning'),
-    pill(validation.phase1 ? 'contracts pass' : 'contracts missing', validation.phase1 ? 'pass' : 'warning'),
-    pill(validation.rtxVisible ? 'RTX visible' : 'RTX pending', validation.rtxVisible ? 'pass' : 'warning'),
-  );
-}
-
 function renderCaptures() {
   const captures = state?.captures ?? [];
   const previousCaptureId = els.captureSelect.value;
@@ -541,7 +530,6 @@ function renderJob() {
 
 function renderAll() {
   els.machineLabel.textContent = state?.machineLabel ?? 'RTX workstation';
-  renderStatus();
   renderCaptures();
   updateWizardControls();
   renderStages();
@@ -1671,7 +1659,6 @@ els.planJobButton.addEventListener('click', () => createJob());
 requestAnimationFrame(drawPreviewFrame);
 setNavigationSensitivity(defaultNavigationSensitivity * 100);
 const bootPromise = loadState().catch((error) => {
-  els.statusStrip.replaceChildren(pill('server error', 'fail'));
   els.jobBox.replaceChildren();
   const message = document.createElement('div');
   message.className = 'error-text';
