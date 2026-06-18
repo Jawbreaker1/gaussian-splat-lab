@@ -30,6 +30,7 @@ EFFECTIVE_CAPTURE_MANIFEST = REPO_ROOT / "data/tmp/ui-effective-captures.json"
 FRAMEWORK_MANIFEST = REPO_ROOT / "data/manifests/framework-evaluation.json"
 GATES_MANIFEST = REPO_ROOT / "data/manifests/pipeline-gates.json"
 JOBS_DIR = REPO_ROOT / "outputs/jobs"
+DELETED_JOBS_DIR = REPO_ROOT / "outputs/deleted-jobs"
 RTX_EVIDENCE = REPO_ROOT / "docs/validation/phase-0-rtx-workstation-wsl-output.md"
 PIPELINE_SCRIPT = REPO_ROOT / "scripts/lab-pipeline.py"
 VENV_PYTHON = REPO_ROOT / ".venv/bin/python"
@@ -319,6 +320,155 @@ def latest_viewer_artifact() -> dict[str, Any] | None:
     }
 
 
+def capture_display_index() -> dict[str, str]:
+    captures = read_json(active_capture_manifest()).get("captures", [])
+    index: dict[str, str] = {}
+    for capture in captures:
+        if not isinstance(capture, dict):
+            continue
+        capture_id = str(capture.get("id") or "")
+        if capture_id:
+            index[capture_id] = str(capture.get("displayName") or capture_id)
+    return index
+
+
+def stage_status(job: dict[str, Any], stage_id: str) -> str | None:
+    for stage in job.get("stages", []):
+        if isinstance(stage, dict) and stage.get("id") == stage_id:
+            value = stage.get("status")
+            return str(value) if value is not None else None
+    return None
+
+
+def read_optional_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return read_json(path)
+    except Exception:
+        return {}
+
+
+def gallery_job_summary(job_path: Path, capture_names: dict[str, str] | None = None) -> dict[str, Any] | None:
+    job_dir = job_path.parent
+    manifest_path = job_dir / "viewer" / "viewer-manifest.json"
+    if not manifest_path.exists():
+        return None
+
+    job = read_json(job_path)
+    manifest = attach_artifact_urls(read_json(manifest_path))
+    artifact = manifest.get("artifact") if isinstance(manifest.get("artifact"), dict) else {}
+    preview = manifest.get("preview") if isinstance(manifest.get("preview"), dict) else {}
+    export = manifest.get("export") if isinstance(manifest.get("export"), dict) else {}
+    training = manifest.get("training") if isinstance(manifest.get("training"), dict) else {}
+    run_config = manifest.get("runConfig") if isinstance(manifest.get("runConfig"), dict) else {}
+    device = manifest.get("device") if isinstance(manifest.get("device"), dict) else {}
+    camera_views = manifest.get("cameraViews") if isinstance(manifest.get("cameraViews"), list) else []
+    job_meta = job.get("job") if isinstance(job.get("job"), dict) else {}
+    capture_id = str(job_meta.get("captureId") or "")
+    job_id = str(job_meta.get("id") or job_dir.name)
+    names = capture_names or {}
+    training_report = read_optional_json(job_dir / "reports" / "splat_training.json")
+    training_result = training_report.get("trainingResult") if isinstance(training_report.get("trainingResult"), dict) else {}
+    render_review = training.get("renderReview") if isinstance(training.get("renderReview"), dict) else {}
+    if not render_review and isinstance(training_result.get("renderReview"), dict):
+        render_review = training_result["renderReview"]
+
+    try:
+        manifest_repo_relative = manifest_path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        manifest_repo_relative = None
+
+    thumbnail_url = (
+        preview.get("sampleRenderUrl")
+        or preview.get("renderReviewUrl")
+        or preview.get("sampleTargetUrl")
+    )
+    return {
+        "id": job_id,
+        "name": names.get(capture_id, capture_id or job_id),
+        "captureId": capture_id,
+        "createdAt": job_meta.get("createdAt"),
+        "status": job_meta.get("status") or "unknown",
+        "sceneUrl": f"/gallery?scene={quote(job_id)}",
+        "jobPath": str(job_path),
+        "viewerManifestUrl": artifact_url(manifest_repo_relative),
+        "thumbnailUrl": thumbnail_url,
+        "artifactUrl": artifact.get("url"),
+        "artifactFileName": export.get("recommendedSplatFileName") or f"{job_id}.ply",
+        "manifestFileName": export.get("recommendedManifestFileName") or f"{job_id}.viewer-manifest.json",
+        "artifact": {
+            "format": artifact.get("format"),
+            "sizeBytes": artifact.get("sizeBytes"),
+            "sha256": artifact.get("sha256"),
+            "splatCount": (artifact.get("ply") or {}).get("vertexCount") if isinstance(artifact.get("ply"), dict) else None,
+        },
+        "technical": {
+            "profile": training.get("profile") or run_config.get("profile"),
+            "iterations": training.get("iterations") or run_config.get("iterations"),
+            "imagesUsed": training.get("imagesUsed"),
+            "cameraViews": len(camera_views),
+            "device": device.get("name"),
+            "meanMae": render_review.get("meanMae"),
+            "meanRmse": render_review.get("meanRmse"),
+        },
+        "stages": {
+            "frameSampling": stage_status(job, "frame_sampling"),
+            "sfm": stage_status(job, "sfm"),
+            "splatTraining": stage_status(job, "splat_training"),
+            "viewer": stage_status(job, "viewer"),
+            "qualityReport": stage_status(job, "quality_report"),
+        },
+    }
+
+
+def gallery_jobs() -> list[dict[str, Any]]:
+    if not JOBS_DIR.exists():
+        return []
+    capture_names = capture_display_index()
+    items: list[dict[str, Any]] = []
+    for job_path in sorted(JOBS_DIR.glob("*/job.json"), key=lambda path: path.stat().st_mtime, reverse=True):
+        item = gallery_job_summary(job_path, capture_names)
+        if item:
+            items.append(item)
+    return items
+
+
+def resolve_gallery_job_dir(job_id: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", job_id or ""):
+        raise ValueError("invalid job id")
+    job_dir = (JOBS_DIR / job_id).resolve()
+    job_dir.relative_to(JOBS_DIR.resolve())
+    if not (job_dir / "job.json").exists():
+        raise ValueError("gallery job does not exist")
+    return job_dir
+
+
+def gallery_job_detail(job_id: str) -> dict[str, Any]:
+    job_dir = resolve_gallery_job_dir(job_id)
+    item = gallery_job_summary(job_dir / "job.json", capture_display_index())
+    if not item:
+        raise ValueError("gallery job has no viewer manifest")
+    manifest = attach_artifact_urls(read_json(job_dir / "viewer" / "viewer-manifest.json"))
+    return {"item": item, "manifest": manifest}
+
+
+def delete_gallery_job(job_id: str) -> dict[str, Any]:
+    job_dir = resolve_gallery_job_dir(job_id)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = (DELETED_JOBS_DIR / f"{job_dir.name}-{timestamp}").resolve()
+    target.relative_to(DELETED_JOBS_DIR.resolve())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        raise ValueError("delete target already exists")
+    shutil.move(str(job_dir), str(target))
+    return {
+        "status": "deleted",
+        "jobId": job_id,
+        "deletedPath": str(target),
+    }
+
+
 def build_state() -> dict[str, Any]:
     manifest_path = active_capture_manifest()
     captures = read_json(manifest_path).get("captures", [])
@@ -477,8 +627,10 @@ def save_capture_upload(
 def validate_ui_contracts() -> None:
     required_files = [
         APP_ROOT / "index.html",
+        APP_ROOT / "gallery.html",
         APP_ROOT / "styles.css",
         APP_ROOT / "app.js",
+        APP_ROOT / "gallery.js",
         CAPTURE_MANIFEST,
         FRAMEWORK_MANIFEST,
         GATES_MANIFEST,
@@ -487,7 +639,13 @@ def validate_ui_contracts() -> None:
         if not path.exists():
             raise SystemExit(f"missing required UI file: {path}")
 
-    for path in [APP_ROOT / "index.html", APP_ROOT / "app.js", APP_ROOT / "styles.css"]:
+    for path in [
+        APP_ROOT / "index.html",
+        APP_ROOT / "gallery.html",
+        APP_ROOT / "app.js",
+        APP_ROOT / "gallery.js",
+        APP_ROOT / "styles.css",
+    ]:
         text = path.read_text(encoding="utf-8")
         blocked_markers = ["https://", "http://", "unpkg.com", "cdn.jsdelivr", "cdnjs"]
         for marker in blocked_markers:
@@ -602,6 +760,20 @@ class LabUiHandler(BaseHTTPRequestHandler):
             return
 
         route = self.path.split("?", 1)[0]
+        if route == "/api/gallery":
+            try:
+                self.send_json({"items": gallery_jobs()})
+            except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
+                self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        if route.startswith("/api/gallery/jobs/"):
+            try:
+                self.send_json(gallery_job_detail(route.removeprefix("/api/gallery/jobs/")))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
+                self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
         if route.startswith("/api/artifacts/"):
             self.send_artifact(route.removeprefix("/api/artifacts/"))
             return
@@ -610,6 +782,9 @@ class LabUiHandler(BaseHTTPRequestHandler):
             return
         if route == "/":
             self.send_static(APP_ROOT / "index.html")
+            return
+        if route == "/gallery":
+            self.send_static(APP_ROOT / "gallery.html")
             return
 
         self.send_static(APP_ROOT / route.lstrip("/"))
@@ -701,6 +876,19 @@ class LabUiHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except subprocess.TimeoutExpired:
             self.send_json({"error": "stage run timed out"}, HTTPStatus.REQUEST_TIMEOUT)
+        except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
+            self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def do_DELETE(self) -> None:
+        route = self.path.split("?", 1)[0]
+        if not route.startswith("/api/gallery/jobs/"):
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        try:
+            result = delete_gallery_job(route.removeprefix("/api/gallery/jobs/"))
+            self.send_json(result)
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
             self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 

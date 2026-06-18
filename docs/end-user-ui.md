@@ -8,6 +8,8 @@ As of 2026-06-17, the UI can also show packaged splat artifacts. The central sce
 
 The current visual direction is a dark RTX workstation console: the 3D scene is the primary workspace, the pipeline panel sits on the right as the live operator flow, and lower-priority capture/compliance/artifact metadata is collapsible. On narrow screens the UI switches to a single-column layout with the 3D scene first and compact stacked viewer controls.
 
+The separate `/gallery` page lists previously packaged 3DGS environments with thumbnails, names, artifact size, splat count, quality profile and reference-view counts. Selecting an item loads the same Spark browser renderer with Walk/Orbit navigation. The gallery exposes direct PLY and viewer-manifest downloads. Delete is intentionally conservative: the job output folder is moved from `outputs/jobs` into ignored `outputs/deleted-jobs` so accidental deletes can be recovered locally.
+
 ## Scope
 
 The UI owns:
@@ -23,6 +25,7 @@ The UI owns:
 - commercial/compliance visibility
 - local RTX workstation status evidence
 - central packaged artifact inspection with Spark + Three.js Gaussian Splat Walk/Orbit navigation, orbit/pan/zoom/reset controls and manifest-provided reference camera views
+- gallery inspection of prior packaged 3DGS environments with thumbnail cards, browser navigation, downloads and recoverable local delete
 - debug packaged artifact inspection with the older WebGL PLY point renderer
 - active environment export through streamed PLY and viewer-manifest downloads
 - latest `gsplat` sample render/target images

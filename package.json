@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Local video-to-Gaussian-Splat lab pipeline and viewer.",
   "scripts": {
-    "check:js": "node --check app/app.js && node --check app/spark-viewer.js"
+    "check:js": "node --check app/app.js && node --check app/gallery.js && node --check app/spark-viewer.js"
   },
   "dependencies": {
     "@sparkjsdev/spark": "2.1.0",

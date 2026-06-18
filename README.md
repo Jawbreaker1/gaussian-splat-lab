@@ -128,6 +128,7 @@ The UI is a local lab console with:
 - local video import controls
 - live pipeline panel on the right
 - central 3D scene view
+- gallery page for previous packaged 3DGS environments
 - `Render` mode for Spark Gaussian Splat rendering
 - `Debug` mode for point-cloud inspection
 - `Walk` and `Orbit` navigation

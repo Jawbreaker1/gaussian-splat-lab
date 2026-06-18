@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Gaussian Splat Lab Gallery</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/node_modules/three/build/three.module.js",
+          "three/addons/": "/node_modules/three/examples/jsm/",
+          "@sparkjsdev/spark": "/node_modules/@sparkjsdev/spark/dist/spark.module.js",
+          "fflate": "/node_modules/fflate/esm/browser.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <h1 class="visually-hidden">Gaussian Splat Lab Gallery</h1>
+          <img class="brand-logo" src="/gaussian-splat-lab-logo.svg" alt="Gaussian Splat Lab" width="330" height="54" />
+          <div class="machine" id="machineLabel">Saved 3DGS environments</div>
+        </div>
+        <nav class="brand-nav" aria-label="Primary">
+          <a href="/">Lab</a>
+          <a class="active" href="/gallery">Gallery</a>
+        </nav>
+      </header>
+
+      <main class="gallery-workspace">
+        <section class="panel gallery-list-panel" aria-labelledby="galleryTitle">
+          <div class="panel-head">
+            <h2 id="galleryTitle">Gallery</h2>
+            <button class="secondary-mini-action" id="refreshGalleryButton" type="button">Refresh</button>
+          </div>
+          <div class="gallery-status muted" id="galleryStatus">Loading environments</div>
+          <div class="gallery-grid" id="galleryGrid"></div>
+          <div class="gallery-empty muted" id="galleryEmpty" hidden>No packaged 3DGS environments yet.</div>
+        </section>
+
+        <section class="panel gallery-viewer-panel" aria-labelledby="sceneTitle">
+          <div class="panel-head">
+            <h2 id="sceneTitle">Select a Scene</h2>
+            <span class="pill neutral" id="sceneStatusPill">idle</span>
+          </div>
+
+          <div class="gallery-scene-actions" aria-label="Scene actions">
+            <a class="secondary-action link-action" id="downloadSplatLink" aria-disabled="true">Download PLY</a>
+            <a class="secondary-action link-action" id="downloadManifestLink" aria-disabled="true">Manifest</a>
+            <button class="danger-action" id="deleteSceneButton" type="button" disabled>Delete</button>
+          </div>
+
+          <div class="viewer-controls gallery-controls" aria-label="Gallery viewer controls">
+            <div class="viewer-navigation-switch" aria-label="Navigation mode">
+              <button class="nav-mode-button active" id="galleryWalkButton" type="button">Walk</button>
+              <button class="nav-mode-button" id="galleryOrbitButton" type="button">Orbit</button>
+            </div>
+            <label class="viewer-sensitivity-control" for="gallerySensitivityInput">
+              <span>Sensitivity</span>
+              <output id="gallerySensitivityValue" for="gallerySensitivityInput">55%</output>
+              <input id="gallerySensitivityInput" type="range" min="20" max="120" step="5" value="55" aria-label="Gallery 3D navigation sensitivity" />
+            </label>
+            <div class="viewer-control-group" aria-label="Move controls">
+              <button class="icon-button" id="galleryPanLeftButton" title="Move left" aria-label="Move left">←</button>
+              <button class="icon-button" id="galleryPanUpButton" title="Move up" aria-label="Move up">↑</button>
+              <button class="icon-button" id="galleryPanDownButton" title="Move down" aria-label="Move down">↓</button>
+              <button class="icon-button" id="galleryPanRightButton" title="Move right" aria-label="Move right">→</button>
+            </div>
+            <div class="viewer-control-group" aria-label="View controls">
+              <button class="icon-button" id="galleryResetButton" title="Reset view" aria-label="Reset view">⟲</button>
+              <button class="icon-button" id="galleryZoomOutButton" title="Zoom out" aria-label="Zoom out">−</button>
+              <button class="icon-button" id="galleryZoomInButton" title="Zoom in" aria-label="Zoom in">+</button>
+            </div>
+            <div class="viewer-control-group" aria-label="Reference camera controls">
+              <button class="icon-button" id="galleryCameraPrevButton" title="Previous reference camera" aria-label="Previous reference camera">‹</button>
+              <button class="icon-button" id="galleryCameraNextButton" title="Next reference camera" aria-label="Next reference camera">›</button>
+            </div>
+          </div>
+
+          <div class="spark-viewport gallery-spark-viewport" id="gallerySparkViewport">
+            <canvas id="gallerySparkCanvas" width="1280" height="780" aria-label="Gallery Gaussian splat scene"></canvas>
+            <div class="viewer-overlay" id="gallerySparkOverlay">Choose a scene from the gallery</div>
+          </div>
+
+          <div class="viewer-meta gallery-scene-meta" id="gallerySceneMeta"></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/gallery.js" type="module"></script>
+  </body>
+</html>
