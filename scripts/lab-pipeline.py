@@ -180,6 +180,32 @@ TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "pruneOpa": 0.0011,
         "absgrad": False,
     },
+    "rtx_ceiling_quality": {
+        "iterations": 30000,
+        "maxImages": 173,
+        "maxPoints": 340000,
+        "maxRenderSize": 1600,
+        "maxGaussians": 2000000,
+        "sampleEvery": 500,
+        "reviewSamples": 18,
+        "initialOpacity": 0.06,
+        "initialScaleMultiplier": 0.19,
+        "ssimWeight": 0.28,
+        "meanLr": 0.0002,
+        "colorLr": 0.014,
+        "scaleLr": 0.0024,
+        "opacityLr": 0.012,
+        "quatLr": 0.00044,
+        "densifyStrategy": "default",
+        "refineStartIter": 100,
+        "refineStopIter": 25500,
+        "refineEvery": 100,
+        "resetEvery": 3000,
+        "growGrad2d": 0.000062,
+        "growScale3d": 0.003,
+        "pruneOpa": 0.0012,
+        "absgrad": False,
+    },
     "rtx_max_quality": {
         "iterations": 30000,
         "maxImages": 160,
@@ -476,6 +502,11 @@ def gpu_load_snapshot(env: dict[str, str] | None = None) -> dict[str, Any]:
         for line in str(process_query.get("stdout") or "").splitlines()
         if line.strip()
     ]
+    active_processes = [
+        process
+        for process in processes
+        if process.get("pid") is not None and process.get("usedMemoryMiB") is not None
+    ]
     max_util = max((gpu.get("utilizationGpuPercent") or 0.0 for gpu in gpus), default=0.0)
     max_memory_fraction = max(
         (
@@ -484,14 +515,15 @@ def gpu_load_snapshot(env: dict[str, str] | None = None) -> dict[str, Any]:
         ),
         default=0.0,
     )
-    status = "warning" if processes or max_util >= 25.0 or max_memory_fraction >= 0.25 else "pass"
+    status = "warning" if active_processes or max_util >= 25.0 or max_memory_fraction >= 0.25 else "pass"
     if gpu_query.get("status") != "pass":
         status = "warning"
     return {
         "status": status,
         "summary": "GPU appears idle enough for a clean training run" if status == "pass" else "GPU baseline is busy or unavailable; training quality/runtime comparisons may be noisy",
         "gpus": gpus,
-        "computeProcesses": processes,
+        "computeProcesses": active_processes,
+        "ignoredComputeProcesses": [process for process in processes if process not in active_processes],
         "commands": {
             "gpuQuery": gpu_query,
             "processQuery": process_query,
@@ -1132,6 +1164,7 @@ def build_environment_report(job_path: Path) -> dict[str, Any]:
             "details": {
                 "gpus": gpu_baseline["gpus"],
                 "computeProcesses": gpu_baseline["computeProcesses"],
+                "ignoredComputeProcesses": gpu_baseline["ignoredComputeProcesses"],
             },
         },
     ]
@@ -2272,6 +2305,7 @@ def build_splat_training_report(
         "summary": gpu_baseline["summary"],
         "gpus": gpu_baseline["gpus"],
         "computeProcesses": gpu_baseline["computeProcesses"],
+        "ignoredComputeProcesses": gpu_baseline["ignoredComputeProcesses"],
     }
     base["checks"].append(
         {

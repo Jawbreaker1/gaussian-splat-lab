@@ -569,6 +569,9 @@ function viewerQuality(status, training = {}, runConfig = {}) {
   if (profile === 'rtx_ultra_quality') {
     return { text: training.renderReview?.status === 'pass' ? 'ultra inspect' : 'ultra warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
   }
+  if (profile === 'rtx_ceiling_quality') {
+    return { text: training.renderReview?.status === 'pass' ? 'ceiling inspect' : 'ceiling warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
+  }
   if (profile === 'rtx_max_quality') {
     return { text: training.renderReview?.status === 'pass' ? 'max inspect' : 'max warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
   }
