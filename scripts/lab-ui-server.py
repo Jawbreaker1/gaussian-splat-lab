@@ -7,11 +7,13 @@ import argparse
 import importlib.util
 import json
 import mimetypes
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,6 +25,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "app"
 NODE_MODULES_ROOT = REPO_ROOT / "node_modules"
 CAPTURE_MANIFEST = REPO_ROOT / "data/manifests/captures.example.json"
+LOCAL_CAPTURE_MANIFEST = REPO_ROOT / "data/tmp/ui-captures.json"
+EFFECTIVE_CAPTURE_MANIFEST = REPO_ROOT / "data/tmp/ui-effective-captures.json"
 FRAMEWORK_MANIFEST = REPO_ROOT / "data/manifests/framework-evaluation.json"
 GATES_MANIFEST = REPO_ROOT / "data/manifests/pipeline-gates.json"
 JOBS_DIR = REPO_ROOT / "outputs/jobs"
@@ -30,6 +34,36 @@ RTX_EVIDENCE = REPO_ROOT / "docs/validation/phase-0-rtx-workstation-wsl-output.m
 PIPELINE_SCRIPT = REPO_ROOT / "scripts/lab-pipeline.py"
 VENV_PYTHON = REPO_ROOT / ".venv/bin/python"
 RUNNABLE_STAGES = {"framework_license", "environment", "intake", "frame_sampling", "sfm", "splat_training", "packaging", "viewer", "quality_report"}
+TRAINING_STAGE_TIMEOUTS = {
+    "smoke": 30 * 60,
+    "baseline": 45 * 60,
+    "quality_probe": 2 * 60 * 60,
+    "rtx_reference": 4 * 60 * 60,
+    "rtx_high_quality": 8 * 60 * 60,
+    "rtx_ultra_quality": 12 * 60 * 60,
+    "rtx_ceiling_quality": 16 * 60 * 60,
+    "rtx_max_quality": 20 * 60 * 60,
+}
+UI_QUALITY_PRESETS = {
+    "quality_probe": {
+        "label": "Quality probe",
+        "targetFps": 2,
+        "maxFrames": 180,
+        "trainingProfile": "quality_probe",
+    },
+    "rtx_high_quality": {
+        "label": "High quality",
+        "targetFps": 3,
+        "maxFrames": 300,
+        "trainingProfile": "rtx_high_quality",
+    },
+    "rtx_ultra_quality": {
+        "label": "Ultra quality",
+        "targetFps": 3,
+        "maxFrames": 360,
+        "trainingProfile": "rtx_ultra_quality",
+    },
+}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -38,6 +72,143 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
     return value
+
+
+def write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=2)
+        handle.write("\n")
+
+
+def load_local_capture_manifest() -> dict[str, Any]:
+    if not LOCAL_CAPTURE_MANIFEST.exists():
+        return {"schemaVersion": 1, "captures": []}
+    manifest = read_json(LOCAL_CAPTURE_MANIFEST)
+    if not isinstance(manifest.get("captures"), list):
+        manifest["captures"] = []
+    return manifest
+
+
+def active_capture_manifest() -> Path:
+    base = read_json(CAPTURE_MANIFEST)
+    local = load_local_capture_manifest()
+    merged: dict[str, Any] = {
+        "schemaVersion": base.get("schemaVersion", 1),
+        "captures": [],
+    }
+    seen: set[str] = set()
+    for capture in list(base.get("captures", [])) + list(local.get("captures", [])):
+        if not isinstance(capture, dict):
+            continue
+        capture_id = str(capture.get("id") or "")
+        if not capture_id:
+            continue
+        if capture_id in seen:
+            merged["captures"] = [
+                existing for existing in merged["captures"] if existing.get("id") != capture_id
+            ]
+        merged["captures"].append(capture)
+        seen.add(capture_id)
+    write_json(EFFECTIVE_CAPTURE_MANIFEST, merged)
+    return EFFECTIVE_CAPTURE_MANIFEST
+
+
+def slugify(value: str, fallback: str = "iphone-capture") -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+    return slug[:48] or fallback
+
+
+def video_extension(upload_name: str | None) -> str:
+    suffix = Path(upload_name or "").suffix.lower()
+    if suffix in {".mov", ".mp4", ".m4v", ".avi", ".mkv", ".hevc"}:
+        return suffix
+    return ".mov"
+
+
+def upsert_local_capture(capture: dict[str, Any]) -> None:
+    manifest = load_local_capture_manifest()
+    capture_id = capture.get("id")
+    manifest["captures"] = [
+        item for item in manifest.get("captures", [])
+        if isinstance(item, dict) and item.get("id") != capture_id
+    ]
+    manifest["captures"].append(capture)
+    write_json(LOCAL_CAPTURE_MANIFEST, manifest)
+    active_capture_manifest()
+
+
+def remove_local_capture(capture_id: str) -> None:
+    manifest = load_local_capture_manifest()
+    manifest["captures"] = [
+        item for item in manifest.get("captures", [])
+        if isinstance(item, dict) and item.get("id") != capture_id
+    ]
+    write_json(LOCAL_CAPTURE_MANIFEST, manifest)
+    active_capture_manifest()
+
+
+def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None) -> dict[str, Any]:
+    display_name = (query.get("displayName", [""])[0] or Path(upload_name or "").stem or "iPhone capture").strip()
+    scene_kind = (query.get("sceneKind", ["room"])[0] or "room").strip()
+    quality_key = query.get("qualityPreset", ["quality_probe"])[0]
+    quality = UI_QUALITY_PRESETS.get(quality_key, UI_QUALITY_PRESETS["quality_probe"])
+    now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    capture_id = f"iphone-{slugify(display_name)}-{now}"
+    target_path = f"data/videos/uploads/{capture_id}{video_extension(upload_name)}"
+    subject = {
+        "room": "self-captured indoor room from iPhone video",
+        "outdoor": "self-captured outdoor environment from iPhone video",
+        "object": "self-captured object/area from iPhone video",
+    }.get(scene_kind, "self-captured environment from iPhone video")
+    motion = {
+        "room": "slow walking loop with clear parallax through the room",
+        "outdoor": "slow walking arc/loop with clear parallax through the environment",
+        "object": "slow orbit with clear parallax around the subject",
+    }.get(scene_kind, "slow iPhone movement with clear parallax")
+    return {
+        "id": capture_id,
+        "displayName": display_name,
+        "source": {
+            "kind": "local_file",
+            "path": target_path,
+            "sourceUrl": None,
+            "license": "self-captured",
+            "licenseNotes": "Uploaded through the local UI as user-confirmed self-captured media. Review scene content before commercial use.",
+        },
+        "capture": {
+            "subject": subject,
+            "motion": motion,
+            "expectedDurationSeconds": None,
+            "expectedResolution": "iPhone source video",
+        },
+        "pipeline": {
+            "frameSampling": {
+                "targetFps": quality["targetFps"],
+                "maxFrames": quality["maxFrames"],
+            },
+            "sfm": {
+                "backend": "colmap",
+                "requiresExplicitHeavyApproval": True,
+            },
+            "training": {
+                "backend": "gsplat",
+                "targetWorker": "windows-rtx-5090",
+                "profile": quality["trainingProfile"],
+                "requiresExplicitHeavyApproval": True,
+            },
+            "packaging": {
+                "preferredFormats": ["ply", "viewer-manifest"],
+            },
+        },
+        "status": "self-captured-ui-upload",
+        "ui": {
+            "sceneKind": scene_kind,
+            "qualityPreset": quality_key,
+            "uploadedFileName": upload_name,
+            "createdAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        },
+    }
 
 
 def load_pipeline_module():
@@ -149,11 +320,12 @@ def latest_viewer_artifact() -> dict[str, Any] | None:
 
 
 def build_state() -> dict[str, Any]:
-    captures = read_json(CAPTURE_MANIFEST).get("captures", [])
+    manifest_path = active_capture_manifest()
+    captures = read_json(manifest_path).get("captures", [])
     frameworks = read_json(FRAMEWORK_MANIFEST).get("frameworks", [])
     gates = read_json(GATES_MANIFEST).get("gates", [])
     pipeline = load_pipeline_module()
-    capture_readiness = pipeline.capture_readiness_report(CAPTURE_MANIFEST, REPO_ROOT).get("captures", [])
+    capture_readiness = pipeline.capture_readiness_report(manifest_path, REPO_ROOT).get("captures", [])
     evidence = RTX_EVIDENCE.read_text(encoding="utf-8") if RTX_EVIDENCE.exists() else ""
     return {
         "schemaVersion": 1,
@@ -164,6 +336,7 @@ def build_state() -> dict[str, Any]:
         "gates": gates,
         "latestJob": latest_job(),
         "viewerArtifact": latest_viewer_artifact(),
+        "qualityPresets": UI_QUALITY_PRESETS,
         "validation": {
             "architecture": run_validator("validate-architecture-contracts.sh"),
             "phase1": run_validator("validate-phase-1-contracts.sh"),
@@ -174,7 +347,7 @@ def build_state() -> dict[str, Any]:
 
 def create_job(capture_id: str) -> dict[str, Any]:
     pipeline = load_pipeline_module()
-    selection = pipeline.select_capture(CAPTURE_MANIFEST, capture_id)
+    selection = pipeline.select_capture(active_capture_manifest(), capture_id)
     job = pipeline.build_job(selection, REPO_ROOT)
     job_dir = JOBS_DIR / job["job"]["id"]
     job_path = job_dir / "job.json"
@@ -200,7 +373,23 @@ def resolve_job_path(raw_path: Any) -> Path:
     return resolved
 
 
-def run_job_stage(job_path: Path, stage: str, accept_warning: bool = False, allow_heavy: bool = False) -> dict[str, Any]:
+def stage_timeout(stage: str, training_profile: str | None = None) -> int:
+    if stage == "splat_training":
+        return TRAINING_STAGE_TIMEOUTS.get(str(training_profile or ""), 8 * 60 * 60)
+    if stage == "sfm":
+        return 4 * 60 * 60
+    if stage == "viewer":
+        return 60 * 60
+    return 30 * 60
+
+
+def run_job_stage(
+    job_path: Path,
+    stage: str,
+    accept_warning: bool = False,
+    allow_heavy: bool = False,
+    training_profile: str | None = None,
+) -> dict[str, Any]:
     if stage not in RUNNABLE_STAGES:
         raise ValueError(f"stage {stage!r} is not runnable from the UI yet")
     command = [pipeline_python(), str(PIPELINE_SCRIPT), "run-stage", stage, "--job", str(job_path)]
@@ -208,13 +397,15 @@ def run_job_stage(job_path: Path, stage: str, accept_warning: bool = False, allo
         command.append("--accept-warning")
     if allow_heavy:
         command.append("--allow-heavy")
+    if stage == "splat_training" and training_profile:
+        command.extend(["--training-profile", training_profile])
     result = subprocess.run(
         command,
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
-        timeout=900,
+        timeout=stage_timeout(stage, training_profile),
     )
 
     job = read_json(job_path)
@@ -239,12 +430,14 @@ def save_capture_upload(
     upload_name: str | None,
     accept_warning: bool,
     overwrite: bool,
+    manifest_path: Path | None = None,
 ) -> dict[str, Any]:
     if content_length <= 0:
         raise ValueError("uploaded video is empty")
 
     pipeline = load_pipeline_module()
-    selection = pipeline.select_capture(CAPTURE_MANIFEST, capture_id)
+    manifest = manifest_path or active_capture_manifest()
+    selection = pipeline.select_capture(manifest, capture_id)
     target_path = pipeline.capture_source_path(selection.capture, REPO_ROOT)
     tmp_path = Path(tempfile.gettempdir()) / f"gaussian-splat-lab-upload-{uuid.uuid4().hex}.video"
 
@@ -263,7 +456,7 @@ def save_capture_upload(
 
     try:
         report = pipeline.build_video_import_report(
-            manifest_path=CAPTURE_MANIFEST,
+            manifest_path=manifest,
             selection=selection,
             input_path=tmp_path,
             target_path=target_path,
@@ -275,7 +468,7 @@ def save_capture_upload(
         report["source"]["uploadedFileName"] = upload_name
         if target_path is not None and report["status"] == "pass":
             pipeline.write_json(pipeline.capture_import_report_path(target_path), report)
-        readiness = pipeline.capture_readiness_report(CAPTURE_MANIFEST, REPO_ROOT).get("captures", [])
+        readiness = pipeline.capture_readiness_report(manifest, REPO_ROOT).get("captures", [])
         return {"report": report, "captureReadiness": readiness}
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -424,12 +617,36 @@ class LabUiHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         route = parsed.path
-        if route not in {"/api/jobs", "/api/jobs/run-stage", "/api/captures/import-video"}:
+        if route not in {"/api/jobs", "/api/jobs/run-stage", "/api/captures/import-video", "/api/captures/create-upload"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
         try:
             length = int(self.headers.get("Content-Length", "0"))
+            if route == "/api/captures/create-upload":
+                query = parse_qs(parsed.query)
+                upload_name = self.headers.get("X-Filename")
+                capture = build_uploaded_capture(query, upload_name)
+                capture_id = str(capture["id"])
+                upsert_local_capture(capture)
+                try:
+                    result = save_capture_upload(
+                        capture_id=capture_id,
+                        stream=self.rfile,
+                        content_length=length,
+                        upload_name=upload_name,
+                        accept_warning=True,
+                        overwrite=True,
+                        manifest_path=active_capture_manifest(),
+                    )
+                except Exception:
+                    remove_local_capture(capture_id)
+                    raise
+                status = result.get("report", {}).get("status")
+                http_status = HTTPStatus.CREATED if status == "pass" else HTTPStatus.CONFLICT
+                self.send_json({"capture": capture, **result}, http_status)
+                return
+
             if route == "/api/captures/import-video":
                 query = parse_qs(parsed.query)
                 capture_id = query.get("captureId", [""])[0]
@@ -466,10 +683,19 @@ class LabUiHandler(BaseHTTPRequestHandler):
             stage = payload.get("stage")
             accept_warning = bool(payload.get("acceptWarning", False))
             allow_heavy = bool(payload.get("allowHeavy", False))
+            training_profile = payload.get("trainingProfile")
+            if not isinstance(training_profile, str):
+                training_profile = None
             if not isinstance(stage, str) or not stage:
                 self.send_json({"error": "stage is required"}, HTTPStatus.BAD_REQUEST)
                 return
-            result = run_job_stage(job_path, stage, accept_warning=accept_warning, allow_heavy=allow_heavy)
+            result = run_job_stage(
+                job_path,
+                stage,
+                accept_warning=accept_warning,
+                allow_heavy=allow_heavy,
+                training_profile=training_profile,
+            )
             self.send_json(result)
         except ValueError as exc:
             self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)

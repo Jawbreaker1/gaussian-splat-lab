@@ -1,8 +1,8 @@
 # End-User Interface
 
-Verified: 2026-06-17
+Verified: 2026-06-18
 
-The first user interface is a local lab console. It lets a user select a capture, import a local video into the manifest target path, create a planned job, inspect preflight/media pipeline gates and see commercial/compliance status before heavy reconstruction work starts.
+The first user interface is a local lab console. Its primary path is now a new iPhone capture wizard: choose a video, name the scene, select scene type/export target/quality, and let the UI upload, plan and run the pipeline stages in order. Manual capture selection, import and per-stage run controls remain available for debugging.
 
 As of 2026-06-17, the UI can also show packaged splat artifacts. The central scene is a Spark + Three.js Gaussian Splat viewer loaded from local npm packages, with Walk and Orbit navigation modes, pan, orbit, zoom, reset, reference-camera step controls and export controls for the active PLY plus viewer manifest. Walk mode supports keyboard movement and mouse-look inside the splat scene; double-clicking the canvas can enter pointer-lock look mode in browsers that allow it. Packaging exports COLMAP/training camera poses into the viewer manifest so the first render starts from a real training/review camera instead of a generic object-fit view. The older PLY WebGL point renderer remains available as `Debug` mode because it is useful for diagnosing malformed exports, sparse geometry and scale problems. The visual quality reference remains the `gsplat` render/target pair and multi-view render-review sheet written by the training stage.
 
@@ -13,6 +13,10 @@ The current visual direction is a dark RTX workstation console: the 3D scene is 
 The UI owns:
 
 - capture selection from tracked manifests
+- local user capture creation from direct iPhone/video upload
+- automatic job planning and stage-by-stage generation
+- quality profile selection for the training stage
+- generation progress and estimated remaining time
 - local video import with the same provenance-aware path/hash report as the CLI
 - job planning through the existing pipeline contract
 - preflight and media pipeline gate visibility
@@ -65,7 +69,17 @@ Default local URL:
 http://127.0.0.1:8765
 ```
 
-Local video import:
+Automatic iPhone/video generation:
+
+1. Enter a scene name.
+2. Choose scene type, quality and export target.
+3. Choose a local iPhone/video file.
+4. Confirm that the video was recorded by the user.
+5. Press `Generate 3DGS`.
+
+The server creates a local user capture under ignored `data/tmp` manifest state, stores the uploaded video under ignored `data/videos/uploads`, records provenance, creates a job and runs the pipeline through packaging/viewer validation. The progress panel shows the current stage and an estimated remaining time while each blocking stage runs.
+
+Manual video import:
 
 1. Select the capture manifest entry.
 2. Choose a local video file.

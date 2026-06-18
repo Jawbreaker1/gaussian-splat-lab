@@ -33,27 +33,82 @@
             <button class="icon-button" id="refreshButton" title="Refresh" aria-label="Refresh">↻</button>
           </div>
 
-          <label class="field">
-            <span>Source</span>
-            <select id="captureSelect"></select>
-          </label>
+          <div class="capture-wizard" aria-label="New iPhone capture">
+            <div class="wizard-head">
+              <div>
+                <h3>New iPhone Capture</h3>
+                <span>Upload video and generate a navigable 3DGS scene</span>
+              </div>
+              <span class="pill neutral" id="wizardModePill">auto</span>
+            </div>
 
-          <div class="source-summary" id="captureSummary"></div>
+            <label class="field">
+              <span>Scene name</span>
+              <input id="wizardCaptureName" type="text" autocomplete="off" placeholder="Living room test" />
+            </label>
 
-          <label class="field">
-            <span>Video file</span>
-            <input class="file-input" id="videoFileInput" type="file" accept="video/*" />
-          </label>
+            <div class="field-grid">
+              <label class="field">
+                <span>Scene type</span>
+                <select id="wizardSceneKind">
+                  <option value="room">Room / interior</option>
+                  <option value="outdoor">Outdoor environment</option>
+                  <option value="object">Object / small area</option>
+                </select>
+              </label>
 
-          <label class="checkline" id="acceptCaptureWarningRow">
-            <input id="acceptCaptureWarning" type="checkbox" />
-            <span>Accept capture warning for technical validation</span>
-          </label>
+              <label class="field">
+                <span>Quality</span>
+                <select id="wizardQualityPreset">
+                  <option value="quality_probe">Fast probe</option>
+                  <option value="rtx_high_quality">High quality</option>
+                  <option value="rtx_ultra_quality">Ultra quality</option>
+                </select>
+              </label>
+            </div>
 
-          <button class="secondary-action" id="importVideoButton">Import video</button>
-          <div class="import-status muted" id="importStatus"></div>
+            <label class="field">
+              <span>Export target</span>
+              <select id="wizardExportTarget">
+                <option value="web_ply">Web 3DGS PLY + viewer manifest</option>
+                <option value="blender_ply">3DGS PLY for Blender add-ons</option>
+              </select>
+            </label>
 
-          <button class="primary-action" id="planJobButton">Plan job</button>
+            <label class="field">
+              <span>iPhone video</span>
+              <input class="file-input" id="videoFileInput" type="file" accept="video/*" />
+            </label>
+
+            <label class="checkline">
+              <input id="wizardSelfCaptured" type="checkbox" checked />
+              <span>I recorded this video and can use it for this generation</span>
+            </label>
+
+            <button class="primary-action" id="generatePipelineButton">Generate 3DGS</button>
+            <div class="wizard-status muted" id="wizardStatus">Choose a video to estimate the run.</div>
+          </div>
+
+          <details class="collapsible" id="manualSourceControls">
+            <summary>Manual source controls</summary>
+
+            <label class="field">
+              <span>Source</span>
+              <select id="captureSelect"></select>
+            </label>
+
+            <div class="source-summary" id="captureSummary"></div>
+
+            <label class="checkline" id="acceptCaptureWarningRow">
+              <input id="acceptCaptureWarning" type="checkbox" />
+              <span>Accept capture warning for technical validation</span>
+            </label>
+
+            <button class="secondary-action" id="importVideoButton">Import video</button>
+            <div class="import-status muted" id="importStatus"></div>
+
+            <button class="primary-action" id="planJobButton">Plan job</button>
+          </details>
 
           <details class="collapsible" id="captureDetails">
             <summary>Capture details</summary>
@@ -78,6 +133,7 @@
             <div class="pipeline-progress-copy">
               <span id="pipelineProgressText">No job planned</span>
               <span id="pipelineCurrentStage">Ready for source selection</span>
+              <span id="pipelineEtaText">ETA pending</span>
             </div>
             <div class="progress-track" aria-hidden="true">
               <div class="progress-bar" id="pipelineProgressBar"></div>

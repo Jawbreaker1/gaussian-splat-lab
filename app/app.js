@@ -10,6 +10,14 @@ const els = {
   importVideoButton: document.querySelector('#importVideoButton'),
   importStatus: document.querySelector('#importStatus'),
   planJobButton: document.querySelector('#planJobButton'),
+  wizardCaptureName: document.querySelector('#wizardCaptureName'),
+  wizardSceneKind: document.querySelector('#wizardSceneKind'),
+  wizardQualityPreset: document.querySelector('#wizardQualityPreset'),
+  wizardExportTarget: document.querySelector('#wizardExportTarget'),
+  wizardSelfCaptured: document.querySelector('#wizardSelfCaptured'),
+  generatePipelineButton: document.querySelector('#generatePipelineButton'),
+  wizardStatus: document.querySelector('#wizardStatus'),
+  wizardModePill: document.querySelector('#wizardModePill'),
   refreshButton: document.querySelector('#refreshButton'),
   jobBox: document.querySelector('#jobBox'),
   preflightList: document.querySelector('#preflightList'),
@@ -17,6 +25,7 @@ const els = {
   gateCount: document.querySelector('#gateCount'),
   pipelineProgressText: document.querySelector('#pipelineProgressText'),
   pipelineCurrentStage: document.querySelector('#pipelineCurrentStage'),
+  pipelineEtaText: document.querySelector('#pipelineEtaText'),
   pipelineProgressBar: document.querySelector('#pipelineProgressBar'),
   blockedCount: document.querySelector('#blockedCount'),
   complianceGrid: document.querySelector('#complianceGrid'),
@@ -59,6 +68,8 @@ const els = {
 let state = null;
 let activeJob = null;
 let runningStage = null;
+let autoRun = null;
+let autoRunTimer = null;
 let importingVideo = false;
 let viewerLoadToken = 0;
 let viewerReadyResolved = false;
@@ -116,6 +127,32 @@ if (typeof window !== 'undefined') {
 
 const runnableStages = new Set(['framework_license', 'environment', 'intake', 'frame_sampling', 'sfm', 'splat_training', 'packaging', 'viewer', 'quality_report']);
 const heavyStages = new Set(['sfm', 'splat_training', 'viewer']);
+const automatedStageOrder = ['framework_license', 'environment', 'intake', 'frame_sampling', 'sfm', 'splat_training', 'packaging', 'viewer', 'quality_report'];
+const defaultStageEstimates = {
+  framework_license: 8,
+  environment: 15,
+  intake: 8,
+  frame_sampling: 90,
+  sfm: 12 * 60,
+  packaging: 20,
+  viewer: 35,
+  quality_report: 10,
+};
+const trainingProfileEstimates = {
+  smoke: 60,
+  baseline: 4 * 60,
+  quality_probe: 12 * 60,
+  rtx_reference: 25 * 60,
+  rtx_high_quality: 55 * 60,
+  rtx_ultra_quality: 2 * 60 * 60,
+  rtx_ceiling_quality: 3 * 60 * 60,
+  rtx_max_quality: 5 * 60 * 60,
+};
+const qualityPresetLabels = {
+  quality_probe: 'Fast probe',
+  rtx_high_quality: 'High quality',
+  rtx_ultra_quality: 'Ultra quality',
+};
 const fallbackStageNames = {
   framework_license: 'Dependency Review',
   environment: 'Workstation Check',
@@ -178,13 +215,86 @@ function selectedLicenseCheck() {
   return selectedCaptureReadiness()?.checks?.find((check) => check.id === 'source_license') ?? null;
 }
 
+function selectedTrainingProfile() {
+  return els.wizardQualityPreset.value || 'quality_probe';
+}
+
+function formatDuration(seconds) {
+  const value = Math.max(0, Math.round(Number(seconds) || 0));
+  if (value < 60) return '<1 min';
+  const minutes = Math.round(value / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+function stageEstimateSeconds(stage, profile = selectedTrainingProfile()) {
+  if (stage === 'splat_training') return trainingProfileEstimates[profile] ?? trainingProfileEstimates.quality_probe;
+  return defaultStageEstimates[stage] ?? 30;
+}
+
+function totalEstimateSeconds(profile = selectedTrainingProfile()) {
+  return automatedStageOrder.reduce((total, stage) => total + stageEstimateSeconds(stage, profile), 0);
+}
+
+function estimateRemainingSeconds() {
+  if (!autoRun?.active) return totalEstimateSeconds(selectedTrainingProfile());
+  const profile = autoRun.trainingProfile;
+  const currentIndex = Math.max(0, autoRun.currentIndex ?? 0);
+  let remaining = 0;
+  for (let index = currentIndex; index < automatedStageOrder.length; index += 1) {
+    const stage = automatedStageOrder[index];
+    const estimate = stageEstimateSeconds(stage, profile);
+    if (index === currentIndex && autoRun.stageStartedAt) {
+      const elapsed = (Date.now() - autoRun.stageStartedAt) / 1000;
+      remaining += Math.max(15, estimate - elapsed);
+    } else {
+      remaining += estimate;
+    }
+  }
+  return remaining;
+}
+
+function setWizardStatus(text, type = 'neutral') {
+  els.wizardStatus.textContent = text;
+  els.wizardStatus.dataset.type = type;
+}
+
+function updateWizardControls() {
+  const file = els.videoFileInput.files?.[0] ?? null;
+  const hasName = Boolean(els.wizardCaptureName.value.trim());
+  const hasRights = els.wizardSelfCaptured.checked;
+  const running = Boolean(autoRun?.active);
+  els.generatePipelineButton.disabled = running || !file || !hasName || !hasRights;
+  els.generatePipelineButton.textContent = running ? 'Generating' : 'Generate 3DGS';
+  els.wizardModePill.textContent = running ? 'running' : 'auto';
+  els.wizardModePill.className = running ? 'pill warning' : 'pill neutral';
+  if (!running) {
+    const profile = selectedTrainingProfile();
+    const label = qualityPresetLabels[profile] ?? profile;
+    const target = els.wizardExportTarget.value === 'blender_ply' ? '3DGS PLY for Blender add-ons' : 'web viewer bundle';
+    setWizardStatus(`${label}: estimated full run ${formatDuration(totalEstimateSeconds(profile))}; export ${target}.`);
+  }
+  updateImportControls();
+}
+
+function handleVideoFileChange() {
+  const file = els.videoFileInput.files?.[0] ?? null;
+  if (file && !els.wizardCaptureName.value.trim()) {
+    els.wizardCaptureName.value = file.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ');
+  }
+  updateWizardControls();
+}
+
 function updateImportControls() {
   const capture = selectedCapture();
   const file = els.videoFileInput.files?.[0] ?? null;
   const licenseStatus = selectedLicenseCheck()?.status;
   const needsWarningAcceptance = licenseStatus === 'warning';
+  const running = Boolean(autoRun?.active);
   els.acceptCaptureWarningRow.hidden = !needsWarningAcceptance;
-  els.importVideoButton.disabled = !capture || !file || importingVideo || (needsWarningAcceptance && !els.acceptCaptureWarning.checked);
+  els.importVideoButton.disabled = running || !capture || !file || importingVideo || (needsWarningAcceptance && !els.acceptCaptureWarning.checked);
   els.importVideoButton.textContent = importingVideo ? 'Importing' : 'Import video';
 }
 
@@ -303,10 +413,14 @@ function buildStageItem(gate, index, jobStages) {
     const action = document.createElement('button');
     action.className = 'stage-action';
     action.type = 'button';
-    action.textContent = runningStage === gate.id ? 'Running' : heavyStages.has(gate.id) ? 'Guarded' : 'Run';
-    action.disabled = !activeJob || Boolean(runningStage);
-    action.title = heavyStages.has(gate.id) ? `${stageDisplayName(gate)} requires explicit heavy-workload approval in CLI` : `Run ${stageDisplayName(gate)}`;
-    action.addEventListener('click', () => runStage(gate.id));
+    action.textContent = runningStage === gate.id ? 'Running' : heavyStages.has(gate.id) ? 'Heavy run' : 'Run';
+    action.disabled = !activeJob || Boolean(runningStage) || Boolean(autoRun?.active);
+    action.title = heavyStages.has(gate.id) ? `${stageDisplayName(gate)} can place sustained load on CPU/GPU` : `Run ${stageDisplayName(gate)}`;
+    action.addEventListener('click', () => runStage(gate.id, {
+      acceptWarning: true,
+      allowHeavy: heavyStages.has(gate.id),
+      trainingProfile: gate.id === 'splat_training' ? selectedTrainingProfile() : null,
+    }));
     item.append(number, body, status, action);
   } else {
     item.append(number, body, status);
@@ -318,6 +432,7 @@ function renderPipelineProgress(gates, jobStages) {
   if (!activeJob) {
     els.pipelineProgressText.textContent = 'No job planned';
     els.pipelineCurrentStage.textContent = 'Select a source and plan a job';
+    els.pipelineEtaText.textContent = `Estimated full run: ${formatDuration(totalEstimateSeconds())}`;
     els.pipelineProgressBar.style.width = '0%';
     return;
   }
@@ -340,14 +455,24 @@ function renderPipelineProgress(gates, jobStages) {
   els.pipelineProgressText.textContent = `${passed}/${gates.length} passed${warnings ? `, ${warnings} warning` : ''}`;
   els.pipelineProgressBar.style.width = `${percent}%`;
 
-  if (runningStage) {
+  if (autoRun?.active) {
+    const current = runningStage || autoRun.currentStage;
+    els.pipelineCurrentStage.textContent = current
+      ? `Running ${stageDisplayName({ id: current })}`
+      : 'Preparing automatic run';
+    els.pipelineEtaText.textContent = `ETA ${formatDuration(estimateRemainingSeconds())}`;
+  } else if (runningStage) {
     els.pipelineCurrentStage.textContent = `Running ${stageDisplayName({ id: runningStage })}`;
+    els.pipelineEtaText.textContent = `Estimated remaining step: ${formatDuration(stageEstimateSeconds(runningStage))}`;
   } else if (blocked) {
     els.pipelineCurrentStage.textContent = `Needs attention: ${stageDisplayName(currentGate ?? gates[0])}`;
+    els.pipelineEtaText.textContent = 'Paused until the blocking check is resolved';
   } else if (currentGate) {
     els.pipelineCurrentStage.textContent = `Next: ${stageDisplayName(currentGate)}`;
+    els.pipelineEtaText.textContent = `Estimated full run: ${formatDuration(totalEstimateSeconds())}`;
   } else {
     els.pipelineCurrentStage.textContent = 'Pipeline complete';
+    els.pipelineEtaText.textContent = 'Generation finished';
   }
 }
 
@@ -416,6 +541,7 @@ function renderAll() {
   els.machineLabel.textContent = state?.machineLabel ?? 'RTX workstation';
   renderStatus();
   renderCaptures();
+  updateWizardControls();
   renderStages();
   renderCompliance();
   renderJob();
@@ -471,9 +597,9 @@ async function importVideo() {
   }
 }
 
-async function createJob() {
-  const capture = selectedCapture();
-  if (!capture) return;
+async function createJob(captureId = null, options = {}) {
+  const capture = captureId ? { id: captureId } : selectedCapture();
+  if (!capture) return null;
   els.planJobButton.disabled = true;
   try {
     const response = await fetch('/api/jobs', {
@@ -485,18 +611,23 @@ async function createJob() {
     if (!response.ok) throw new Error(payload.error || `job ${response.status}`);
     activeJob = payload.job;
     await loadState();
+    return activeJob;
   } catch (error) {
-    els.jobBox.replaceChildren();
-    const message = document.createElement('div');
-    message.className = 'error-text';
-    message.textContent = error.message;
-    els.jobBox.append(message);
+    if (!options.silent) {
+      els.jobBox.replaceChildren();
+      const message = document.createElement('div');
+      message.className = 'error-text';
+      message.textContent = error.message;
+      els.jobBox.append(message);
+    }
+    if (options.silent) throw error;
+    return null;
   } finally {
     els.planJobButton.disabled = false;
   }
 }
 
-async function runStage(stage) {
+async function runStage(stage, options = {}) {
   if (!activeJob || runningStage) return;
   runningStage = stage;
   renderStages();
@@ -504,20 +635,123 @@ async function runStage(stage) {
     const response = await fetch('/api/jobs/run-stage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobPath: activeJob.jobPath, stage, acceptWarning: false, allowHeavy: false }),
+      body: JSON.stringify({
+        jobPath: activeJob.jobPath,
+        stage,
+        acceptWarning: Boolean(options.acceptWarning),
+        allowHeavy: Boolean(options.allowHeavy),
+        trainingProfile: options.trainingProfile ?? null,
+      }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `stage ${response.status}`);
+    if (payload.returnCode && payload.returnCode !== 0) {
+      const message = payload.stderr || payload.stdout || `${stage} failed`;
+      throw new Error(message);
+    }
     activeJob = payload.job;
     await loadState();
+    return payload;
   } catch (error) {
+    if (!options.silent) {
+      els.jobBox.replaceChildren();
+      const message = document.createElement('div');
+      message.className = 'error-text';
+      message.textContent = error.message;
+      els.jobBox.append(message);
+    }
+    if (options.silent) throw error;
+    return null;
+  } finally {
+    runningStage = null;
+    renderStages();
+  }
+}
+
+async function uploadWizardCapture(file, profile) {
+  const params = new URLSearchParams({
+    displayName: els.wizardCaptureName.value.trim(),
+    sceneKind: els.wizardSceneKind.value,
+    qualityPreset: profile,
+    exportTarget: els.wizardExportTarget.value,
+  });
+  const response = await fetch(`/api/captures/create-upload?${params.toString()}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Filename': file.name,
+    },
+    body: file,
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || payload.report?.checks?.[0]?.summary || `upload ${response.status}`);
+  return payload;
+}
+
+function startAutoRunTimer() {
+  window.clearInterval(autoRunTimer);
+  autoRunTimer = window.setInterval(() => {
+    if (!autoRun?.active) {
+      window.clearInterval(autoRunTimer);
+      autoRunTimer = null;
+      return;
+    }
+    renderStages();
+  }, 1000);
+}
+
+async function generatePipeline() {
+  const file = els.videoFileInput.files?.[0] ?? null;
+  if (!file || autoRun?.active) return;
+  const profile = selectedTrainingProfile();
+  autoRun = {
+    active: true,
+    trainingProfile: profile,
+    currentStage: null,
+    currentIndex: 0,
+    startedAt: Date.now(),
+    stageStartedAt: Date.now(),
+  };
+  startAutoRunTimer();
+  updateWizardControls();
+  setWizardStatus(`Uploading ${file.name}`, 'neutral');
+  try {
+    const upload = await uploadWizardCapture(file, profile);
+    captureSelectionTouched = true;
+    await loadState();
+    els.captureSelect.value = upload.capture.id;
+    setWizardStatus('Planning job', 'neutral');
+    await createJob(upload.capture.id, { silent: true });
+
+    for (let index = 0; index < automatedStageOrder.length; index += 1) {
+      const stage = automatedStageOrder[index];
+      autoRun.currentStage = stage;
+      autoRun.currentIndex = index;
+      autoRun.stageStartedAt = Date.now();
+      setWizardStatus(`Running ${stageDisplayName({ id: stage })}; ETA ${formatDuration(estimateRemainingSeconds())}`, 'neutral');
+      await runStage(stage, {
+        silent: true,
+        acceptWarning: true,
+        allowHeavy: heavyStages.has(stage),
+        trainingProfile: stage === 'splat_training' ? profile : null,
+      });
+    }
+
+    setWizardStatus('Generation complete. The scene is ready in Render mode.', 'pass');
+    setViewerMode('spark');
+    els.videoFileInput.value = '';
+  } catch (error) {
+    setWizardStatus(error.message, 'fail');
     els.jobBox.replaceChildren();
     const message = document.createElement('div');
     message.className = 'error-text';
     message.textContent = error.message;
     els.jobBox.append(message);
   } finally {
-    runningStage = null;
+    autoRun = null;
+    window.clearInterval(autoRunTimer);
+    autoRunTimer = null;
+    updateWizardControls();
     renderStages();
   }
 }
@@ -1423,10 +1657,16 @@ els.captureSelect.addEventListener('change', () => {
   els.importStatus.textContent = '';
   renderCaptureMeta();
 });
-els.videoFileInput.addEventListener('change', updateImportControls);
+els.videoFileInput.addEventListener('change', handleVideoFileChange);
+els.wizardCaptureName.addEventListener('input', updateWizardControls);
+els.wizardSceneKind.addEventListener('change', updateWizardControls);
+els.wizardQualityPreset.addEventListener('change', updateWizardControls);
+els.wizardExportTarget.addEventListener('change', updateWizardControls);
+els.wizardSelfCaptured.addEventListener('change', updateWizardControls);
+els.generatePipelineButton.addEventListener('click', generatePipeline);
 els.acceptCaptureWarning.addEventListener('change', updateImportControls);
 els.importVideoButton.addEventListener('click', importVideo);
-els.planJobButton.addEventListener('click', createJob);
+els.planJobButton.addEventListener('click', () => createJob());
 els.refreshButton.addEventListener('click', loadState);
 
 requestAnimationFrame(drawPreviewFrame);

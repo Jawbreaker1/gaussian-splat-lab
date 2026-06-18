@@ -120,6 +120,10 @@ http://127.0.0.1:8765/
 
 The UI is a local lab console with:
 
+- a new iPhone capture wizard for direct video upload
+- scene type, export target and quality profile selection
+- automatic upload, job planning and stage-by-stage generation
+- progress text and ETA for the full generation run
 - source/capture selection
 - local video import controls
 - live pipeline panel on the right
