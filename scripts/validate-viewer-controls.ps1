@@ -206,6 +206,18 @@ try {
     results.push(await run(label, selector, limits));
   }
 
+  byId('#viewerPanLeftButton').click();
+  await sleep(180);
+  const beforeKeyboard = state();
+  document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', key: 'w', bubbles: true }));
+  await sleep(420);
+  document.dispatchEvent(new KeyboardEvent('keyup', { code: 'KeyW', key: 'w', bubbles: true }));
+  await sleep(120);
+  const afterKeyboard = state();
+  const keyboardPositionDelta = distance(beforeKeyboard.position, afterKeyboard.position);
+  if (keyboardPositionDelta < 0.03) throw new Error(`walk keyboard did not move after button focus: ${keyboardPositionDelta.toFixed(4)}`);
+  if (keyboardPositionDelta > 0.35) throw new Error(`walk keyboard moved too far after button focus: ${keyboardPositionDelta.toFixed(4)}`);
+
   byId('#viewerResetButton').click();
   await sleep(500);
   byId('#viewerNavOrbitButton').click();
@@ -229,7 +241,20 @@ try {
     results.push(await run(label, selector, limits));
   }
 
-  return { status: 'pass', count: results.length, results, finalState: state() };
+  byId('#viewerModeDebugButton').click();
+  let debugState = null;
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    await sleep(500);
+    debugState = debug.getUiState();
+    if (debugState.mode === 'debug' && debugState.debugPointCount > 0) break;
+  }
+  if (!debugState || debugState.mode !== 'debug') throw new Error('debug mode did not activate');
+  if (!(debugState.debugPointCount > 0)) throw new Error('debug point cloud did not load any points');
+
+  byId('#viewerModeSparkButton').click();
+  await sleep(500);
+
+  return { status: 'pass', count: results.length, results, keyboardPositionDelta, debugState, finalState: state() };
 })()
 '@
 
@@ -251,6 +276,8 @@ try {
   Write-Output ("max_position_delta={0}" -f (($value.results | Measure-Object -Property positionDelta -Maximum).Maximum))
   Write-Output ("max_target_delta={0}" -f (($value.results | Measure-Object -Property targetDelta -Maximum).Maximum))
   Write-Output ("max_distance_delta={0}" -f (($value.results | Measure-Object -Property distanceDelta -Maximum).Maximum))
+  Write-Output ("keyboard_position_delta={0}" -f $value.keyboardPositionDelta)
+  Write-Output ("debug_point_count={0}" -f $value.debugState.debugPointCount)
   Write-Output ("final_mode={0}" -f $value.finalState.mode)
   Write-Output ("final_target_distance={0}" -f $value.finalState.targetDistance)
 } finally {

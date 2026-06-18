@@ -70,7 +70,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   controls.maxDistance = 14;
   controls.enabled = false;
   const walkButtonLookPixels = 34;
-  const orbitButtonRadians = 0.055;
+  const orbitButtonRadians = 0.042;
   const maxButtonPanStep = 0.095;
 
   const grid = new THREE.GridHelper(2.2, 16, 0x315c66, 0x24323a);
@@ -423,7 +423,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   function keyboardTargetIsEditable(event) {
     const element = event.target;
     if (!(element instanceof HTMLElement)) return false;
-    return ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(element.tagName) || element.isContentEditable;
+    return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) || element.isContentEditable;
   }
 
   function isWalkKey(code) {
@@ -444,7 +444,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
   function canUseWalkKeyboard(event) {
     if (navigationMode !== 'walk' || keyboardTargetIsEditable(event)) return false;
-    return document.activeElement === canvas || document.pointerLockElement === canvas;
+    return true;
   }
 
   function onKeyDown(event) {
@@ -475,7 +475,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
     const fast = pressedKeys.has('ShiftLeft') || pressedKeys.has('ShiftRight');
     const slow = pressedKeys.has('ControlLeft') || pressedKeys.has('ControlRight');
-    const speed = 0.72 * (fast ? 3.2 : 1) * (slow ? 0.3 : 1);
+    const speed = scaledSceneExtent() * 0.34 * (fast ? 3.2 : 1) * (slow ? 0.3 : 1);
     move.normalize().multiplyScalar(speed * deltaSeconds);
     camera.position.add(move);
     syncTargetToCamera();

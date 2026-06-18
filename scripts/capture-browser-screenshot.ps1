@@ -7,7 +7,9 @@ param(
   [int]$Height = 1000,
   [string]$WaitText = "reference inspect",
   [int]$WaitTimeoutSeconds = 180,
-  [int]$ExtraWaitSeconds = 2
+  [int]$ExtraWaitSeconds = 2,
+  [string]$ClickSelector = "",
+  [int]$AfterClickWaitSeconds = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -139,6 +141,26 @@ try {
 
   if ($ExtraWaitSeconds -gt 0) {
     Start-Sleep -Seconds $ExtraWaitSeconds
+  }
+
+  if ($ClickSelector) {
+    $clickExpression = @"
+(() => {
+  const element = document.querySelector('$ClickSelector');
+  if (!element) {
+    throw new Error('click selector not found: $ClickSelector');
+  }
+  element.click();
+  return true;
+})()
+"@
+    Send-CdpCommand -Socket $socket -Method "Runtime.evaluate" -Params @{
+      expression = $clickExpression
+      returnByValue = $true
+    } | Out-Null
+    if ($AfterClickWaitSeconds -gt 0) {
+      Start-Sleep -Seconds $AfterClickWaitSeconds
+    }
   }
 
   $screenshot = Send-CdpCommand -Socket $socket -Method "Page.captureScreenshot" -Params @{

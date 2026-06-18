@@ -62,6 +62,7 @@ let viewerLoadToken = 0;
 let viewerReadyResolved = false;
 let resolveViewerReady = null;
 let captureSelectionTouched = false;
+const debugPointBudget = 320000;
 const viewerReadyPromise = new Promise((resolve) => {
   resolveViewerReady = resolve;
 });
@@ -70,6 +71,7 @@ const viewerScene = {
   mode: 'spark',
   pointData: null,
   pointCount: 0,
+  debugPointCount: 0,
   artifactUrl: null,
   status: 'pending',
   rotationX: -0.28,
@@ -100,6 +102,7 @@ if (typeof window !== 'undefined') {
       sparkNavigationMode: viewerScene.sparkNavigationMode,
       sparkFailed: viewerScene.sparkFailed,
       pointCount: viewerScene.pointCount,
+      debugPointCount: viewerScene.debugPointCount,
       cameraViewCount: viewerScene.cameraViewCount,
       activeCameraView: viewerScene.activeCameraView?.imageName ?? null,
     }),
@@ -651,6 +654,7 @@ function renderViewerMeta(extra = null) {
     row('Profile', training.profile ?? runConfig.profile ?? '-'),
     row('Strategy', training.densifyStrategy ?? runConfig.densifyStrategy ?? '-'),
     row('Gaussians', formatCount(extra?.pointCount ?? (viewerScene.pointCount || ply.vertexCount))),
+    row('Debug points', viewerScene.debugPointCount ? formatCount(viewerScene.debugPointCount) : '-'),
     row('Reference views', cameraViews.length ? `${formatCount(cameraViews.length)}${activeView?.imageName ? ` (${activeView.imageName})` : ''}` : '-'),
     row('Growth', formatGrowth(training)),
     row('Review MAE', training.renderReview?.meanMae ?? '-'),
@@ -710,7 +714,7 @@ function readProperty(view, offset, type) {
   }
 }
 
-function parseBinaryPly(buffer) {
+function parseBinaryPly(buffer, maxDebugPoints = debugPointBudget) {
   const bytes = new Uint8Array(buffer);
   const decoder = new TextDecoder('ascii');
   const prefix = decoder.decode(bytes.slice(0, Math.min(bytes.length, 65536)));
@@ -753,7 +757,8 @@ function parseBinaryPly(buffer) {
   const view = new DataView(buffer);
   const shC0 = 0.28209479177387814;
   const points = [];
-  for (let index = 0; index < vertexCount; index += 1) {
+  const sampleStride = Math.max(1, Math.ceil(vertexCount / maxDebugPoints));
+  for (let index = 0; index < vertexCount; index += sampleStride) {
     const base = headerBytes + index * stride;
     const read = (name, fallback = 0) => {
       const property = byName.get(name);
@@ -774,7 +779,7 @@ function parseBinaryPly(buffer) {
       size: clamp(scale, 0.003, 0.08),
     });
   }
-  return { points, vertexCount, properties };
+  return { points, vertexCount, debugPointCount: points.length, sampleStride, properties };
 }
 
 function normalizePoints(points) {
@@ -807,6 +812,7 @@ async function loadViewerArtifact() {
   if (!url) {
     viewerScene.pointData = null;
     viewerScene.pointCount = 0;
+    viewerScene.debugPointCount = 0;
     viewerScene.artifactUrl = null;
     viewerScene.uploadedArtifactUrl = null;
     markViewerReady();
@@ -827,6 +833,7 @@ async function loadViewerArtifact() {
     if (token !== viewerLoadToken) return;
     viewerScene.pointData = buildPointData(normalizePoints(parsed.points));
     viewerScene.pointCount = parsed.vertexCount;
+    viewerScene.debugPointCount = parsed.debugPointCount;
     viewerScene.artifactUrl = url;
     viewerScene.uploadedArtifactUrl = null;
     uploadPointData();
@@ -835,6 +842,7 @@ async function loadViewerArtifact() {
     if (token !== viewerLoadToken) return;
     viewerScene.pointData = null;
     viewerScene.pointCount = 0;
+    viewerScene.debugPointCount = 0;
     viewerScene.artifactUrl = null;
     viewerScene.uploadedArtifactUrl = null;
     setViewerStatus('viewer error', 'fail');
@@ -1277,6 +1285,7 @@ function setViewerMode(mode) {
   els.viewerModeSparkButton.setAttribute('aria-pressed', String(isSpark));
   els.viewerModeDebugButton.setAttribute('aria-pressed', String(!isSpark));
   if (isSpark) loadSparkArtifact();
+  else loadViewerArtifact();
   renderViewerMeta({ pointCount: viewerScene.pointCount });
 }
 
