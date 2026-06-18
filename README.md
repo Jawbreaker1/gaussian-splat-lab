@@ -45,6 +45,7 @@ The long-term product need is a reliable path from capture media to an interacti
 - commercial-aware dependency choices, because the output may later be used in a commercial setting
 - a simple end-user interface, because the pipeline should eventually be operated by non-engineers
 - exportable scene artifacts, because generated environments need to be embedded, handed off or archived
+- an agent-invokable worker boundary, because Swoqer-style integrations may need to wake an AI agent that runs the pipeline through `swoqerd` and returns 3DGS artifacts
 
 The repo is separate from other product code so reconstruction decisions, generated artifacts, licensing checks and heavy GPU experiments stay isolated.
 
@@ -163,17 +164,24 @@ Relevant docs:
 
 ## Swoqer Integration Possibility
 
-The pipeline is intentionally separated from any product backend so it can later integrate with [swoqer.com](https://swoqer.com/) if that becomes the right product path.
+The pipeline is intentionally separated from any product backend so it can later run as a capability behind [swoqer.com](https://swoqer.com/).
 
-Possible integration shapes:
+Swoqer is expected to act as an identity-based integration platform for distributed agentic applications. In that model, Gaussian Splat Lab is not the user-facing integration layer. It is the local or remote reconstruction worker that can be invoked by an authenticated agent workflow.
 
-- Swoqer uploads or references a capture video
-- Gaussian Splat Lab, or a productionized service based on it, runs the reconstruction job
-- the resulting PLY and viewer manifest are stored as scene assets
-- Swoqer embeds the browser viewer for interactive scene navigation
-- the pipeline reports become internal diagnostics for quality, capture readiness and commercial safety
+Possible flow:
 
-That integration is not implemented in this repo yet. The current work is to make the local pipeline robust enough that it can become a reliable service boundary later.
+1. An external service or user identity sends large dataset/video payloads through Swoqer.
+2. Swoqer authorizes, routes and tracks that integration event.
+3. Swoqer wakes or addresses an AI agent with the dataset/video context.
+4. The agent talks to `swoqerd` on a capable workstation or worker node.
+5. `swoqerd` starts a Gaussian Splat Lab job with the supplied video/dataset.
+6. Gaussian Splat Lab runs intake, frame sampling, SfM, splat training, packaging and viewer validation.
+7. The generated 3DGS artifacts are returned: PLY splat, viewer manifest, diagnostics and quality reports.
+8. The calling service can use those artifacts as an interactive 3D environment or hand them to another agent/application.
+
+In this architecture, Swoqer provides identity, integration routing, large-file handoff and distributed agent activation. Gaussian Splat Lab provides the reconstruction capability and the self-validating pipeline boundary.
+
+That integration is not implemented in this repo yet. The current work is to make the local pipeline robust enough that `swoqerd` or a similar agent runtime can invoke it predictably and return auditable 3DGS results.
 
 ## Key Commands
 
