@@ -72,6 +72,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   const walkButtonLookPixels = 34;
   const orbitButtonRadians = 0.042;
   const maxButtonPanStep = 0.095;
+  const defaultNavigationSensitivity = 0.55;
 
   const grid = new THREE.GridHelper(2.2, 16, 0x315c66, 0x24323a);
   grid.position.y = -0.82;
@@ -98,6 +99,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   let walkYaw = 0;
   let walkPitch = 0;
   let walkFocusDistance = 1;
+  let navigationSensitivity = defaultNavigationSensitivity;
   let disposed = false;
   let lastRenderMs = 0;
   const minFrameMs = 1000 / 24;
@@ -123,6 +125,17 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     overlay.hidden = !text;
     overlay.dataset.type = type;
     onStatus?.(text, type);
+  }
+
+  function setNavigationSensitivity(value = defaultNavigationSensitivity) {
+    const numeric = Number(value);
+    navigationSensitivity = Number.isFinite(numeric)
+      ? clamp(numeric, 0.2, 1.2)
+      : defaultNavigationSensitivity;
+    controls.rotateSpeed = 0.55 * navigationSensitivity;
+    controls.zoomSpeed = 0.7 * navigationSensitivity;
+    controls.panSpeed = 0.65 * navigationSensitivity;
+    return { sensitivity: navigationSensitivity };
   }
 
   function resize() {
@@ -169,7 +182,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
   function rotateWalk(deltaX, deltaY) {
     if (navigationMode !== 'walk') return;
-    const sensitivity = 0.0021;
+    const sensitivity = 0.0021 * navigationSensitivity;
     walkYaw -= deltaX * sensitivity;
     walkPitch = clamp(walkPitch - deltaY * sensitivity, -1.42, 1.42);
     applyWalkLook();
@@ -289,13 +302,13 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   }
 
   function walkButtonStep() {
-    return scaledSceneExtent() * 0.05;
+    return scaledSceneExtent() * 0.05 * navigationSensitivity;
   }
 
   function orbitPanStep() {
     const distance = camera.position.distanceTo(controls.target);
     if (!Number.isFinite(distance)) return walkButtonStep();
-    return clamp(distance * 0.032, walkButtonStep() * 0.35, maxButtonPanStep);
+    return clamp(distance * 0.032 * navigationSensitivity, walkButtonStep() * 0.35, maxButtonPanStep * navigationSensitivity);
   }
 
   function addLocalMovement(deltaRight = 0, deltaUp = 0, deltaForward = 0, step = walkButtonStep()) {
@@ -371,8 +384,8 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     target.copy(controls.target);
     offset.copy(camera.position).sub(target);
     spherical.setFromVector3(offset);
-    spherical.theta += deltaX * orbitButtonRadians;
-    spherical.phi = clamp(spherical.phi + deltaY * orbitButtonRadians, 0.08, Math.PI - 0.08);
+    spherical.theta += deltaX * orbitButtonRadians * navigationSensitivity;
+    spherical.phi = clamp(spherical.phi + deltaY * orbitButtonRadians * navigationSensitivity, 0.08, Math.PI - 0.08);
     offset.setFromSpherical(spherical);
     camera.position.copy(target).add(offset);
     controls.update();
@@ -386,8 +399,9 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     target.copy(controls.target);
     offset.copy(camera.position).sub(target);
     const distance = offset.length();
+    const adjustedFactor = 1 + ((factor - 1) * navigationSensitivity);
     const nextDistance = clamp(
-      Number.isFinite(distance) ? distance / factor : 1,
+      Number.isFinite(distance) ? distance / adjustedFactor : 1,
       controls.minDistance,
       Math.min(controls.maxDistance, 8),
     );
@@ -475,7 +489,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
     const fast = pressedKeys.has('ShiftLeft') || pressedKeys.has('ShiftRight');
     const slow = pressedKeys.has('ControlLeft') || pressedKeys.has('ControlRight');
-    const speed = scaledSceneExtent() * 0.34 * (fast ? 3.2 : 1) * (slow ? 0.3 : 1);
+    const speed = scaledSceneExtent() * 0.34 * navigationSensitivity * (fast ? 3.2 : 1) * (slow ? 0.3 : 1);
     move.normalize().multiplyScalar(speed * deltaSeconds);
     camera.position.add(move);
     syncTargetToCamera();
@@ -526,7 +540,8 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   function onWheel(event) {
     if (navigationMode !== 'walk') return;
     event.preventDefault();
-    moveAlongView(event.deltaY > 0 ? -0.11 : 0.11);
+    const amount = scaledSceneExtent() * 0.065 * navigationSensitivity;
+    moveAlongView(event.deltaY > 0 ? -amount : amount);
   }
 
   function vectorSnapshot(vector) {
@@ -542,6 +557,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
       up: vectorSnapshot(camera.up),
       targetDistance: Number(camera.position.distanceTo(controls.target).toFixed(6)),
       walkFocusDistance: Number(walkFocusDistance.toFixed(6)),
+      navigationSensitivity: Number(navigationSensitivity.toFixed(3)),
       fov: Number(camera.fov.toFixed(6)),
       activeCameraViewIndex,
       viewCount: cameraViews.length,
@@ -570,10 +586,12 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   canvas.addEventListener('dblclick', onDoubleClick);
   canvas.addEventListener('wheel', onWheel, { passive: false });
   renderer.setAnimationLoop(frame);
+  setNavigationSensitivity(defaultNavigationSensitivity);
 
   return {
     load,
     setNavigationMode,
+    setNavigationSensitivity,
     setCameraViews,
     previousCameraView: () => nextCameraView(-1),
     nextCameraView: () => nextCameraView(1),

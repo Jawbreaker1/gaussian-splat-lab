@@ -181,8 +181,25 @@ try {
     if (after.targetDistance > limits.maxTargetDistance) throw new Error(`${label}: target distance ${after.targetDistance} > ${limits.maxTargetDistance}`);
     return result;
   };
+  const setSensitivity = async (percent) => {
+    const input = byId('#viewerSensitivityInput');
+    const output = byId('#viewerSensitivityValue');
+    input.value = String(percent);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await sleep(120);
+    const navState = state();
+    const expected = percent / 100;
+    if (Math.abs(navState.navigationSensitivity - expected) > 0.001) {
+      throw new Error(`navigation sensitivity did not apply: ${navState.navigationSensitivity} != ${expected}`);
+    }
+    if (output.textContent.trim() !== `${percent}%`) {
+      throw new Error(`navigation sensitivity label did not update: ${output.textContent}`);
+    }
+  };
 
   const results = [];
+  await setSensitivity(35);
+  await setSensitivity(55);
   byId('#viewerModeSparkButton').click();
   byId('#viewerNavWalkButton').click();
   await sleep(500);

@@ -48,6 +48,8 @@ const els = {
   viewerModeDebugButton: document.querySelector('#viewerModeDebugButton'),
   viewerNavWalkButton: document.querySelector('#viewerNavWalkButton'),
   viewerNavOrbitButton: document.querySelector('#viewerNavOrbitButton'),
+  viewerSensitivityInput: document.querySelector('#viewerSensitivityInput'),
+  viewerSensitivityValue: document.querySelector('#viewerSensitivityValue'),
   sparkViewport: document.querySelector('#sparkViewport'),
   sparkCanvas: document.querySelector('#sparkCanvas'),
   sparkOverlay: document.querySelector('#sparkOverlay'),
@@ -63,6 +65,7 @@ let viewerReadyResolved = false;
 let resolveViewerReady = null;
 let captureSelectionTouched = false;
 const debugPointBudget = 320000;
+const defaultNavigationSensitivity = 0.55;
 const viewerReadyPromise = new Promise((resolve) => {
   resolveViewerReady = resolve;
 });
@@ -88,6 +91,7 @@ const viewerScene = {
   sparkArtifactUrl: null,
   sparkFailed: false,
   sparkNavigationMode: 'walk',
+  navigationSensitivity: defaultNavigationSensitivity,
   cameraViewCount: 0,
   activeCameraView: null,
   uploadedArtifactUrl: null,
@@ -100,6 +104,7 @@ if (typeof window !== 'undefined') {
     getUiState: () => ({
       mode: viewerScene.mode,
       sparkNavigationMode: viewerScene.sparkNavigationMode,
+      navigationSensitivity: viewerScene.navigationSensitivity,
       sparkFailed: viewerScene.sparkFailed,
       pointCount: viewerScene.pointCount,
       debugPointCount: viewerScene.debugPointCount,
@@ -871,6 +876,7 @@ async function ensureSparkController() {
     },
   });
   viewerScene.sparkController.setNavigationMode(viewerScene.sparkNavigationMode);
+  viewerScene.sparkController.setNavigationSensitivity(viewerScene.navigationSensitivity);
   renderViewerMeta({ pointCount: viewerScene.pointCount });
   return viewerScene.sparkController;
 }
@@ -1261,18 +1267,19 @@ function resetViewer() {
 }
 
 function panViewer(deltaX, deltaY) {
-  const step = 0.09 / viewerScene.zoom;
+  const step = (0.09 * viewerScene.navigationSensitivity) / viewerScene.zoom;
   viewerScene.panX += deltaX * step;
   viewerScene.panY += deltaY * step;
 }
 
 function orbitViewer(deltaX, deltaY) {
-  viewerScene.rotationY += deltaX * 0.16;
-  viewerScene.rotationX = clamp(viewerScene.rotationX + deltaY * 0.16, -1.4, 1.4);
+  viewerScene.rotationY += deltaX * 0.16 * viewerScene.navigationSensitivity;
+  viewerScene.rotationX = clamp(viewerScene.rotationX + deltaY * 0.16 * viewerScene.navigationSensitivity, -1.4, 1.4);
 }
 
 function zoomViewer(factor) {
-  viewerScene.zoom = clamp(viewerScene.zoom * factor, 0.35, 5);
+  const adjustedFactor = 1 + ((factor - 1) * viewerScene.navigationSensitivity);
+  viewerScene.zoom = clamp(viewerScene.zoom * adjustedFactor, 0.35, 5);
 }
 
 function setViewerMode(mode) {
@@ -1297,6 +1304,19 @@ function setSparkNavigationMode(mode) {
   els.viewerNavOrbitButton.setAttribute('aria-pressed', String(viewerScene.sparkNavigationMode === 'orbit'));
   if (viewerScene.sparkController && !viewerScene.sparkFailed) {
     viewerScene.sparkController.setNavigationMode(viewerScene.sparkNavigationMode);
+  }
+}
+
+function setNavigationSensitivity(value = defaultNavigationSensitivity * 100) {
+  const numeric = Number(value);
+  const percent = Number.isFinite(numeric)
+    ? clamp(numeric, 20, 120)
+    : defaultNavigationSensitivity * 100;
+  viewerScene.navigationSensitivity = percent / 100;
+  els.viewerSensitivityInput.value = String(Math.round(percent));
+  els.viewerSensitivityValue.textContent = `${Math.round(percent)}%`;
+  if (viewerScene.sparkController && !viewerScene.sparkFailed) {
+    viewerScene.sparkController.setNavigationSensitivity(viewerScene.navigationSensitivity);
   }
 }
 
@@ -1355,12 +1375,12 @@ els.canvas.addEventListener('pointermove', (event) => {
   const dx = event.clientX - viewerScene.lastX;
   const dy = event.clientY - viewerScene.lastY;
   if (viewerScene.panning || event.shiftKey) {
-    const panScale = 0.0018 / viewerScene.zoom;
+    const panScale = (0.0018 * viewerScene.navigationSensitivity) / viewerScene.zoom;
     viewerScene.panX -= dx * panScale;
     viewerScene.panY += dy * panScale;
   } else {
-    viewerScene.rotationY += dx * 0.008;
-    viewerScene.rotationX = clamp(viewerScene.rotationX + dy * 0.008, -1.4, 1.4);
+    viewerScene.rotationY += dx * 0.008 * viewerScene.navigationSensitivity;
+    viewerScene.rotationX = clamp(viewerScene.rotationX + dy * 0.008 * viewerScene.navigationSensitivity, -1.4, 1.4);
   }
   viewerScene.lastX = event.clientX;
   viewerScene.lastY = event.clientY;
@@ -1395,6 +1415,7 @@ els.viewerModeSparkButton.addEventListener('click', () => setViewerMode('spark')
 els.viewerModeDebugButton.addEventListener('click', () => setViewerMode('debug'));
 els.viewerNavWalkButton.addEventListener('click', () => setSparkNavigationMode('walk'));
 els.viewerNavOrbitButton.addEventListener('click', () => setSparkNavigationMode('orbit'));
+els.viewerSensitivityInput.addEventListener('input', (event) => setNavigationSensitivity(event.target.value));
 
 els.captureSelect.addEventListener('change', () => {
   captureSelectionTouched = true;
@@ -1409,6 +1430,7 @@ els.planJobButton.addEventListener('click', createJob);
 els.refreshButton.addEventListener('click', loadState);
 
 requestAnimationFrame(drawPreviewFrame);
+setNavigationSensitivity(defaultNavigationSensitivity * 100);
 const bootPromise = loadState().catch((error) => {
   els.statusStrip.replaceChildren(pill('server error', 'fail'));
   els.jobBox.replaceChildren();
