@@ -13,12 +13,9 @@ const els = {
   wizardCaptureName: document.querySelector('#wizardCaptureName'),
   wizardSceneKind: document.querySelector('#wizardSceneKind'),
   wizardQualityPreset: document.querySelector('#wizardQualityPreset'),
-  wizardExportTarget: document.querySelector('#wizardExportTarget'),
   wizardSelfCaptured: document.querySelector('#wizardSelfCaptured'),
   generatePipelineButton: document.querySelector('#generatePipelineButton'),
   wizardStatus: document.querySelector('#wizardStatus'),
-  wizardModePill: document.querySelector('#wizardModePill'),
-  refreshButton: document.querySelector('#refreshButton'),
   jobBox: document.querySelector('#jobBox'),
   preflightList: document.querySelector('#preflightList'),
   pipelineList: document.querySelector('#pipelineList'),
@@ -267,14 +264,19 @@ function updateWizardControls() {
   const hasRights = els.wizardSelfCaptured.checked;
   const running = Boolean(autoRun?.active);
   els.generatePipelineButton.disabled = running || !file || !hasName || !hasRights;
-  els.generatePipelineButton.textContent = running ? 'Generating' : 'Generate 3DGS';
-  els.wizardModePill.textContent = running ? 'running' : 'auto';
-  els.wizardModePill.className = running ? 'pill warning' : 'pill neutral';
+  els.generatePipelineButton.textContent = running ? 'Generating' : 'Generate Scene';
   if (!running) {
-    const profile = selectedTrainingProfile();
-    const label = qualityPresetLabels[profile] ?? profile;
-    const target = els.wizardExportTarget.value === 'blender_ply' ? '3DGS PLY for Blender add-ons' : 'web viewer bundle';
-    setWizardStatus(`${label}: estimated full run ${formatDuration(totalEstimateSeconds(profile))}; export ${target}.`);
+    if (!file) {
+      setWizardStatus('No video selected.');
+    } else if (!hasRights) {
+      setWizardStatus('Confirm that you have rights to process this video.', 'fail');
+    } else if (!hasName) {
+      setWizardStatus('Name the scene before generation.');
+    } else {
+      const profile = selectedTrainingProfile();
+      const label = qualityPresetLabels[profile] ?? profile;
+      setWizardStatus(`${label}: estimated full run ${formatDuration(totalEstimateSeconds(profile))}.`);
+    }
   }
   updateImportControls();
 }
@@ -673,7 +675,6 @@ async function uploadWizardCapture(file, profile) {
     displayName: els.wizardCaptureName.value.trim(),
     sceneKind: els.wizardSceneKind.value,
     qualityPreset: profile,
-    exportTarget: els.wizardExportTarget.value,
   });
   const response = await fetch(`/api/captures/create-upload?${params.toString()}`, {
     method: 'POST',
@@ -1661,13 +1662,11 @@ els.videoFileInput.addEventListener('change', handleVideoFileChange);
 els.wizardCaptureName.addEventListener('input', updateWizardControls);
 els.wizardSceneKind.addEventListener('change', updateWizardControls);
 els.wizardQualityPreset.addEventListener('change', updateWizardControls);
-els.wizardExportTarget.addEventListener('change', updateWizardControls);
 els.wizardSelfCaptured.addEventListener('change', updateWizardControls);
 els.generatePipelineButton.addEventListener('click', generatePipeline);
 els.acceptCaptureWarning.addEventListener('change', updateImportControls);
 els.importVideoButton.addEventListener('click', importVideo);
 els.planJobButton.addEventListener('click', () => createJob());
-els.refreshButton.addEventListener('click', loadState);
 
 requestAnimationFrame(drawPreviewFrame);
 setNavigationSensitivity(defaultNavigationSensitivity * 100);

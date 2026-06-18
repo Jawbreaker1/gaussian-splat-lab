@@ -29,68 +29,68 @@
       <main class="workspace">
         <section class="capture-panel panel" aria-labelledby="captureTitle">
           <div class="panel-head">
-            <h2 id="captureTitle">Source</h2>
-            <button class="icon-button" id="refreshButton" title="Refresh" aria-label="Refresh">↻</button>
+            <h2 id="captureTitle">Create Scene</h2>
           </div>
 
-          <div class="capture-wizard" aria-label="New iPhone capture">
-            <div class="wizard-head">
-              <div>
-                <h3>New iPhone Capture</h3>
-                <span>Upload video and generate a navigable 3DGS scene</span>
+          <div class="capture-wizard" aria-label="New scene wizard">
+            <section class="wizard-step">
+              <div class="wizard-step-index">1</div>
+              <div class="wizard-step-body">
+                <h3>Capture</h3>
+                <label class="field">
+                  <span>Video file</span>
+                  <input class="file-input" id="videoFileInput" type="file" accept="video/*" />
+                </label>
+                <label class="checkline">
+                  <input id="wizardSelfCaptured" type="checkbox" checked />
+                  <span>I have rights to process this video</span>
+                </label>
               </div>
-              <span class="pill neutral" id="wizardModePill">auto</span>
-            </div>
+            </section>
 
-            <label class="field">
-              <span>Scene name</span>
-              <input id="wizardCaptureName" type="text" autocomplete="off" placeholder="Living room test" />
-            </label>
+            <section class="wizard-step">
+              <div class="wizard-step-index">2</div>
+              <div class="wizard-step-body">
+                <h3>Scene</h3>
+                <label class="field">
+                  <span>Name</span>
+                  <input id="wizardCaptureName" type="text" autocomplete="off" placeholder="Living room test" />
+                </label>
 
-            <div class="field-grid">
-              <label class="field">
-                <span>Scene type</span>
-                <select id="wizardSceneKind">
-                  <option value="room">Room / interior</option>
-                  <option value="outdoor">Outdoor environment</option>
-                  <option value="object">Object / small area</option>
-                </select>
-              </label>
+                <div class="field-grid">
+                  <label class="field">
+                    <span>Type</span>
+                    <select id="wizardSceneKind">
+                      <option value="room">Interior</option>
+                      <option value="outdoor">Outdoor</option>
+                      <option value="object">Object</option>
+                    </select>
+                  </label>
 
-              <label class="field">
-                <span>Quality</span>
-                <select id="wizardQualityPreset">
-                  <option value="quality_probe">Fast probe</option>
-                  <option value="rtx_high_quality">High quality</option>
-                  <option value="rtx_ultra_quality">Ultra quality</option>
-                </select>
-              </label>
-            </div>
+                  <label class="field">
+                    <span>Quality</span>
+                    <select id="wizardQualityPreset">
+                      <option value="quality_probe">Fast probe</option>
+                      <option value="rtx_high_quality">High quality</option>
+                      <option value="rtx_ultra_quality">Ultra quality</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </section>
 
-            <label class="field">
-              <span>Export target</span>
-              <select id="wizardExportTarget">
-                <option value="web_ply">Web 3DGS PLY + viewer manifest</option>
-                <option value="blender_ply">3DGS PLY for Blender add-ons</option>
-              </select>
-            </label>
-
-            <label class="field">
-              <span>iPhone video</span>
-              <input class="file-input" id="videoFileInput" type="file" accept="video/*" />
-            </label>
-
-            <label class="checkline">
-              <input id="wizardSelfCaptured" type="checkbox" checked />
-              <span>I recorded this video and can use it for this generation</span>
-            </label>
-
-            <button class="primary-action" id="generatePipelineButton">Generate 3DGS</button>
-            <div class="wizard-status muted" id="wizardStatus">Choose a video to estimate the run.</div>
+            <section class="wizard-step">
+              <div class="wizard-step-index">3</div>
+              <div class="wizard-step-body">
+                <h3>Generate</h3>
+                <button class="primary-action" id="generatePipelineButton">Generate Scene</button>
+                <div class="wizard-status muted" id="wizardStatus">No video selected.</div>
+              </div>
+            </section>
           </div>
 
           <details class="collapsible" id="manualSourceControls">
-            <summary>Manual source controls</summary>
+            <summary>Advanced</summary>
 
             <label class="field">
               <span>Source</span>

@@ -114,7 +114,7 @@ def active_capture_manifest() -> Path:
     return EFFECTIVE_CAPTURE_MANIFEST
 
 
-def slugify(value: str, fallback: str = "iphone-capture") -> str:
+def slugify(value: str, fallback: str = "scene-capture") -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return slug[:48] or fallback
 
@@ -149,23 +149,23 @@ def remove_local_capture(capture_id: str) -> None:
 
 
 def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None) -> dict[str, Any]:
-    display_name = (query.get("displayName", [""])[0] or Path(upload_name or "").stem or "iPhone capture").strip()
+    display_name = (query.get("displayName", [""])[0] or Path(upload_name or "").stem or "Video capture").strip()
     scene_kind = (query.get("sceneKind", ["room"])[0] or "room").strip()
     quality_key = query.get("qualityPreset", ["quality_probe"])[0]
     quality = UI_QUALITY_PRESETS.get(quality_key, UI_QUALITY_PRESETS["quality_probe"])
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    capture_id = f"iphone-{slugify(display_name)}-{now}"
+    capture_id = f"capture-{slugify(display_name)}-{now}"
     target_path = f"data/videos/uploads/{capture_id}{video_extension(upload_name)}"
     subject = {
-        "room": "self-captured indoor room from iPhone video",
-        "outdoor": "self-captured outdoor environment from iPhone video",
-        "object": "self-captured object/area from iPhone video",
-    }.get(scene_kind, "self-captured environment from iPhone video")
+        "room": "self-captured indoor room from uploaded video",
+        "outdoor": "self-captured outdoor environment from uploaded video",
+        "object": "self-captured object/area from uploaded video",
+    }.get(scene_kind, "self-captured environment from uploaded video")
     motion = {
         "room": "slow walking loop with clear parallax through the room",
         "outdoor": "slow walking arc/loop with clear parallax through the environment",
         "object": "slow orbit with clear parallax around the subject",
-    }.get(scene_kind, "slow iPhone movement with clear parallax")
+    }.get(scene_kind, "slow capture movement with clear parallax")
     return {
         "id": capture_id,
         "displayName": display_name,
@@ -180,7 +180,7 @@ def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None)
             "subject": subject,
             "motion": motion,
             "expectedDurationSeconds": None,
-            "expectedResolution": "iPhone source video",
+            "expectedResolution": "source video",
         },
         "pipeline": {
             "frameSampling": {

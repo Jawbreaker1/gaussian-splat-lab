@@ -342,33 +342,56 @@ select {
 
 .capture-wizard {
   display: grid;
-  gap: 0;
+  gap: 14px;
   margin-bottom: 12px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
 
-.wizard-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+.wizard-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
   gap: 10px;
-  margin-bottom: 14px;
+  align-items: start;
   min-width: 0;
 }
 
-.wizard-head div {
-  min-width: 0;
-}
-
-.wizard-head h3 {
-  margin-bottom: 5px;
-}
-
-.wizard-head span:not(.pill) {
-  color: var(--muted);
+.wizard-step-index {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(53, 215, 200, 0.24);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
   font-size: 12px;
-  font-weight: 680;
+  font-weight: 840;
+}
+
+.wizard-step-body {
+  min-width: 0;
+}
+
+.wizard-step-body h3 {
+  margin: 3px 0 10px;
+}
+
+.wizard-step .checkline {
+  margin-bottom: 0;
+}
+
+.wizard-step-body > .field:last-child,
+.wizard-step-body > .field-grid:last-child {
+  margin-bottom: 0;
+}
+
+.wizard-step-body h3 + .field {
+  margin-top: 0;
+}
+
+.wizard-step-body span:not(.pill) {
+  color: var(--muted);
 }
 
 .field-grid {
@@ -486,6 +509,18 @@ select {
 .stage-action:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.primary-action:disabled {
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.primary-action:disabled:hover {
+  border-color: var(--line);
+  color: var(--muted);
 }
 
 .capture-meta,

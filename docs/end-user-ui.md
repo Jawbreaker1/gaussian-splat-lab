@@ -2,7 +2,7 @@
 
 Verified: 2026-06-18
 
-The first user interface is a local lab console. Its primary path is now a new iPhone capture wizard: choose a video, name the scene, select scene type/export target/quality, and let the UI upload, plan and run the pipeline stages in order. Manual capture selection, import and per-stage run controls remain available for debugging.
+The first user interface is a local lab console. Its primary path is now a guided scene capture wizard: choose a video, name the scene, select scene type and quality, then let the UI upload, plan and run the pipeline stages in order. Manual capture selection, import and per-stage run controls remain available for debugging.
 
 As of 2026-06-17, the UI can also show packaged splat artifacts. The central scene is a Spark + Three.js Gaussian Splat viewer loaded from local npm packages, with Walk and Orbit navigation modes, pan, orbit, zoom, reset, reference-camera step controls and export controls for the active PLY plus viewer manifest. Walk mode supports keyboard movement and mouse-look inside the splat scene; double-clicking the canvas can enter pointer-lock look mode in browsers that allow it. Packaging exports COLMAP/training camera poses into the viewer manifest so the first render starts from a real training/review camera instead of a generic object-fit view. The older PLY WebGL point renderer remains available as `Debug` mode because it is useful for diagnosing malformed exports, sparse geometry and scale problems. The visual quality reference remains the `gsplat` render/target pair and multi-view render-review sheet written by the training stage.
 
@@ -13,7 +13,7 @@ The current visual direction is a dark RTX workstation console: the 3D scene is 
 The UI owns:
 
 - capture selection from tracked manifests
-- local user capture creation from direct iPhone/video upload
+- local user capture creation from direct video upload
 - automatic job planning and stage-by-stage generation
 - quality profile selection for the training stage
 - generation progress and estimated remaining time
@@ -69,13 +69,13 @@ Default local URL:
 http://127.0.0.1:8765
 ```
 
-Automatic iPhone/video generation:
+Automatic video generation:
 
 1. Enter a scene name.
-2. Choose scene type, quality and export target.
-3. Choose a local iPhone/video file.
-4. Confirm that the video was recorded by the user.
-5. Press `Generate 3DGS`.
+2. Choose scene type and quality.
+3. Choose a local video file.
+4. Confirm that you have rights to process the video.
+5. Press `Generate Scene`.
 
 The server creates a local user capture under ignored `data/tmp` manifest state, stores the uploaded video under ignored `data/videos/uploads`, records provenance, creates a job and runs the pipeline through packaging/viewer validation. The progress panel shows the current stage and an estimated remaining time while each blocking stage runs.
 
