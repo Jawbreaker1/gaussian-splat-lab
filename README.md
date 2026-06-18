@@ -27,13 +27,15 @@ The quality report can still be `warning` because the current public reference c
 
 ## GUI Screenshots
 
-Desktop lab console with active `rtx_ultra_quality` splat:
+Debug point-cloud inspection view:
 
-![Gaussian Splat Lab desktop GUI](docs/assets/screenshots/gui-desktop-ultra.png)
+![Gaussian Splat Lab debug point-cloud GUI](docs/assets/screenshots/gui-debug-pointcloud.png)
 
-Responsive narrow layout:
+Rendered 3DGS view from the active `rtx_ultra_quality` splat:
 
-![Gaussian Splat Lab mobile GUI](docs/assets/screenshots/gui-mobile-ultra.png)
+![Gaussian Splat Lab 3DGS render GUI](docs/assets/screenshots/gui-desktop-ultra.png)
+
+The two views are intentionally shown together: Debug mode exposes the sampled point cloud for inspection, while Render mode shows the interactive Gaussian Splat scene that users navigate.
 
 ## Why This Project Exists
 
