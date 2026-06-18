@@ -69,6 +69,9 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   controls.minDistance = 0.015;
   controls.maxDistance = 14;
   controls.enabled = false;
+  const walkButtonLookPixels = 34;
+  const orbitButtonRadians = 0.055;
+  const maxButtonPanStep = 0.095;
 
   const grid = new THREE.GridHelper(2.2, 16, 0x315c66, 0x24323a);
   grid.position.y = -0.82;
@@ -146,6 +149,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   }
 
   function syncTargetToCamera() {
+    camera.updateMatrixWorld(true);
     camera.getWorldDirection(forward).normalize();
     controls.target.copy(camera.position).add(forward.multiplyScalar(walkFocusDistance));
   }
@@ -159,6 +163,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     const nextUp = new THREE.Vector3().crossVectors(yawedRight, nextForward).normalize();
     camera.up.copy(nextUp);
     camera.lookAt(camera.position.clone().add(nextForward));
+    camera.updateMatrixWorld(true);
     syncTargetToCamera();
   }
 
@@ -248,6 +253,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     camera.far = 100;
     camera.updateProjectionMatrix();
     camera.lookAt(nextTarget);
+    camera.updateMatrixWorld(true);
     controls.target.copy(nextTarget);
     controls.update();
     setWalkBasisFromCamera();
@@ -275,6 +281,36 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
     if (!applyCameraView(activeCameraViewIndex)) applyDefaultView();
     setNavigationMode(navigationMode);
+  }
+
+  function scaledSceneExtent() {
+    if (!fitState) return 1.62;
+    return clamp(fitState.maxExtent * fitState.scale, 0.6, 2.4);
+  }
+
+  function walkButtonStep() {
+    return scaledSceneExtent() * 0.05;
+  }
+
+  function orbitPanStep() {
+    const distance = camera.position.distanceTo(controls.target);
+    if (!Number.isFinite(distance)) return walkButtonStep();
+    return clamp(distance * 0.032, walkButtonStep() * 0.35, maxButtonPanStep);
+  }
+
+  function addLocalMovement(deltaRight = 0, deltaUp = 0, deltaForward = 0, step = walkButtonStep()) {
+    camera.updateMatrixWorld(true);
+    move.set(0, 0, 0);
+    camera.getWorldDirection(forward).normalize();
+    right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+    up.copy(camera.up).normalize();
+    move
+      .addScaledVector(right, deltaRight * step)
+      .addScaledVector(up, deltaUp * step)
+      .addScaledVector(forward, deltaForward * step);
+    if (move.lengthSq() <= 1e-12) return false;
+    camera.position.add(move);
+    return true;
   }
 
   async function load({ url, cameraViews: nextCameraViews = [] }) {
@@ -317,36 +353,48 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   }
 
   function pan(deltaX, deltaY) {
-    const distance = camera.position.distanceTo(controls.target);
-    const step = distance * 0.055;
-    right.setFromMatrixColumn(camera.matrix, 0).multiplyScalar(deltaX * step);
-    up.setFromMatrixColumn(camera.matrix, 1).multiplyScalar(deltaY * step);
-    move.copy(right).add(up);
-    camera.position.add(move);
+    const step = navigationMode === 'walk' ? walkButtonStep() : orbitPanStep();
+    if (!addLocalMovement(deltaX, deltaY, 0, step)) return;
+    if (navigationMode === 'walk') {
+      syncTargetToCamera();
+      return;
+    }
     controls.target.add(move);
     controls.update();
-    if (navigationMode === 'walk') setWalkBasisFromCamera();
   }
 
   function orbit(deltaX, deltaY) {
+    if (navigationMode === 'walk') {
+      rotateWalk(deltaX * walkButtonLookPixels, deltaY * walkButtonLookPixels);
+      return;
+    }
     target.copy(controls.target);
     offset.copy(camera.position).sub(target);
     spherical.setFromVector3(offset);
-    spherical.theta += deltaX * 0.16;
-    spherical.phi = clamp(spherical.phi + deltaY * 0.16, 0.08, Math.PI - 0.08);
+    spherical.theta += deltaX * orbitButtonRadians;
+    spherical.phi = clamp(spherical.phi + deltaY * orbitButtonRadians, 0.08, Math.PI - 0.08);
     offset.setFromSpherical(spherical);
     camera.position.copy(target).add(offset);
     controls.update();
-    if (navigationMode === 'walk') setWalkBasisFromCamera();
   }
 
   function zoom(factor) {
+    if (navigationMode === 'walk') {
+      moveAlongView(factor > 1 ? walkButtonStep() * 1.25 : -walkButtonStep() * 1.25);
+      return;
+    }
     target.copy(controls.target);
     offset.copy(camera.position).sub(target);
-    offset.multiplyScalar(1 / factor);
+    const distance = offset.length();
+    const nextDistance = clamp(
+      Number.isFinite(distance) ? distance / factor : 1,
+      controls.minDistance,
+      Math.min(controls.maxDistance, 8),
+    );
+    if (offset.lengthSq() <= 1e-12) offset.set(0, 0, nextDistance);
+    else offset.setLength(nextDistance);
     camera.position.copy(target).add(offset);
     controls.update();
-    if (navigationMode === 'walk') setWalkBasisFromCamera();
   }
 
   function reset() {
@@ -413,6 +461,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   function updateWalkMovement(deltaSeconds) {
     if (navigationMode !== 'walk' || !pressedKeys.size) return;
     move.set(0, 0, 0);
+    camera.updateMatrixWorld(true);
     camera.getWorldDirection(forward).normalize();
     right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
     up.copy(camera.up).normalize();
@@ -434,6 +483,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
   function moveAlongView(amount) {
     if (navigationMode !== 'walk') return;
+    camera.updateMatrixWorld(true);
     camera.getWorldDirection(forward).normalize();
     camera.position.addScaledVector(forward, amount);
     syncTargetToCamera();
@@ -479,6 +529,25 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     moveAlongView(event.deltaY > 0 ? -0.11 : 0.11);
   }
 
+  function vectorSnapshot(vector) {
+    return [vector.x, vector.y, vector.z].map((value) => Number(value.toFixed(6)));
+  }
+
+  function getNavigationState() {
+    camera.updateMatrixWorld(true);
+    return {
+      mode: navigationMode,
+      position: vectorSnapshot(camera.position),
+      target: vectorSnapshot(controls.target),
+      up: vectorSnapshot(camera.up),
+      targetDistance: Number(camera.position.distanceTo(controls.target).toFixed(6)),
+      walkFocusDistance: Number(walkFocusDistance.toFixed(6)),
+      fov: Number(camera.fov.toFixed(6)),
+      activeCameraViewIndex,
+      viewCount: cameraViews.length,
+    };
+  }
+
   function frame(now = performance.now()) {
     if (disposed) return;
     if (document.hidden) return;
@@ -512,6 +581,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     orbit,
     zoom,
     reset,
+    getNavigationState,
     dispose() {
       disposed = true;
       renderer.setAnimationLoop(null);

@@ -92,6 +92,20 @@ const viewerScene = {
   webglFailed: false,
 };
 
+if (typeof window !== 'undefined') {
+  window.__gslabViewerDebug = {
+    getSparkNavigationState: () => viewerScene.sparkController?.getNavigationState?.() ?? null,
+    getUiState: () => ({
+      mode: viewerScene.mode,
+      sparkNavigationMode: viewerScene.sparkNavigationMode,
+      sparkFailed: viewerScene.sparkFailed,
+      pointCount: viewerScene.pointCount,
+      cameraViewCount: viewerScene.cameraViewCount,
+      activeCameraView: viewerScene.activeCameraView?.imageName ?? null,
+    }),
+  };
+}
+
 const runnableStages = new Set(['framework_license', 'environment', 'intake', 'frame_sampling', 'sfm', 'splat_training', 'packaging', 'viewer', 'quality_report']);
 const heavyStages = new Set(['sfm', 'splat_training', 'viewer']);
 const fallbackStageNames = {
