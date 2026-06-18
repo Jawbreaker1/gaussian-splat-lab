@@ -1,5 +1,3 @@
-import { createSparkViewer } from './spark-viewer.js';
-
 const els = {
   grid: document.querySelector('#galleryGrid'),
   empty: document.querySelector('#galleryEmpty'),
@@ -32,6 +30,7 @@ let items = [];
 let selectedId = null;
 let selectedDetail = null;
 let controller = null;
+let viewerModulePromise = null;
 let navigationMode = 'walk';
 let navigationSensitivity = 0.55;
 
@@ -136,8 +135,11 @@ function resetController() {
   controller = null;
 }
 
-function ensureController() {
+async function ensureController() {
   if (controller) return controller;
+  setSceneStatus('loading viewer', 'neutral');
+  viewerModulePromise ??= import('./spark-viewer.js');
+  const { createSparkViewer } = await viewerModulePromise;
   controller = createSparkViewer({
     canvas: els.canvas,
     overlay: els.overlay,
@@ -198,14 +200,18 @@ function renderCard(item) {
   body.append(title, meta, footer);
   card.append(thumb, body);
 
-  const open = () => selectScene(item.id);
+  const open = () => selectScene(item.id).catch(showError);
   thumb.addEventListener('click', open);
+  card.addEventListener('click', (event) => {
+    if (event.target.closest('button, a')) return;
+    open();
+  });
   card.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') open();
   });
   deleteButton.addEventListener('click', (event) => {
     event.stopPropagation();
-    deleteScene(item.id);
+    deleteScene(item.id).catch(showError);
   });
   return card;
 }
@@ -253,7 +259,8 @@ async function selectScene(jobId, updateUrl = true) {
   setDownload(els.downloadSplatLink, manifest.export?.primaryAssetUrl ?? artifactUrl, item.artifactFileName);
   setDownload(els.downloadManifestLink, item.viewerManifestUrl, item.manifestFileName);
   renderSceneMeta(payload.item ?? item, manifest);
-  const result = await ensureController().load({
+  const viewer = await ensureController();
+  const result = await viewer.load({
     url: artifactUrl,
     cameraViews: Array.isArray(manifest.cameraViews) ? manifest.cameraViews : [],
   });
