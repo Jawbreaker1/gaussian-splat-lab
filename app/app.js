@@ -34,6 +34,8 @@ const els = {
   viewerZoomInButton: document.querySelector('#viewerZoomInButton'),
   viewerCameraPrevButton: document.querySelector('#viewerCameraPrevButton'),
   viewerCameraNextButton: document.querySelector('#viewerCameraNextButton'),
+  exportSplatLink: document.querySelector('#exportSplatLink'),
+  exportManifestLink: document.querySelector('#exportManifestLink'),
   renderCompare: document.querySelector('#renderCompare'),
   sampleRenderFigure: document.querySelector('#sampleRenderFigure'),
   sampleTargetFigure: document.querySelector('#sampleTargetFigure'),
@@ -519,6 +521,19 @@ function setViewerStatus(text, type = 'neutral') {
   els.viewerStatusPill.className = `pill ${type}`;
 }
 
+function setExportLink(link, url, fileName) {
+  if (!link) return;
+  if (!url) {
+    link.removeAttribute('href');
+    link.removeAttribute('download');
+    link.setAttribute('aria-disabled', 'true');
+    return;
+  }
+  link.href = url;
+  link.download = fileName;
+  link.removeAttribute('aria-disabled');
+}
+
 function formatCount(value) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat('en-US').format(number) : '-';
@@ -550,6 +565,9 @@ function viewerQuality(status, training = {}, runConfig = {}) {
   }
   if (profile === 'rtx_high_quality') {
     return { text: training.renderReview?.status === 'pass' ? 'high inspect' : 'high warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
+  }
+  if (profile === 'rtx_ultra_quality') {
+    return { text: training.renderReview?.status === 'pass' ? 'ultra inspect' : 'ultra warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
   }
   if (profile === 'rtx_max_quality') {
     return { text: training.renderReview?.status === 'pass' ? 'max inspect' : 'max warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
@@ -601,12 +619,15 @@ function renderViewerMeta(extra = null) {
   const ply = artifact.ply ?? {};
   const training = manifest?.training ?? {};
   const runConfig = manifest?.runConfig ?? {};
+  const exportInfo = manifest?.export ?? {};
   const cameraViews = Array.isArray(manifest?.cameraViews) ? manifest.cameraViews : [];
   const activeView = extra?.activeCameraView ?? viewerScene.activeCameraView;
   renderSampleComparison(manifest?.preview ?? {});
   const status = viewer.viewerStatus ?? viewer.packagingStatus ?? 'packaged';
   const quality = viewerQuality(status, training, runConfig);
   setViewerStatus(quality.text, quality.type);
+  setExportLink(els.exportSplatLink, exportInfo.primaryAssetUrl ?? artifact.url, exportInfo.recommendedSplatFileName ?? `gaussian-splat-${training.profile ?? runConfig.profile ?? 'artifact'}.ply`);
+  setExportLink(els.exportManifestLink, viewer.viewerManifestUrl, exportInfo.recommendedManifestFileName ?? 'viewer-manifest.json');
   els.viewerMeta.append(
     row('Artifact', artifact.format ?? 'ply'),
     row('Renderer', activeRendererLabel()),

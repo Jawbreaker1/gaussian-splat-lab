@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 import mimetypes
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -91,12 +92,15 @@ def attach_artifact_urls(viewer_manifest: dict[str, Any]) -> dict[str, Any]:
     manifest = json.loads(json.dumps(viewer_manifest))
     artifact = manifest.get("artifact") if isinstance(manifest.get("artifact"), dict) else {}
     preview = manifest.get("preview") if isinstance(manifest.get("preview"), dict) else {}
+    export = manifest.get("export") if isinstance(manifest.get("export"), dict) else {}
     if isinstance(artifact, dict):
         artifact["url"] = artifact_url(artifact.get("repoRelativePath"))
     if isinstance(preview, dict):
         preview["sampleRenderUrl"] = artifact_url(preview.get("sampleRenderRepoRelativePath"))
         preview["sampleTargetUrl"] = artifact_url(preview.get("sampleTargetRepoRelativePath"))
         preview["renderReviewUrl"] = artifact_url(preview.get("renderReviewRepoRelativePath"))
+    if isinstance(export, dict):
+        export["primaryAssetUrl"] = artifact_url(export.get("primaryAssetRepoRelativePath"))
     return manifest
 
 
@@ -344,16 +348,16 @@ class LabUiHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
-        body = artifact.read_bytes()
         content_type = mimetypes.guess_type(str(artifact))[0] or "application/octet-stream"
         if artifact.suffix == ".ply":
             content_type = "application/octet-stream"
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(artifact.stat().st_size))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(body)
+        with artifact.open("rb") as handle:
+            shutil.copyfileobj(handle, self.wfile, length=1024 * 1024)
 
     def send_node_module(self, raw_path: str) -> None:
         try:

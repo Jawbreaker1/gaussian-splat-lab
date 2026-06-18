@@ -154,6 +154,32 @@ TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "pruneOpa": 0.0012,
         "absgrad": False,
     },
+    "rtx_ultra_quality": {
+        "iterations": 24000,
+        "maxImages": 144,
+        "maxPoints": 280000,
+        "maxRenderSize": 1600,
+        "maxGaussians": 1600000,
+        "sampleEvery": 400,
+        "reviewSamples": 16,
+        "initialOpacity": 0.065,
+        "initialScaleMultiplier": 0.21,
+        "ssimWeight": 0.27,
+        "meanLr": 0.00021,
+        "colorLr": 0.015,
+        "scaleLr": 0.0026,
+        "opacityLr": 0.0125,
+        "quatLr": 0.00046,
+        "densifyStrategy": "default",
+        "refineStartIter": 100,
+        "refineStopIter": 20500,
+        "refineEvery": 100,
+        "resetEvery": 3000,
+        "growGrad2d": 0.000058,
+        "growScale3d": 0.0032,
+        "pruneOpa": 0.0011,
+        "absgrad": False,
+    },
     "rtx_max_quality": {
         "iterations": 30000,
         "maxImages": 160,
@@ -387,6 +413,90 @@ def nvidia_smi_status(command_result: dict[str, Any]) -> str:
     if "GPU access blocked by the operating system" in text:
         return "setup_gap"
     return "fail"
+
+
+def optional_float(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def parse_nvidia_smi_query_line(line: str) -> dict[str, Any]:
+    fields = [field.strip() for field in line.split(",")]
+    return {
+        "timestamp": fields[0] if len(fields) > 0 else None,
+        "name": fields[1] if len(fields) > 1 else None,
+        "temperatureGpuC": optional_float(fields[2] if len(fields) > 2 else None),
+        "powerDrawW": optional_float(fields[3] if len(fields) > 3 else None),
+        "memoryUsedMiB": optional_float(fields[4] if len(fields) > 4 else None),
+        "memoryTotalMiB": optional_float(fields[5] if len(fields) > 5 else None),
+        "utilizationGpuPercent": optional_float(fields[6] if len(fields) > 6 else None),
+    }
+
+
+def parse_nvidia_smi_process_line(line: str) -> dict[str, Any]:
+    fields = [field.strip() for field in line.split(",")]
+    return {
+        "pid": int(fields[0]) if len(fields) > 0 and fields[0].isdigit() else None,
+        "processName": fields[1] if len(fields) > 1 else None,
+        "usedMemoryMiB": optional_float(fields[2] if len(fields) > 2 else None),
+    }
+
+
+def gpu_load_snapshot(env: dict[str, str] | None = None) -> dict[str, Any]:
+    gpu_query = run_command(
+        [
+            "nvidia-smi",
+            "--query-gpu=timestamp,name,temperature.gpu,power.draw,memory.used,memory.total,utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ],
+        timeout_seconds=10,
+        env=env,
+    )
+    process_query = run_command(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=pid,process_name,used_memory",
+            "--format=csv,noheader,nounits",
+        ],
+        timeout_seconds=10,
+        env=env,
+    )
+
+    gpus = [
+        parse_nvidia_smi_query_line(line)
+        for line in str(gpu_query.get("stdout") or "").splitlines()
+        if line.strip()
+    ]
+    processes = [
+        parse_nvidia_smi_process_line(line)
+        for line in str(process_query.get("stdout") or "").splitlines()
+        if line.strip()
+    ]
+    max_util = max((gpu.get("utilizationGpuPercent") or 0.0 for gpu in gpus), default=0.0)
+    max_memory_fraction = max(
+        (
+            (gpu.get("memoryUsedMiB") or 0.0) / max(gpu.get("memoryTotalMiB") or 1.0, 1.0)
+            for gpu in gpus
+        ),
+        default=0.0,
+    )
+    status = "warning" if processes or max_util >= 25.0 or max_memory_fraction >= 0.25 else "pass"
+    if gpu_query.get("status") != "pass":
+        status = "warning"
+    return {
+        "status": status,
+        "summary": "GPU appears idle enough for a clean training run" if status == "pass" else "GPU baseline is busy or unavailable; training quality/runtime comparisons may be noisy",
+        "gpus": gpus,
+        "computeProcesses": processes,
+        "commands": {
+            "gpuQuery": gpu_query,
+            "processQuery": process_query,
+        },
+    }
 
 
 def check_python_dev_headers() -> dict[str, Any]:
@@ -962,6 +1072,7 @@ def build_environment_report(job_path: Path) -> dict[str, Any]:
     gsplat = check_python_import("gsplat")
     trainer_env, trainer_env_summary = build_training_subprocess_environment(torch_cuda)
     ninja = check_ninja_available(trainer_env)
+    gpu_baseline = gpu_load_snapshot(trainer_env)
 
     checks = [
         {
@@ -1014,6 +1125,15 @@ def build_environment_report(job_path: Path) -> dict[str, Any]:
             "details": gsplat,
         },
         ninja,
+        {
+            "id": "gpu_load_baseline",
+            "status": gpu_baseline["status"],
+            "summary": gpu_baseline["summary"],
+            "details": {
+                "gpus": gpu_baseline["gpus"],
+                "computeProcesses": gpu_baseline["computeProcesses"],
+            },
+        },
     ]
     status = report_status(checks)
     return {
@@ -2146,6 +2266,21 @@ def build_splat_training_report(
 
     trainer_env, trainer_env_summary = build_training_subprocess_environment(torch_cuda)
     base["commandEnvironment"] = trainer_env_summary
+    gpu_baseline = gpu_load_snapshot(trainer_env)
+    base["gpuLoadBaseline"] = {
+        "status": gpu_baseline["status"],
+        "summary": gpu_baseline["summary"],
+        "gpus": gpu_baseline["gpus"],
+        "computeProcesses": gpu_baseline["computeProcesses"],
+    }
+    base["checks"].append(
+        {
+            "id": "gpu_load_baseline",
+            "status": gpu_baseline["status"],
+            "summary": gpu_baseline["summary"],
+            "details": base["gpuLoadBaseline"],
+        }
+    )
     nvcc_path = shutil.which("nvcc", path=trainer_env.get("PATH"))
     setup_checks = [
         {
@@ -2692,6 +2827,9 @@ def build_viewer_manifest(
     render_review_path = Path(render_review_raw) if isinstance(render_review_raw, str) and render_review_raw else None
     ply_header = parse_ply_header(artifact)
     camera_views = build_camera_views(training_report)
+    training_metrics = training_report.get("metrics", {}) if isinstance(training_report.get("metrics"), dict) else {}
+    profile = training_metrics.get("profile") or training_report.get("runConfig", {}).get("profile") or "splat"
+    export_file_stem = f"gaussian-splat-lab-{profile}-{artifact.stem}"
     return {
         "schemaVersion": 1,
         "generatedAt": utc_now(),
@@ -2725,13 +2863,22 @@ def build_viewer_manifest(
             "summary": camera_views["summary"],
             **camera_views.get("source", {}),
         },
-        "training": training_report.get("metrics", {}),
+        "export": {
+            "kind": "viewer_environment_bundle",
+            "recommendedManifestFileName": f"{export_file_stem}.viewer-manifest.json",
+            "recommendedSplatFileName": f"{export_file_stem}.ply",
+            "primaryAssetRepoRelativePath": repo_relative_path(artifact),
+            "includes": ["gaussian_splat_ply", "viewer_manifest", "reference_camera_views", "preview_images"],
+            "coordinateSpace": "COLMAP world coordinates transformed at viewer load time for browser navigation",
+            "note": "This is a Gaussian Splat environment export, not a triangle mesh/GLB export.",
+        },
+        "training": training_metrics,
         "runConfig": training_report.get("runConfig", {}),
         "device": training_report.get("device", {}),
         "versions": training_report.get("versions", {}),
         "viewer": {
             "implementation": "spark_webgl_gaussian_splat_renderer",
-            "supports": ["gaussian_splat_render", "reference_camera_views", "orbit", "pan", "zoom", "reset_view", "debug_point_cloud"],
+            "supports": ["gaussian_splat_render", "reference_camera_views", "walk", "mouse_look", "orbit", "pan", "zoom", "reset_view", "debug_point_cloud", "viewer_environment_export"],
             "loads": "binary_little_endian PLY Gaussian splats into Spark for 3DGS rendering and exposes a point-cloud debug fallback",
         },
     }

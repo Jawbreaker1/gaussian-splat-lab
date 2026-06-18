@@ -4,7 +4,7 @@ Verified: 2026-06-17
 
 The first user interface is a local lab console. It lets a user select a capture, import a local video into the manifest target path, create a planned job, inspect preflight/media pipeline gates and see commercial/compliance status before heavy reconstruction work starts.
 
-As of 2026-06-17, the UI can also show packaged splat artifacts. The central scene is a Spark + Three.js Gaussian Splat viewer loaded from local npm packages, with Walk and Orbit navigation modes, pan, orbit, zoom, reset and reference-camera step controls. Walk mode supports keyboard movement and mouse-look inside the splat scene; double-clicking the canvas can enter pointer-lock look mode in browsers that allow it. Packaging exports COLMAP/training camera poses into the viewer manifest so the first render starts from a real training/review camera instead of a generic object-fit view. The older PLY WebGL point renderer remains available as `Debug` mode because it is useful for diagnosing malformed exports, sparse geometry and scale problems. The visual quality reference remains the `gsplat` render/target pair and multi-view render-review sheet written by the training stage.
+As of 2026-06-17, the UI can also show packaged splat artifacts. The central scene is a Spark + Three.js Gaussian Splat viewer loaded from local npm packages, with Walk and Orbit navigation modes, pan, orbit, zoom, reset, reference-camera step controls and export controls for the active PLY plus viewer manifest. Walk mode supports keyboard movement and mouse-look inside the splat scene; double-clicking the canvas can enter pointer-lock look mode in browsers that allow it. Packaging exports COLMAP/training camera poses into the viewer manifest so the first render starts from a real training/review camera instead of a generic object-fit view. The older PLY WebGL point renderer remains available as `Debug` mode because it is useful for diagnosing malformed exports, sparse geometry and scale problems. The visual quality reference remains the `gsplat` render/target pair and multi-view render-review sheet written by the training stage.
 
 The current visual direction is a dark RTX workstation console: the 3D scene is the primary workspace, the pipeline panel sits on the right as the live operator flow, and lower-priority capture/compliance/artifact metadata is collapsible. On narrow screens the UI switches to a single-column layout with the 3D scene first and compact stacked viewer controls.
 
@@ -20,6 +20,7 @@ The UI owns:
 - local RTX workstation status evidence
 - central packaged artifact inspection with Spark + Three.js Gaussian Splat Walk/Orbit navigation, orbit/pan/zoom/reset controls and manifest-provided reference camera views
 - debug packaged artifact inspection with the older WebGL PLY point renderer
+- active environment export through streamed PLY and viewer-manifest downloads
 - latest `gsplat` sample render/target images
 - latest `gsplat` multi-view render/target/diff review sheet
 
@@ -42,7 +43,7 @@ The current implementation uses:
 - tracked JSON manifests
 - project-local npm packages served from `node_modules/`: `@sparkjsdev/spark 2.1.0`, `three 0.180.0` and transitive `fflate 0.8.3`
 
-No CDN, external UI framework or hosted service is required. The UI server only exposes files from the repository app folder, generated job artifacts and the local `node_modules` paths needed by the import map. The package versions and license posture are recorded in `data/manifests/framework-evaluation.json` and `docs/installation-and-revert-ledger.md`.
+No CDN, external UI framework or hosted service is required. The UI server only exposes files from the repository app folder, generated job artifacts and the local `node_modules` paths needed by the import map. Generated artifacts are streamed from disk rather than read entirely into server memory, which keeps larger splat exports practical. The package versions and license posture are recorded in `data/manifests/framework-evaluation.json` and `docs/installation-and-revert-ledger.md`.
 
 ## Commands
 

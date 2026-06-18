@@ -136,6 +136,18 @@
               <button class="icon-button" id="viewerCameraPrevButton" title="Previous reference camera" aria-label="Previous reference camera">‹</button>
               <button class="icon-button" id="viewerCameraNextButton" title="Next reference camera" aria-label="Next reference camera">›</button>
             </div>
+            <div class="viewer-control-group" aria-label="Export controls">
+              <a class="icon-button export-button" id="exportSplatLink" title="Download splat PLY" aria-label="Download splat PLY">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 19h14" />
+                </svg>
+              </a>
+              <a class="icon-button export-button" id="exportManifestLink" title="Download viewer manifest" aria-label="Download viewer manifest">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 6H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2m8-12h2a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2M10 8l-2 4 2 4m4-8 2 4-2 4" />
+                </svg>
+              </a>
+            </div>
           </div>
           <div class="spark-viewport" id="sparkViewport">
             <canvas id="sparkCanvas" width="960" height="640" aria-label="Production Gaussian splat render scene"></canvas>
