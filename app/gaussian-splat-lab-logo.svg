@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="330" height="54" viewBox="0 0 330 54" role="img" aria-labelledby="title desc">
+  <title id="title">Gaussian Splat Lab</title>
+  <desc id="desc">Wordmark for Gaussian Splat Lab with a stylized gaussian splat mark.</desc>
+  <defs>
+    <radialGradient id="splatCore" cx="50%" cy="50%" r="62%">
+      <stop offset="0%" stop-color="#F7FFFC"/>
+      <stop offset="42%" stop-color="#5FF7E7"/>
+      <stop offset="100%" stop-color="#159B92"/>
+    </radialGradient>
+    <linearGradient id="wordGlow" x1="62" x2="318" y1="7" y2="46" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="58%" stop-color="#E8F7F4"/>
+      <stop offset="100%" stop-color="#69F5E5"/>
+    </linearGradient>
+    <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="3.4" result="blur"/>
+      <feColorMatrix in="blur" values="0 0 0 0 0.20 0 0 0 0 0.96 0 0 0 0 0.88 0 0 0 0.46 0"/>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g filter="url(#softGlow)">
+    <ellipse cx="27" cy="27" rx="18" ry="13" fill="url(#splatCore)" opacity="0.94" transform="rotate(-17 27 27)"/>
+    <circle cx="13" cy="18" r="3.7" fill="#7EFFF0" opacity="0.82"/>
+    <circle cx="42" cy="15" r="2.9" fill="#DDFDF7" opacity="0.78"/>
+    <circle cx="46" cy="35" r="4.1" fill="#37D7C8" opacity="0.74"/>
+    <circle cx="18" cy="39" r="2.8" fill="#1FAEA3" opacity="0.88"/>
+    <circle cx="31" cy="8" r="2.2" fill="#BDFCF5" opacity="0.9"/>
+  </g>
+
+  <path d="M57 11h1v32h-1z" fill="#244943"/>
+  <text x="70" y="31" fill="url(#wordGlow)" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="0">
+    Gaussian Splat
+  </text>
+  <text x="252" y="31" fill="#63F4E4" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" font-weight="800" letter-spacing="0">
+    Lab
+  </text>
+  <text x="72" y="45" fill="#8BA4A0" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="9.5" font-weight="700" letter-spacing="2.4">
+    LOCAL 3DGS WORKSTATION
+  </text>
+</svg>
