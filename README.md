@@ -142,6 +142,24 @@ Viewer controls are validated by:
 .\scripts\validate-viewer-controls.ps1 -Url "http://127.0.0.1:8765/"
 ```
 
+The upload wizard can be checked end to end with a real video:
+
+```bash
+.venv/bin/python scripts/validate-wizard-api-e2e.py http://127.0.0.1:8765 \
+  --video <path-to-test-video.mp4> \
+  --scene-name "Wizard API E2E room" \
+  --quality quality_probe
+```
+
+There is also a browser/CDP version for environments where Chrome or Edge DevTools is reachable from WSL:
+
+```bash
+.venv/bin/python scripts/validate-wizard-upload-e2e.py http://127.0.0.1:8765/ \
+  --video <path-to-test-video.mp4> \
+  --scene-name "Wizard browser E2E room" \
+  --quality quality_probe
+```
+
 ## Export Model
 
 The primary export today is a viewer environment bundle:

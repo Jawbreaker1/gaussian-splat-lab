@@ -51,18 +51,68 @@ UI_QUALITY_PRESETS = {
         "targetFps": 2,
         "maxFrames": 180,
         "trainingProfile": "quality_probe",
+        "sfm": {
+            "matcher": "sequential",
+            "featureNumThreads": 4,
+            "featureMaxImageSize": 2400,
+            "featureMaxNumFeatures": 4096,
+            "matcherNumThreads": 4,
+            "sequentialOverlap": 12,
+            "sequentialQuadraticOverlap": True,
+            "guidedMatching": False,
+            "useGpu": False,
+        },
     },
     "rtx_high_quality": {
         "label": "High quality",
         "targetFps": 3,
         "maxFrames": 300,
         "trainingProfile": "rtx_high_quality",
+        "sfm": {
+            "matcher": "sequential",
+            "featureNumThreads": 4,
+            "featureMaxImageSize": 3200,
+            "featureMaxNumFeatures": 8192,
+            "matcherNumThreads": 4,
+            "sequentialOverlap": 20,
+            "sequentialQuadraticOverlap": True,
+            "guidedMatching": False,
+            "useGpu": False,
+        },
     },
     "rtx_ultra_quality": {
         "label": "Ultra quality",
         "targetFps": 3,
         "maxFrames": 360,
         "trainingProfile": "rtx_ultra_quality",
+        "sfm": {
+            "matcher": "sequential",
+            "featureNumThreads": 4,
+            "featureMaxImageSize": 3200,
+            "featureMaxNumFeatures": 8192,
+            "matcherNumThreads": 4,
+            "sequentialOverlap": 20,
+            "sequentialQuadraticOverlap": True,
+            "guidedMatching": False,
+            "useGpu": False,
+        },
+    },
+    "rtx_max_quality": {
+        "label": "Max quality",
+        "targetFps": 3,
+        "maxFrames": 240,
+        "trainingProfile": "rtx_max_quality",
+        "sfm": {
+            "matcher": "sequential",
+            "featureNumThreads": 4,
+            "featureMaxImageSize": 3200,
+            "featureMaxNumFeatures": 8192,
+            "matcherNumThreads": 4,
+            "sequentialOverlap": 24,
+            "sequentialQuadraticOverlap": True,
+            "guidedMatching": False,
+            "useGpu": False,
+        },
     },
 }
 
@@ -154,6 +204,7 @@ def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None)
     scene_kind = (query.get("sceneKind", ["room"])[0] or "room").strip()
     quality_key = query.get("qualityPreset", ["quality_probe"])[0]
     quality = UI_QUALITY_PRESETS.get(quality_key, UI_QUALITY_PRESETS["quality_probe"])
+    sfm_controls = quality.get("sfm", {}) if isinstance(quality.get("sfm"), dict) else {}
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     capture_id = f"capture-{slugify(display_name)}-{now}"
     target_path = f"data/videos/uploads/{capture_id}{video_extension(upload_name)}"
@@ -191,6 +242,7 @@ def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None)
             "sfm": {
                 "backend": "colmap",
                 "requiresExplicitHeavyApproval": True,
+                **sfm_controls,
             },
             "training": {
                 "backend": "gsplat",
@@ -285,6 +337,58 @@ def latest_job() -> dict[str, Any] | None:
     job = read_json(candidates[0])
     job["jobPath"] = str(candidates[0])
     return job
+
+
+def safe_read_report(path: Path) -> dict[str, Any] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        return read_json(path)
+    except Exception:
+        return None
+
+
+def latest_training_progress(job_path: Path) -> dict[str, Any] | None:
+    splats_dir = job_path.parent / "splats"
+    if not splats_dir.exists():
+        return None
+    candidates = sorted(
+        splats_dir.glob("*/training_progress.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for candidate in candidates:
+        progress = safe_read_report(candidate)
+        if progress is None:
+            continue
+        progress["path"] = str(candidate)
+        return progress
+    return None
+
+
+def job_progress(job_path: Path) -> dict[str, Any]:
+    job = read_json(job_path)
+    job["jobPath"] = str(job_path)
+    reports: dict[str, Any] = {}
+    reports_dir = job_path.parent / "reports"
+    for stage in job.get("stages", []):
+        if not isinstance(stage, dict):
+            continue
+        stage_id = str(stage.get("id") or "")
+        report_path = reports_dir / f"{stage_id}.json"
+        report = safe_read_report(report_path)
+        if report is None:
+            continue
+        reports[stage_id] = {
+            "status": report.get("stage", {}).get("status"),
+            "generatedAt": report.get("stage", {}).get("generatedAt"),
+            "path": str(report_path),
+        }
+    return {
+        "job": job,
+        "reports": reports,
+        "trainingProgress": latest_training_progress(job_path),
+    }
 
 
 def latest_viewer_artifact() -> dict[str, Any] | None:
@@ -759,7 +863,18 @@ class LabUiHandler(BaseHTTPRequestHandler):
                 self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
             return
 
-        route = self.path.split("?", 1)[0]
+        parsed = urlparse(self.path)
+        route = parsed.path
+        if route == "/api/jobs/progress":
+            try:
+                query = parse_qs(parsed.query)
+                job_path = resolve_job_path(query.get("jobPath", [""])[0])
+                self.send_json(job_progress(job_path))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
+                self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
         if route == "/api/gallery":
             try:
                 self.send_json({"items": gallery_jobs()})

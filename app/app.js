@@ -66,6 +66,8 @@ let activeJob = null;
 let runningStage = null;
 let autoRun = null;
 let autoRunTimer = null;
+let latestJobProgress = null;
+let progressPolling = false;
 let importingVideo = false;
 let viewerLoadToken = 0;
 let viewerReadyResolved = false;
@@ -148,6 +150,7 @@ const qualityPresetLabels = {
   quality_probe: 'Fast probe',
   rtx_high_quality: 'High quality',
   rtx_ultra_quality: 'Ultra quality',
+  rtx_max_quality: 'Max quality',
 };
 const fallbackStageNames = {
   framework_license: 'Dependency Review',
@@ -433,6 +436,8 @@ function renderPipelineProgress(gates, jobStages) {
   let warnings = 0;
   let blocked = 0;
   let currentGate = null;
+  const currentStageId = runningStage || autoRun?.currentStage || null;
+  const trainingProgress = latestJobProgress?.trainingProgress ?? null;
   for (const gate of gates) {
     const status = stageById.get(gate.id)?.status ?? 'planned';
     if (status === 'pass') passed += 1;
@@ -442,16 +447,36 @@ function renderPipelineProgress(gates, jobStages) {
   }
 
   const total = Math.max(1, gates.length);
-  const percent = Math.round((passed / total) * 100);
+  let progressUnits = passed;
+  if (
+    currentStageId === 'splat_training'
+    && trainingProgress
+    && trainingProgress.status === 'running'
+    && Number.isFinite(Number(trainingProgress.percent))
+  ) {
+    progressUnits += clamp(Number(trainingProgress.percent) / 100, 0, 0.98);
+  }
+  const percent = Math.round((progressUnits / total) * 100);
   els.pipelineProgressText.textContent = `${passed}/${gates.length} passed${warnings ? `, ${warnings} warning` : ''}`;
   els.pipelineProgressBar.style.width = `${percent}%`;
 
   if (autoRun?.active) {
-    const current = runningStage || autoRun.currentStage;
-    els.pipelineCurrentStage.textContent = current
-      ? `Running ${stageDisplayName({ id: current })}`
-      : 'Preparing automatic run';
-    els.pipelineEtaText.textContent = `ETA ${formatDuration(estimateRemainingSeconds())}`;
+    const current = currentStageId;
+    if (current === 'splat_training' && trainingProgress?.iteration) {
+      const trainPercent = Number(trainingProgress.percent || 0).toFixed(1);
+      const elapsed = Number(trainingProgress.elapsedSeconds || 0);
+      const totalEstimate = Number(trainingProgress.estimatedTotalSeconds || 0);
+      const remaining = Math.max(0, totalEstimate - elapsed);
+      const message = `Training splats ${trainPercent}% (${trainingProgress.iteration}/${trainingProgress.iterations})`;
+      els.pipelineCurrentStage.textContent = message;
+      els.pipelineEtaText.textContent = `Training ETA ${formatDuration(remaining)}`;
+      setWizardStatus(message, 'neutral');
+    } else {
+      els.pipelineCurrentStage.textContent = current
+        ? `Running ${stageDisplayName({ id: current })}`
+        : 'Preparing automatic run';
+      els.pipelineEtaText.textContent = `ETA ${formatDuration(estimateRemainingSeconds())}`;
+    }
   } else if (runningStage) {
     els.pipelineCurrentStage.textContent = `Running ${stageDisplayName({ id: runningStage })}`;
     els.pipelineEtaText.textContent = `Estimated remaining step: ${formatDuration(stageEstimateSeconds(runningStage))}`;
@@ -600,6 +625,7 @@ async function createJob(captureId = null, options = {}) {
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || `job ${response.status}`);
     activeJob = payload.job;
+    latestJobProgress = null;
     await loadState();
     return activeJob;
   } catch (error) {
@@ -620,6 +646,7 @@ async function createJob(captureId = null, options = {}) {
 async function runStage(stage, options = {}) {
   if (!activeJob || runningStage) return;
   runningStage = stage;
+  latestJobProgress = null;
   renderStages();
   try {
     const response = await fetch('/api/jobs/run-stage', {
@@ -658,6 +685,25 @@ async function runStage(stage, options = {}) {
   }
 }
 
+async function pollJobProgress() {
+  if (!autoRun?.active || !activeJob?.jobPath || progressPolling) return;
+  progressPolling = true;
+  try {
+    const params = new URLSearchParams({ jobPath: activeJob.jobPath });
+    const response = await fetch(`/api/jobs/progress?${params.toString()}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const payload = await response.json();
+    latestJobProgress = payload;
+    if (payload.job) activeJob = payload.job;
+    renderStages();
+    renderJob();
+  } catch {
+    // Progress polling is best-effort; the blocking stage request remains authoritative.
+  } finally {
+    progressPolling = false;
+  }
+}
+
 async function uploadWizardCapture(file, profile) {
   const params = new URLSearchParams({
     displayName: els.wizardCaptureName.value.trim(),
@@ -685,6 +731,7 @@ function startAutoRunTimer() {
       autoRunTimer = null;
       return;
     }
+    pollJobProgress();
     renderStages();
   }, 1000);
 }
