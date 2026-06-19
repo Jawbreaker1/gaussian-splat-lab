@@ -406,6 +406,7 @@ def render_final_review(
     review_dir.mkdir(parents=True, exist_ok=True)
     samples: list[dict[str, Any]] = []
     sheet_cells: list[tuple[str, Image.Image]] = []
+    best_preview: tuple[float, int, Image.Image, Image.Image] | None = None
     scales = torch.exp(final_log_scales).clamp(1.0e-5, 1.0e3)
     opacities = torch.sigmoid(final_opacity_logits)
     with torch.no_grad():
@@ -435,9 +436,9 @@ def render_final_review(
             render_img.save(render_path)
             target_img.save(target_path)
             diff_img.save(diff_path)
-            if order == 0:
-                render_img.save(sample_render_path)
-                target_img.save(sample_target_path)
+            preview_score = metrics["mae"] + abs(metrics["luminanceDelta"]) * 0.25
+            if best_preview is None or preview_score < best_preview[0]:
+                best_preview = (preview_score, camera_index, render_img.copy(), target_img.copy())
             samples.append(
                 {
                     "order": order,
@@ -456,6 +457,13 @@ def render_final_review(
                     (f"Diff x3 | RMSE {metrics['rmse']:.1f}", diff_img),
                 ]
             )
+
+    preview_camera_index = None
+    preview_score = None
+    if best_preview is not None:
+        preview_score, preview_camera_index, preview_render, preview_target = best_preview
+        preview_render.save(sample_render_path)
+        preview_target.save(sample_target_path)
 
     thumb_width = 320
     label_height = 28
@@ -485,6 +493,8 @@ def render_final_review(
         "summary": "render review indicates visible mismatch" if mean_mae > 35 or abs(mean_luma_delta) > 20 else "render review is within initial visual thresholds",
         "contactSheetPath": str(contact_sheet_path),
         "sampleCount": len(samples),
+        "previewCameraIndex": preview_camera_index,
+        "previewScore": round(preview_score, 4) if preview_score is not None else None,
         "meanMae": round(mean_mae, 4),
         "meanRmse": round(mean_rmse, 4),
         "meanLuminanceDelta": round(mean_luma_delta, 4),
@@ -647,10 +657,38 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
 
     loss_samples: list[dict[str, Any]] = []
     densification_samples: list[dict[str, Any]] = []
+    progress_path = output_dir / "training_progress.json"
     cap_pruned_gaussians = 0
     last_render = None
     last_target = None
     last_camera_index = 0
+
+    def write_progress(iteration: int, camera_index: int, loss: torch.Tensor, l1_loss: torch.Tensor, ssim_loss: torch.Tensor) -> None:
+        elapsed = time.perf_counter() - started
+        write_json(
+            progress_path,
+            {
+                "status": "running",
+                "profile": args.profile,
+                "iteration": iteration,
+                "iterations": args.iterations,
+                "percent": round((iteration / max(args.iterations, 1)) * 100.0, 3),
+                "elapsedSeconds": round(elapsed, 3),
+                "estimatedTotalSeconds": round(elapsed / max(iteration, 1) * args.iterations, 3),
+                "cameraIndex": int(camera_index),
+                "loss": float(loss.detach().cpu().item()),
+                "l1Loss": float(l1_loss.detach().cpu().item()),
+                "ssimLoss": float(ssim_loss.detach().cpu().item()),
+                "gaussianCount": int(params["means"].shape[0]),
+                "selectedImageCount": len(selected_images),
+                "renderWidth": width,
+                "renderHeight": height,
+                "maxGaussians": args.max_gaussians,
+                "lossSamples": loss_samples[-12:],
+                "densificationSamples": densification_samples[-12:],
+            },
+        )
+
     for iteration in range(1, args.iterations + 1):
         camera_index = (iteration - 1) % targets.shape[0]
         colors = torch.sigmoid(params["colors"])
@@ -723,6 +761,7 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
                     "gaussianCount": int(params["means"].shape[0]),
                 }
             )
+            write_progress(iteration, camera_index, loss, l1_loss, ssim_loss)
         last_render = prediction.detach()
         last_target = target.detach()
         last_camera_index = int(camera_index)
@@ -809,6 +848,12 @@ def train(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     max_memory_mib = float(torch.cuda.max_memory_allocated(device) / (1024 * 1024))
+    if progress_path.exists():
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        progress["status"] = "pass"
+        progress["completedAtSeconds"] = round(wall_time, 3)
+        progress["artifactPath"] = str(exported_ply_path)
+        write_json(progress_path, progress)
     return {
         "status": "pass",
         "checks": [

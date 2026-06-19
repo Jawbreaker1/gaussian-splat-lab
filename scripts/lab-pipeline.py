@@ -235,6 +235,17 @@ TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 DENSIFY_STRATEGIES = {"none", "default"}
 
+TRAINING_TIMEOUT_SECONDS: dict[str, int] = {
+    "smoke": 30 * 60,
+    "baseline": 45 * 60,
+    "quality_probe": 2 * 60 * 60,
+    "rtx_reference": 4 * 60 * 60,
+    "rtx_high_quality": 8 * 60 * 60,
+    "rtx_ultra_quality": 12 * 60 * 60,
+    "rtx_ceiling_quality": 16 * 60 * 60,
+    "rtx_max_quality": 20 * 60 * 60,
+}
+
 
 STAGES = [
     {
@@ -1827,6 +1838,10 @@ def validate_sfm_output(
 
 
 def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: bool = False) -> dict[str, Any]:
+    job = read_json(job_path)
+    sfm_config = job.get("capture", {}).get("pipeline", {}).get("sfm", {})
+    if not isinstance(sfm_config, dict):
+        sfm_config = {}
     frame_sampling_path = stage_report_path(job_path, "frame_sampling")
     base = {
         "schemaVersion": 1,
@@ -1988,6 +2003,19 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         }
     )
 
+    feature_num_threads = positive_int_setting(sfm_config, "featureNumThreads", 4, 1, 64)
+    feature_max_image_size = positive_int_setting(sfm_config, "featureMaxImageSize", 3200, 256, 8192)
+    feature_max_num_features = positive_int_setting(sfm_config, "featureMaxNumFeatures", 8192, 512, 65536)
+    matcher_num_threads = positive_int_setting(sfm_config, "matcherNumThreads", feature_num_threads, 1, 64)
+    matcher_block_size = positive_int_setting(sfm_config, "exhaustiveBlockSize", 20, 1, 100)
+    matcher_kind = str(sfm_config.get("matcher") or "exhaustive").strip().lower()
+    if matcher_kind not in {"exhaustive", "sequential"}:
+        matcher_kind = "exhaustive"
+    sequential_overlap = positive_int_setting(sfm_config, "sequentialOverlap", 10, 1, 200)
+    sequential_quadratic_overlap = "1" if bool_setting(sfm_config, "sequentialQuadraticOverlap", True) else "0"
+    guided_matching = "1" if bool_setting(sfm_config, "guidedMatching", False) else "0"
+    sift_use_gpu = "1" if bool_setting(sfm_config, "useGpu", False) else "0"
+
     commands: dict[str, Any] = {}
     commands["featureExtractor"] = run_command(
         [
@@ -2000,7 +2028,13 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
             "--ImageReader.single_camera",
             "1",
             "--SiftExtraction.use_gpu",
-            "0",
+            sift_use_gpu,
+            "--SiftExtraction.num_threads",
+            str(feature_num_threads),
+            "--SiftExtraction.max_image_size",
+            str(feature_max_image_size),
+            "--SiftExtraction.max_num_features",
+            str(feature_max_num_features),
         ],
         timeout_seconds=3600,
     )
@@ -2016,25 +2050,48 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         )
         return base
 
-    commands["exhaustiveMatcher"] = run_command(
-        [
-            "colmap",
-            "exhaustive_matcher",
-            "--database_path",
-            str(database_path),
-            "--SiftMatching.use_gpu",
-            "0",
-        ],
+    matcher_command = [
+        "colmap",
+        "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
+        "--database_path",
+        str(database_path),
+        "--SiftMatching.use_gpu",
+        sift_use_gpu,
+        "--SiftMatching.num_threads",
+        str(matcher_num_threads),
+        "--SiftMatching.guided_matching",
+        guided_matching,
+    ]
+    if matcher_kind == "exhaustive":
+        matcher_command.extend(
+            [
+                "--ExhaustiveMatching.block_size",
+                str(matcher_block_size),
+            ]
+        )
+    else:
+        matcher_command.extend(
+            [
+                "--SequentialMatching.overlap",
+                str(sequential_overlap),
+                "--SequentialMatching.quadratic_overlap",
+                sequential_quadratic_overlap,
+            ]
+        )
+
+    commands[f"{matcher_kind}Matcher"] = run_command(
+        matcher_command,
         timeout_seconds=3600,
     )
-    if commands["exhaustiveMatcher"]["status"] != "pass":
-        base["stage"]["status"] = commands["exhaustiveMatcher"]["status"]
+    matcher_result = commands[f"{matcher_kind}Matcher"]
+    if matcher_result["status"] != "pass":
+        base["stage"]["status"] = matcher_result["status"]
         base["commands"] = commands
         base["checks"].append(
             {
                 "id": "colmap_matcher",
-                "status": commands["exhaustiveMatcher"]["status"],
-                "summary": command_summary(commands["exhaustiveMatcher"], max_lines=5) or "COLMAP matching failed",
+                "status": matcher_result["status"],
+                "summary": command_summary(matcher_result, max_lines=5) or "COLMAP matching failed",
             }
         )
         return base
@@ -2106,9 +2163,19 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
     base["metrics"] = analyzer_metrics or {}
     base["colmap"] = {
         "versionSummary": command_summary(colmap, max_lines=3),
-        "matcher": "exhaustive_matcher",
-        "usesGpu": False,
-        "note": "Ubuntu COLMAP package reports without CUDA; first SfM validation uses CPU SIFT extraction and matching.",
+        "matcher": "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
+        "usesGpu": sift_use_gpu == "1",
+        "resourceControls": {
+            "featureNumThreads": feature_num_threads,
+            "featureMaxImageSize": feature_max_image_size,
+            "featureMaxNumFeatures": feature_max_num_features,
+            "matcherNumThreads": matcher_num_threads,
+            "guidedMatching": guided_matching == "1",
+            "exhaustiveBlockSize": matcher_block_size,
+            "sequentialOverlap": sequential_overlap,
+            "sequentialQuadraticOverlap": sequential_quadratic_overlap == "1",
+        },
+        "note": "Ubuntu COLMAP package reports without CUDA; SfM defaults to controlled CPU SIFT extraction and matching unless useGpu is explicitly enabled.",
     }
     base["checks"].extend(checks)
     return base
@@ -2366,6 +2433,13 @@ def build_splat_training_report(
         "growScale3d": positive_float_setting(training_config, "growScale3d", float(profile_defaults["growScale3d"]), 0.0, 10.0),
         "pruneOpa": positive_float_setting(training_config, "pruneOpa", float(profile_defaults["pruneOpa"]), 0.0, 1.0),
         "absgrad": bool_setting(training_config, "absgrad", bool(profile_defaults["absgrad"])),
+        "timeoutSeconds": positive_int_setting(
+            training_config,
+            "timeoutSeconds",
+            TRAINING_TIMEOUT_SECONDS.get(profile, 2 * 60 * 60),
+            60,
+            24 * 60 * 60,
+        ),
     }
     training_dir = splat_training_run_directory(job_path)
     result_path = training_dir / "training_result.json"
@@ -2432,7 +2506,7 @@ def build_splat_training_report(
     ]
     if run_config["absgrad"]:
         command.append("--absgrad")
-    trainer = run_command(command, timeout_seconds=7200, env=trainer_env)
+    trainer = run_command(command, timeout_seconds=int(run_config["timeoutSeconds"]), env=trainer_env)
     base["trainingDirectory"] = str(training_dir)
     base["runConfig"] = run_config
     base["commands"] = {"miniGsplatTrainer": trainer}
