@@ -123,6 +123,17 @@ Repo-local `gsplat` debug and stress profiles:
 
 Current quality-ceiling results are tracked in [docs/quality-ceiling-results.md](docs/quality-ceiling-results.md). For the local Hugging Face sample video, Splatfacto produced a much cleaner eval render than simply pushing the mini-trainer to more splats. Bigger files are not automatically better: the 1.6M mini-trainer artifact is larger than the 247k Splatfacto artifact, but the Splatfacto eval render is visibly sharper and scores better on Nerfstudio metrics. The normal upload wizard now exposes `Best quality` for Splatfacto; the larger mini-trainer ceiling and stress profiles should be run deliberately from the lab/CLI when the GPU is at known-stable clocks.
 
+## Capture Diagnostics And SfM Rescue
+
+Frame sampling now records a lightweight capture-quality check. It looks for common SfM trouble signs such as excessive frame-to-frame motion, low contrast, exposure risk and blur. These diagnostics do not stop the pipeline by themselves; they explain why a later camera solve may struggle.
+
+The SfM stage runs the configured COLMAP profile first. If too few frames register, it automatically retries with more robust matching:
+
+- `guided-sequential-rescue`: more features, larger sequential overlap and guided matching
+- `exhaustive-guided-rescue`: exhaustive guided matching for smaller frame sets
+
+The report keeps every attempt and selects the best sparse model. If all attempts still fail, the UI surfaces the best registration result, for example `42/89 frames registered`, instead of silently stopping.
+
 ## Browser UI
 
 Start the local UI:
@@ -169,6 +180,8 @@ The UI is a local lab console with:
 - progress text, elapsed time and ETA for the full generation run
 - per-step cards that explain what is happening, what the step produces and which internal checks are running
 - live training progress from Nerfstudio logs when available, including iteration count and remaining time
+- capture quality diagnostics during frame sampling: blur, contrast, exposure and large frame-to-frame motion
+- automatic COLMAP retry profiles during SfM when too few frames register
 - source/capture selection
 - local video import controls
 - live pipeline panel on the right

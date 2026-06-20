@@ -17,6 +17,7 @@ import subprocess
 import sys
 import sysconfig
 import time
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1825,6 +1826,106 @@ def build_frame_manifest(
     }
 
 
+def analyze_capture_frame_quality(frames: list[Any], max_samples: int = 90) -> dict[str, Any]:
+    try:
+        from PIL import Image, ImageChops, ImageFilter, ImageStat  # type: ignore[import-not-found]
+    except Exception as exc:  # noqa: BLE001 - optional local diagnostic dependency
+        return {
+            "status": "warning",
+            "summary": "frame quality diagnostics skipped because Pillow is unavailable",
+            "error": str(exc),
+        }
+
+    usable = [frame for frame in frames if isinstance(frame, dict) and Path(str(frame.get("path") or "")).exists()]
+    if not usable:
+        return {
+            "status": "fail",
+            "summary": "no readable frames available for quality diagnostics",
+        }
+
+    stride = max(1, math.ceil(len(usable) / max_samples))
+    selected = usable[::stride][:max_samples]
+    sharpness_values: list[float] = []
+    contrast_values: list[float] = []
+    luma_values: list[float] = []
+    inter_frame_deltas: list[float] = []
+    previous_gray = None
+    analyzed = 0
+
+    for frame in selected:
+        path = Path(str(frame.get("path") or ""))
+        try:
+            with Image.open(path) as image:
+                gray = image.convert("L")
+                gray.thumbnail((320, 320), Image.Resampling.BILINEAR)
+                stat = ImageStat.Stat(gray)
+                luma = float(stat.mean[0])
+                contrast = float(stat.stddev[0])
+                edge_stat = ImageStat.Stat(gray.filter(ImageFilter.FIND_EDGES))
+                sharpness = float(edge_stat.stddev[0])
+                if previous_gray is not None and previous_gray.size == gray.size:
+                    delta = float(ImageStat.Stat(ImageChops.difference(previous_gray, gray)).mean[0])
+                    inter_frame_deltas.append(delta)
+                previous_gray = gray.copy()
+        except Exception:
+            continue
+        analyzed += 1
+        luma_values.append(luma)
+        contrast_values.append(contrast)
+        sharpness_values.append(sharpness)
+
+    if analyzed == 0:
+        return {
+            "status": "fail",
+            "summary": "frame quality diagnostics could not read sampled frames",
+            "sampledFrameCount": len(selected),
+        }
+
+    sharpness_median = float(statistics.median(sharpness_values))
+    contrast_median = float(statistics.median(contrast_values))
+    luma_median = float(statistics.median(luma_values))
+    motion_delta_median = float(statistics.median(inter_frame_deltas)) if inter_frame_deltas else None
+    blurry_fraction = sum(1 for value in sharpness_values if value < 8.0) / analyzed
+    low_contrast_fraction = sum(1 for value in contrast_values if value < 24.0) / analyzed
+    exposure_risk_fraction = sum(1 for value in luma_values if value < 35.0 or value > 220.0) / analyzed
+    large_motion_fraction = (
+        sum(1 for value in inter_frame_deltas if value > 38.0) / len(inter_frame_deltas)
+        if inter_frame_deltas
+        else 0.0
+    )
+
+    recommendations: list[str] = []
+    if blurry_fraction > 0.30:
+        recommendations.append("reduce motion blur: move slower, add light, avoid quick sweeps")
+    if low_contrast_fraction > 0.35:
+        recommendations.append("add textured surfaces or include more detailed objects in view")
+    if exposure_risk_fraction > 0.20:
+        recommendations.append("avoid very dark/bright regions and lock exposure if needed")
+    if large_motion_fraction > 0.45:
+        recommendations.append("increase overlap: walk in a smooth arc and avoid large jumps between frames")
+
+    status = "warning" if recommendations else "pass"
+    summary = "frame quality looks usable for SfM"
+    if recommendations:
+        summary = "capture may be hard for SfM: " + "; ".join(recommendations[:2])
+
+    return {
+        "status": status,
+        "summary": summary,
+        "sampledFrameCount": len(selected),
+        "analyzedFrameCount": analyzed,
+        "sharpnessMedian": round(sharpness_median, 3),
+        "contrastMedian": round(contrast_median, 3),
+        "lumaMedian": round(luma_median, 3),
+        "motionDeltaMedian": round(motion_delta_median, 3) if motion_delta_median is not None else None,
+        "blurryFrameFraction": round(blurry_fraction, 4),
+        "lowContrastFrameFraction": round(low_contrast_fraction, 4),
+        "exposureRiskFrameFraction": round(exposure_risk_fraction, 4),
+        "largeMotionFrameFraction": round(large_motion_fraction, 4),
+        "recommendations": recommendations,
+    }
+
+
 def validate_frame_manifest(frame_manifest: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
     frames = frame_manifest.get("frames", [])
     checks: list[dict[str, Any]] = []
@@ -1884,6 +1985,17 @@ def validate_frame_manifest(frame_manifest: dict[str, Any]) -> tuple[str, list[d
             "status": "pass" if contact_sheet.exists() and contact_sheet.stat().st_size > 0 else "fail",
             "summary": "contact sheet generated" if contact_sheet.exists() and contact_sheet.stat().st_size > 0 else "contact sheet missing",
             "path": str(contact_sheet),
+        }
+    )
+
+    quality = analyze_capture_frame_quality(frames)
+    frame_manifest["captureQuality"] = quality
+    checks.append(
+        {
+            "id": "capture_quality",
+            "status": quality.get("status", "warning"),
+            "summary": quality.get("summary", "capture quality diagnostics completed"),
+            **{key: value for key, value in quality.items() if key not in {"status", "summary"}},
         }
     )
 
@@ -2697,6 +2809,269 @@ def validate_sfm_output(
     return "pass", checks
 
 
+def colmap_model_score(model: dict[str, Any]) -> tuple[int, int]:
+    metrics = model.get("metrics", {}) if isinstance(model.get("metrics"), dict) else {}
+    registered = metrics.get("registered_images")
+    images = metrics.get("images")
+    points = metrics.get("points")
+    image_score = registered if isinstance(registered, int) else images if isinstance(images, int) else -1
+    point_score = points if isinstance(points, int) else -1
+    return image_score, point_score
+
+
+def sfm_attempt_registered_fraction(attempt: dict[str, Any]) -> float:
+    best_model = attempt.get("bestModel") if isinstance(attempt.get("bestModel"), dict) else {}
+    metrics = best_model.get("metrics", {}) if isinstance(best_model.get("metrics"), dict) else {}
+    registered = metrics.get("registered_images")
+    if not isinstance(registered, int):
+        registered = metrics.get("images")
+    frame_count = attempt.get("frameCount")
+    if isinstance(registered, int) and isinstance(frame_count, int) and frame_count > 0:
+        return registered / frame_count
+    return 0.0
+
+
+def colmap_attempt_profiles(
+    sfm_config: dict[str, Any],
+    frame_count: int,
+) -> list[dict[str, Any]]:
+    feature_num_threads = positive_int_setting(sfm_config, "featureNumThreads", 4, 1, 64)
+    feature_max_image_size = positive_int_setting(sfm_config, "featureMaxImageSize", 3200, 256, 8192)
+    feature_max_num_features = positive_int_setting(sfm_config, "featureMaxNumFeatures", 8192, 512, 65536)
+    matcher_num_threads = positive_int_setting(sfm_config, "matcherNumThreads", feature_num_threads, 1, 64)
+    matcher_block_size = positive_int_setting(sfm_config, "exhaustiveBlockSize", 20, 1, 100)
+    matcher_kind = str(sfm_config.get("matcher") or "exhaustive").strip().lower()
+    if matcher_kind not in {"exhaustive", "sequential"}:
+        matcher_kind = "exhaustive"
+    sequential_overlap = positive_int_setting(sfm_config, "sequentialOverlap", 10, 1, 200)
+    sequential_quadratic_overlap = bool_setting(sfm_config, "sequentialQuadraticOverlap", True)
+    guided_matching = bool_setting(sfm_config, "guidedMatching", False)
+    use_gpu = bool_setting(sfm_config, "useGpu", False)
+
+    primary = {
+        "name": "primary",
+        "matcherKind": matcher_kind,
+        "featureNumThreads": feature_num_threads,
+        "featureMaxImageSize": feature_max_image_size,
+        "featureMaxNumFeatures": feature_max_num_features,
+        "matcherNumThreads": matcher_num_threads,
+        "exhaustiveBlockSize": matcher_block_size,
+        "sequentialOverlap": sequential_overlap,
+        "sequentialQuadraticOverlap": sequential_quadratic_overlap,
+        "guidedMatching": guided_matching,
+        "useGpu": use_gpu,
+    }
+    profiles = [primary]
+    if bool_setting(sfm_config, "autoRetry", True):
+        profiles.append(
+            {
+                **primary,
+                "name": "guided-sequential-rescue",
+                "matcherKind": "sequential",
+                "featureMaxImageSize": min(max(feature_max_image_size, 3840), 8192),
+                "featureMaxNumFeatures": min(max(feature_max_num_features * 2, 16384), 65536),
+                "sequentialOverlap": min(max(sequential_overlap * 2, 48), 200),
+                "sequentialQuadraticOverlap": True,
+                "guidedMatching": True,
+            }
+        )
+        if frame_count <= 260:
+            profiles.append(
+                {
+                    **primary,
+                    "name": "exhaustive-guided-rescue",
+                    "matcherKind": "exhaustive",
+                    "featureMaxImageSize": min(max(feature_max_image_size, 3840), 8192),
+                    "featureMaxNumFeatures": min(max(feature_max_num_features * 2, 16384), 65536),
+                    "exhaustiveBlockSize": max(matcher_block_size, 30),
+                    "guidedMatching": True,
+                }
+            )
+    return profiles
+
+
+def run_colmap_sfm_attempt(
+    attempt_dir: Path,
+    frame_count: int,
+    colmap_image_dir: Path,
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    database_path = attempt_dir / "database.db"
+    sparse_dir = attempt_dir / "sparse"
+    sparse_dir.mkdir(parents=True, exist_ok=True)
+    sift_use_gpu = "1" if profile.get("useGpu") else "0"
+    matcher_kind = str(profile["matcherKind"])
+    commands: dict[str, Any] = {}
+    commands["featureExtractor"] = run_command(
+        [
+            "colmap",
+            "feature_extractor",
+            "--database_path",
+            str(database_path),
+            "--image_path",
+            str(colmap_image_dir),
+            "--ImageReader.single_camera",
+            "1",
+            "--SiftExtraction.use_gpu",
+            sift_use_gpu,
+            "--SiftExtraction.num_threads",
+            str(profile["featureNumThreads"]),
+            "--SiftExtraction.max_image_size",
+            str(profile["featureMaxImageSize"]),
+            "--SiftExtraction.max_num_features",
+            str(profile["featureMaxNumFeatures"]),
+        ],
+        timeout_seconds=3600,
+    )
+    if commands["featureExtractor"]["status"] != "pass":
+        status, checks = validate_sfm_output(frame_count, None, None)
+        checks.append(
+            {
+                "id": "colmap_feature_extractor",
+                "status": commands["featureExtractor"]["status"],
+                "summary": command_summary(commands["featureExtractor"], max_lines=5) or "COLMAP feature extraction failed",
+            }
+        )
+        return {
+            "name": profile["name"],
+            "status": commands["featureExtractor"]["status"],
+            "profile": profile,
+            "databasePath": str(database_path),
+            "sparseDirectory": str(sparse_dir),
+            "commands": commands,
+            "checks": checks,
+            "sparseModels": [],
+            "bestModel": None,
+            "frameCount": frame_count,
+        }
+
+    matcher_command = [
+        "colmap",
+        "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
+        "--database_path",
+        str(database_path),
+        "--SiftMatching.use_gpu",
+        sift_use_gpu,
+        "--SiftMatching.num_threads",
+        str(profile["matcherNumThreads"]),
+        "--SiftMatching.guided_matching",
+        "1" if profile.get("guidedMatching") else "0",
+    ]
+    if matcher_kind == "exhaustive":
+        matcher_command.extend(
+            [
+                "--ExhaustiveMatching.block_size",
+                str(profile["exhaustiveBlockSize"]),
+            ]
+        )
+    else:
+        matcher_command.extend(
+            [
+                "--SequentialMatching.overlap",
+                str(profile["sequentialOverlap"]),
+                "--SequentialMatching.quadratic_overlap",
+                "1" if profile.get("sequentialQuadraticOverlap") else "0",
+            ]
+        )
+
+    matcher_command_name = f"{matcher_kind}Matcher"
+    commands[matcher_command_name] = run_command(matcher_command, timeout_seconds=3600)
+    matcher_result = commands[matcher_command_name]
+    if matcher_result["status"] != "pass":
+        status, checks = validate_sfm_output(frame_count, None, None)
+        checks.append(
+            {
+                "id": "colmap_matcher",
+                "status": matcher_result["status"],
+                "summary": command_summary(matcher_result, max_lines=5) or "COLMAP matching failed",
+            }
+        )
+        return {
+            "name": profile["name"],
+            "status": matcher_result["status"],
+            "profile": profile,
+            "databasePath": str(database_path),
+            "sparseDirectory": str(sparse_dir),
+            "commands": commands,
+            "checks": checks,
+            "sparseModels": [],
+            "bestModel": None,
+            "frameCount": frame_count,
+        }
+
+    commands["mapper"] = run_command(
+        [
+            "colmap",
+            "mapper",
+            "--database_path",
+            str(database_path),
+            "--image_path",
+            str(colmap_image_dir),
+            "--output_path",
+            str(sparse_dir),
+        ],
+        timeout_seconds=3600,
+    )
+    if commands["mapper"]["status"] != "pass":
+        status, checks = validate_sfm_output(frame_count, None, None)
+        checks.append(
+            {
+                "id": "colmap_mapper",
+                "status": commands["mapper"]["status"],
+                "summary": command_summary(commands["mapper"], max_lines=5) or "COLMAP mapper failed",
+            }
+        )
+        return {
+            "name": profile["name"],
+            "status": commands["mapper"]["status"],
+            "profile": profile,
+            "databasePath": str(database_path),
+            "sparseDirectory": str(sparse_dir),
+            "commands": commands,
+            "checks": checks,
+            "sparseModels": [],
+            "bestModel": None,
+            "frameCount": frame_count,
+        }
+
+    model_dirs = sorted(path for path in sparse_dir.iterdir() if path.is_dir())
+    sparse_models: list[dict[str, Any]] = []
+    for model_path in model_dirs:
+        analyzer_result = run_command(["colmap", "model_analyzer", "--path", str(model_path)], timeout_seconds=300)
+        commands[f"modelAnalyzer_{model_path.name}"] = analyzer_result
+        analyzer_metrics = None
+        if analyzer_result["status"] == "pass":
+            analyzer_text = analyzer_result.get("stdout") or analyzer_result.get("stderr") or ""
+            analyzer_metrics = parse_colmap_model_analyzer(analyzer_text)
+        sparse_models.append(
+            {
+                "path": str(model_path),
+                "name": model_path.name,
+                "status": analyzer_result["status"],
+                "metrics": analyzer_metrics or {},
+            }
+        )
+
+    best_model = max(sparse_models, key=colmap_model_score) if sparse_models else None
+    sparse_model_path = Path(best_model["path"]) if best_model else None
+    analyzer_metrics = best_model.get("metrics", {}) if best_model else None
+    status, checks = validate_sfm_output(frame_count, sparse_model_path, analyzer_metrics)
+    return {
+        "name": profile["name"],
+        "status": status,
+        "profile": profile,
+        "databasePath": str(database_path),
+        "sparseDirectory": str(sparse_dir),
+        "sparseModelPath": str(sparse_model_path) if sparse_model_path else None,
+        "commands": commands,
+        "checks": checks,
+        "sparseModels": sparse_models,
+        "bestModel": best_model,
+        "frameCount": frame_count,
+    }
+
+
 def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: bool = False) -> dict[str, Any]:
     job = read_json(job_path)
     sfm_config = job.get("capture", {}).get("pipeline", {}).get("sfm", {})
@@ -2863,180 +3238,67 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         }
     )
 
-    feature_num_threads = positive_int_setting(sfm_config, "featureNumThreads", 4, 1, 64)
-    feature_max_image_size = positive_int_setting(sfm_config, "featureMaxImageSize", 3200, 256, 8192)
-    feature_max_num_features = positive_int_setting(sfm_config, "featureMaxNumFeatures", 8192, 512, 65536)
-    matcher_num_threads = positive_int_setting(sfm_config, "matcherNumThreads", feature_num_threads, 1, 64)
-    matcher_block_size = positive_int_setting(sfm_config, "exhaustiveBlockSize", 20, 1, 100)
-    matcher_kind = str(sfm_config.get("matcher") or "exhaustive").strip().lower()
-    if matcher_kind not in {"exhaustive", "sequential"}:
-        matcher_kind = "exhaustive"
-    sequential_overlap = positive_int_setting(sfm_config, "sequentialOverlap", 10, 1, 200)
-    sequential_quadratic_overlap = "1" if bool_setting(sfm_config, "sequentialQuadraticOverlap", True) else "0"
-    guided_matching = "1" if bool_setting(sfm_config, "guidedMatching", False) else "0"
-    sift_use_gpu = "1" if bool_setting(sfm_config, "useGpu", False) else "0"
-
-    commands: dict[str, Any] = {}
-    commands["featureExtractor"] = run_command(
-        [
-            "colmap",
-            "feature_extractor",
-            "--database_path",
-            str(database_path),
-            "--image_path",
-            str(colmap_image_dir),
-            "--ImageReader.single_camera",
-            "1",
-            "--SiftExtraction.use_gpu",
-            sift_use_gpu,
-            "--SiftExtraction.num_threads",
-            str(feature_num_threads),
-            "--SiftExtraction.max_image_size",
-            str(feature_max_image_size),
-            "--SiftExtraction.max_num_features",
-            str(feature_max_num_features),
-        ],
-        timeout_seconds=3600,
-    )
-    if commands["featureExtractor"]["status"] != "pass":
-        base["stage"]["status"] = commands["featureExtractor"]["status"]
-        base["commands"] = commands
-        base["checks"].append(
-            {
-                "id": "colmap_feature_extractor",
-                "status": commands["featureExtractor"]["status"],
-                "summary": command_summary(commands["featureExtractor"], max_lines=5) or "COLMAP feature extraction failed",
-            }
+    attempt_profiles = colmap_attempt_profiles(sfm_config, len(frames))
+    attempts: list[dict[str, Any]] = []
+    for profile in attempt_profiles:
+        attempt = run_colmap_sfm_attempt(
+            sfm_dir / f"attempt-{profile['name']}",
+            len(frames),
+            colmap_image_dir,
+            profile,
         )
-        return base
+        attempts.append(attempt)
+        if attempt["status"] == "pass":
+            break
 
-    matcher_command = [
-        "colmap",
-        "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
-        "--database_path",
-        str(database_path),
-        "--SiftMatching.use_gpu",
-        sift_use_gpu,
-        "--SiftMatching.num_threads",
-        str(matcher_num_threads),
-        "--SiftMatching.guided_matching",
-        guided_matching,
-    ]
-    if matcher_kind == "exhaustive":
-        matcher_command.extend(
-            [
-                "--ExhaustiveMatching.block_size",
-                str(matcher_block_size),
-            ]
-        )
-    else:
-        matcher_command.extend(
-            [
-                "--SequentialMatching.overlap",
-                str(sequential_overlap),
-                "--SequentialMatching.quadratic_overlap",
-                sequential_quadratic_overlap,
-            ]
-        )
-
-    commands[f"{matcher_kind}Matcher"] = run_command(
-        matcher_command,
-        timeout_seconds=3600,
-    )
-    matcher_result = commands[f"{matcher_kind}Matcher"]
-    if matcher_result["status"] != "pass":
-        base["stage"]["status"] = matcher_result["status"]
-        base["commands"] = commands
-        base["checks"].append(
-            {
-                "id": "colmap_matcher",
-                "status": matcher_result["status"],
-                "summary": command_summary(matcher_result, max_lines=5) or "COLMAP matching failed",
-            }
-        )
-        return base
-
-    commands["mapper"] = run_command(
-        [
-            "colmap",
-            "mapper",
-            "--database_path",
-            str(database_path),
-            "--image_path",
-            str(colmap_image_dir),
-            "--output_path",
-            str(sparse_dir),
-        ],
-        timeout_seconds=3600,
-    )
-    base["commands"] = commands
-    if commands["mapper"]["status"] != "pass":
-        base["stage"]["status"] = commands["mapper"]["status"]
-        base["checks"].append(
-            {
-                "id": "colmap_mapper",
-                "status": commands["mapper"]["status"],
-                "summary": command_summary(commands["mapper"], max_lines=5) or "COLMAP mapper failed",
-            }
-        )
-        return base
-
-    model_dirs = sorted(path for path in sparse_dir.iterdir() if path.is_dir())
-    sparse_models: list[dict[str, Any]] = []
-    for model_path in model_dirs:
-        analyzer_result = run_command(["colmap", "model_analyzer", "--path", str(model_path)], timeout_seconds=300)
-        commands[f"modelAnalyzer_{model_path.name}"] = analyzer_result
-        analyzer_metrics = None
-        if analyzer_result["status"] == "pass":
-            analyzer_text = analyzer_result.get("stdout") or analyzer_result.get("stderr") or ""
-            analyzer_metrics = parse_colmap_model_analyzer(analyzer_text)
-        sparse_models.append(
-            {
-                "path": str(model_path),
-                "name": model_path.name,
-                "status": analyzer_result["status"],
-                "metrics": analyzer_metrics or {},
-            }
-        )
-
-    def model_score(model: dict[str, Any]) -> tuple[int, int]:
-        metrics = model.get("metrics", {}) if isinstance(model.get("metrics"), dict) else {}
-        registered = metrics.get("registered_images")
-        images = metrics.get("images")
-        points = metrics.get("points")
-        image_score = registered if isinstance(registered, int) else images if isinstance(images, int) else -1
-        point_score = points if isinstance(points, int) else -1
-        return image_score, point_score
-
-    best_model = max(sparse_models, key=model_score) if sparse_models else None
-    sparse_model_path = Path(best_model["path"]) if best_model else None
-    analyzer_metrics = best_model.get("metrics", {}) if best_model else None
+    selected_attempt = max(
+        attempts,
+        key=lambda item: (
+            2 if item.get("status") == "pass" else 1 if item.get("status") == "warning" else 0,
+            sfm_attempt_registered_fraction(item),
+            colmap_model_score(item["bestModel"]) if isinstance(item.get("bestModel"), dict) else (-1, -1),
+        ),
+    ) if attempts else None
+    sparse_model_path = Path(str(selected_attempt.get("sparseModelPath"))) if selected_attempt and selected_attempt.get("sparseModelPath") else None
+    best_model = selected_attempt.get("bestModel") if selected_attempt else None
+    analyzer_metrics = best_model.get("metrics", {}) if isinstance(best_model, dict) else None
 
     status, checks = validate_sfm_output(len(frames), sparse_model_path, analyzer_metrics)
     base["stage"]["status"] = status
     base["sfmDirectory"] = str(sfm_dir)
     base["colmapImageDirectory"] = str(colmap_image_dir)
-    base["databasePath"] = str(database_path)
+    base["databasePath"] = str(selected_attempt.get("databasePath")) if selected_attempt else str(database_path)
     base["sparseModelPath"] = str(sparse_model_path) if sparse_model_path else None
-    base["sparseModels"] = sparse_models
+    base["sparseModels"] = selected_attempt.get("sparseModels", []) if selected_attempt else []
+    base["sfmAttempts"] = attempts
+    base["selectedAttempt"] = selected_attempt.get("name") if selected_attempt else None
     base["frameManifestPath"] = str(frame_manifest_path)
     base["metrics"] = analyzer_metrics or {}
+    base["commands"] = {
+        f"attempt_{attempt['name']}": attempt.get("commands", {})
+        for attempt in attempts
+    }
     base["colmap"] = {
         "versionSummary": command_summary(colmap, max_lines=3),
-        "matcher": "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
-        "usesGpu": sift_use_gpu == "1",
-        "resourceControls": {
-            "featureNumThreads": feature_num_threads,
-            "featureMaxImageSize": feature_max_image_size,
-            "featureMaxNumFeatures": feature_max_num_features,
-            "matcherNumThreads": matcher_num_threads,
-            "guidedMatching": guided_matching == "1",
-            "exhaustiveBlockSize": matcher_block_size,
-            "sequentialOverlap": sequential_overlap,
-            "sequentialQuadraticOverlap": sequential_quadratic_overlap == "1",
-        },
+        "matcher": selected_attempt.get("profile", {}).get("matcherKind") if selected_attempt else None,
+        "usesGpu": bool(selected_attempt.get("profile", {}).get("useGpu")) if selected_attempt else False,
+        "resourceControls": selected_attempt.get("profile", {}) if selected_attempt else {},
         "note": "Ubuntu COLMAP package reports without CUDA; SfM defaults to controlled CPU SIFT extraction and matching unless useGpu is explicitly enabled.",
     }
+    if attempts:
+        attempt_summaries = [
+            f"{attempt['name']}={attempt['status']} ({sfm_attempt_registered_fraction(attempt):.1%})"
+            for attempt in attempts
+        ]
+        base["checks"].append(
+            {
+                "id": "sfm_auto_retry",
+                "status": "pass" if status == "pass" else "warning" if len(attempts) > 1 else "pass",
+                "summary": f"COLMAP attempts: {', '.join(attempt_summaries)}; selected {base['selectedAttempt']}",
+                "attemptCount": len(attempts),
+                "selectedAttempt": base["selectedAttempt"],
+            }
+        )
     base["checks"].extend(checks)
     return base
 

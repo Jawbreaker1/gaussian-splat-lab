@@ -214,12 +214,12 @@ const stageDetails = {
   },
   frame_sampling: {
     summary: 'Extracts stable still frames from the video for reconstruction.',
-    inside: 'Samples frames, writes timestamps and builds hashes plus a contact sheet.',
+    inside: 'Samples frames, writes timestamps, builds hashes/contact sheet and checks blur, contrast, exposure and motion risk.',
     output: 'Frame manifest',
   },
   sfm: {
     summary: 'Solves camera positions so training knows where each frame was captured.',
-    inside: 'COLMAP extracts features, matches nearby frames and builds sparse cameras. CPU load is expected here.',
+    inside: 'COLMAP extracts features, matches nearby frames and automatically retries with more robust matching if too few frames register.',
     output: 'Camera solve report',
   },
   splat_training: {
