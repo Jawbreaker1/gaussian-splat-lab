@@ -11,11 +11,11 @@ $ErrorActionPreference = "Stop"
 
 function Get-WslAddress {
   $raw = & wsl.exe hostname -I
-  $addresses = $raw -split "\s+" | Where-Object {
+  $addresses = @($raw -split "\s+" | Where-Object {
     $_ -match "^\d{1,3}(\.\d{1,3}){3}$" -and
     $_ -ne "127.0.0.1" -and
     $_ -ne "10.255.255.254"
-  }
+  })
   if (-not $addresses -or $addresses.Count -eq 0) {
     throw "Could not detect the WSL IP address. Pass -ConnectAddress explicitly."
   }
@@ -27,7 +27,8 @@ function Get-LanAddresses {
     Where-Object {
       $_.IPAddress -notlike "127.*" -and
       $_.IPAddress -notlike "169.254*" -and
-      $_.InterfaceAlias -notlike "vEthernet*"
+      $_.InterfaceAlias -notlike "vEthernet*" -and
+      $_.InterfaceAlias -notmatch "VirtualBox|VMware|Hyper-V"
     } |
     Select-Object -ExpandProperty IPAddress
 }
