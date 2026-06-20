@@ -69,8 +69,9 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   controls.minDistance = 0.015;
   controls.maxDistance = 14;
   controls.enabled = false;
-  const walkButtonLookPixels = 34;
-  const orbitButtonRadians = 0.042;
+  const walkButtonLookPixels = 24;
+  const walkRadiansPerPixel = 0.0016;
+  const orbitButtonRadians = 0.038;
   const maxButtonPanStep = 0.095;
   const defaultNavigationSensitivity = 0.55;
 
@@ -111,8 +112,12 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   const target = new THREE.Vector3();
   const offset = new THREE.Vector3();
   const walkBaseForward = new THREE.Vector3();
-  const walkBaseUp = new THREE.Vector3();
-  const walkBaseRight = new THREE.Vector3();
+  const walkNavigationUp = new THREE.Vector3(0, 1, 0);
+  const projectedForward = new THREE.Vector3();
+  const projectedUp = new THREE.Vector3();
+  const projectedCameraUp = new THREE.Vector3();
+  const fallbackAxis = new THREE.Vector3();
+  const cameraViewUpSum = new THREE.Vector3();
   const walkYawQuat = new THREE.Quaternion();
   const walkPitchQuat = new THREE.Quaternion();
   const pressedKeys = new Set();
@@ -147,17 +152,64 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     camera.updateProjectionMatrix();
   }
 
-  function setWalkBasisFromCamera() {
-    camera.getWorldDirection(walkBaseForward).normalize();
-    walkBaseUp.copy(camera.up).normalize();
-    walkBaseRight.crossVectors(walkBaseForward, walkBaseUp);
-    if (walkBaseRight.lengthSq() <= 1e-10) {
-      walkBaseRight.setFromMatrixColumn(camera.matrixWorld, 0);
+  function projectOnNavigationPlane(source, targetVector) {
+    targetVector.copy(source).addScaledVector(walkNavigationUp, -source.dot(walkNavigationUp));
+    if (targetVector.lengthSq() <= 1e-10) {
+      targetVector.copy(walkBaseForward);
     }
-    walkBaseRight.normalize();
-    walkBaseUp.crossVectors(walkBaseRight, walkBaseForward).normalize();
+    if (targetVector.lengthSq() <= 1e-10) {
+      targetVector.setFromMatrixColumn(camera.matrixWorld, 2).multiplyScalar(-1);
+      targetVector.addScaledVector(walkNavigationUp, -targetVector.dot(walkNavigationUp));
+    }
+    if (targetVector.lengthSq() <= 1e-10) {
+      fallbackAxis.set(0, 1, 0);
+      if (Math.abs(fallbackAxis.dot(walkNavigationUp)) > 0.88) fallbackAxis.set(1, 0, 0);
+      targetVector.copy(fallbackAxis).addScaledVector(walkNavigationUp, -fallbackAxis.dot(walkNavigationUp));
+    }
+    return targetVector.normalize();
+  }
+
+  function averageCameraViewUp(views = cameraViews) {
+    cameraViewUpSum.set(0, 0, 0);
+    for (const view of views) {
+      const viewUp = normalizeVector(view?.up);
+      if (!viewUp) continue;
+      if (cameraViewUpSum.lengthSq() > 1e-10 && cameraViewUpSum.dot(viewUp) < 0) {
+        viewUp.negate();
+      }
+      cameraViewUpSum.add(viewUp);
+    }
+    if (cameraViewUpSum.lengthSq() <= 1e-10) return null;
+    return cameraViewUpSum.clone().normalize();
+  }
+
+  function setNavigationUp(upHint = null) {
+    const averagedUp = averageCameraViewUp();
+    const candidate = averagedUp ?? upHint ?? camera.up;
+    if (candidate && Number.isFinite(candidate.x) && Number.isFinite(candidate.y) && Number.isFinite(candidate.z) && candidate.lengthSq() > 1e-10) {
+      walkNavigationUp.copy(candidate).normalize();
+    } else {
+      walkNavigationUp.set(0, 1, 0);
+    }
+    return walkNavigationUp;
+  }
+
+  function walkMovementBasis() {
+    camera.updateMatrixWorld(true);
+    camera.getWorldDirection(forward).normalize();
+    projectOnNavigationPlane(forward, projectedForward);
+    right.crossVectors(projectedForward, walkNavigationUp).normalize();
+    up.copy(walkNavigationUp);
+    return { horizontalForward: projectedForward, horizontalRight: right, verticalUp: up };
+  }
+
+  function setWalkBasisFromCamera() {
+    camera.updateMatrixWorld(true);
+    camera.getWorldDirection(forward).normalize();
+    setNavigationUp(camera.up);
+    projectOnNavigationPlane(forward, walkBaseForward);
     walkYaw = 0;
-    walkPitch = 0;
+    walkPitch = Math.asin(clamp(forward.dot(walkNavigationUp), -0.98, 0.98));
     walkFocusDistance = clamp(camera.position.distanceTo(controls.target) || 1, 0.08, 8);
   }
 
@@ -168,9 +220,9 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   }
 
   function applyWalkLook() {
-    walkYawQuat.setFromAxisAngle(walkBaseUp, walkYaw);
+    walkYawQuat.setFromAxisAngle(walkNavigationUp, walkYaw);
     const yawedForward = walkBaseForward.clone().applyQuaternion(walkYawQuat).normalize();
-    const yawedRight = walkBaseRight.clone().applyQuaternion(walkYawQuat).normalize();
+    const yawedRight = yawedForward.clone().cross(walkNavigationUp).normalize();
     walkPitchQuat.setFromAxisAngle(yawedRight, walkPitch);
     const nextForward = yawedForward.applyQuaternion(walkPitchQuat).normalize();
     const nextUp = new THREE.Vector3().crossVectors(yawedRight, nextForward).normalize();
@@ -182,10 +234,18 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
   function rotateWalk(deltaX, deltaY) {
     if (navigationMode !== 'walk') return;
-    const sensitivity = 0.0021 * navigationSensitivity;
+    const sensitivity = walkRadiansPerPixel * navigationSensitivity;
     walkYaw -= deltaX * sensitivity;
-    walkPitch = clamp(walkPitch - deltaY * sensitivity, -1.42, 1.42);
+    walkPitch = clamp(walkPitch - deltaY * sensitivity, -1.35, 1.35);
     applyWalkLook();
+  }
+
+  function stabilizeOrbitRoll() {
+    setNavigationUp(camera.up);
+    camera.up.copy(walkNavigationUp);
+    camera.lookAt(controls.target);
+    camera.updateMatrixWorld(true);
+    controls.update();
   }
 
   function setNavigationMode(mode = 'walk') {
@@ -195,7 +255,9 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     pressedKeys.clear();
     if (navigationMode === 'walk') {
       setWalkBasisFromCamera();
-      syncTargetToCamera();
+      applyWalkLook();
+    } else {
+      stabilizeOrbitRoll();
     }
     return { mode: navigationMode };
   }
@@ -212,6 +274,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     const changed = nextToken !== cameraViewsToken;
     cameraViews = nextViews;
     cameraViewsToken = nextToken;
+    setNavigationUp(camera.up);
     if (changed) activeCameraViewIndex = 0;
     if (activeCameraViewIndex >= cameraViews.length) activeCameraViewIndex = 0;
     if (changed && fitState && splat && cameraViews.length) applyCameraView(activeCameraViewIndex);
@@ -238,6 +301,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     camera.updateProjectionMatrix();
     controls.update();
     setWalkBasisFromCamera();
+    applyWalkLook();
   }
 
   function applyCameraView(index = activeCameraViewIndex) {
@@ -270,6 +334,8 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     controls.target.copy(nextTarget);
     controls.update();
     setWalkBasisFromCamera();
+    if (navigationMode === 'walk') applyWalkLook();
+    else stabilizeOrbitRoll();
     return true;
   }
 
@@ -314,9 +380,16 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   function addLocalMovement(deltaRight = 0, deltaUp = 0, deltaForward = 0, step = walkButtonStep()) {
     camera.updateMatrixWorld(true);
     move.set(0, 0, 0);
-    camera.getWorldDirection(forward).normalize();
-    right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
-    up.copy(camera.up).normalize();
+    if (navigationMode === 'walk') {
+      const basis = walkMovementBasis();
+      forward.copy(basis.horizontalForward);
+      right.copy(basis.horizontalRight);
+      up.copy(basis.verticalUp);
+    } else {
+      camera.getWorldDirection(forward).normalize();
+      right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+      up.copy(camera.up).normalize();
+    }
     move
       .addScaledVector(right, deltaRight * step)
       .addScaledVector(up, deltaUp * step)
@@ -475,10 +548,10 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   function updateWalkMovement(deltaSeconds) {
     if (navigationMode !== 'walk' || !pressedKeys.size) return;
     move.set(0, 0, 0);
-    camera.updateMatrixWorld(true);
-    camera.getWorldDirection(forward).normalize();
-    right.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
-    up.copy(camera.up).normalize();
+    const basis = walkMovementBasis();
+    forward.copy(basis.horizontalForward);
+    right.copy(basis.horizontalRight);
+    up.copy(basis.verticalUp);
     if (pressedKeys.has('KeyW')) move.add(forward);
     if (pressedKeys.has('KeyS')) move.sub(forward);
     if (pressedKeys.has('KeyD')) move.add(right);
@@ -489,7 +562,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
     const fast = pressedKeys.has('ShiftLeft') || pressedKeys.has('ShiftRight');
     const slow = pressedKeys.has('ControlLeft') || pressedKeys.has('ControlRight');
-    const speed = scaledSceneExtent() * 0.34 * navigationSensitivity * (fast ? 3.2 : 1) * (slow ? 0.3 : 1);
+    const speed = scaledSceneExtent() * 0.24 * navigationSensitivity * (fast ? 3.2 : 1) * (slow ? 0.3 : 1);
     move.normalize().multiplyScalar(speed * deltaSeconds);
     camera.position.add(move);
     syncTargetToCamera();
@@ -548,6 +621,19 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     return [vector.x, vector.y, vector.z].map((value) => Number(value.toFixed(6)));
   }
 
+  function signedCameraRollDegrees() {
+    camera.updateMatrixWorld(true);
+    camera.getWorldDirection(forward).normalize();
+    projectedUp.copy(walkNavigationUp).addScaledVector(forward, -walkNavigationUp.dot(forward));
+    projectedCameraUp.copy(camera.up).addScaledVector(forward, -camera.up.dot(forward));
+    if (projectedUp.lengthSq() <= 1e-10 || projectedCameraUp.lengthSq() <= 1e-10) return 0;
+    projectedUp.normalize();
+    projectedCameraUp.normalize();
+    const sine = forward.dot(projectedUp.clone().cross(projectedCameraUp));
+    const cosine = clamp(projectedUp.dot(projectedCameraUp), -1, 1);
+    return THREE.MathUtils.radToDeg(Math.atan2(sine, cosine));
+  }
+
   function getNavigationState() {
     camera.updateMatrixWorld(true);
     return {
@@ -555,6 +641,8 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
       position: vectorSnapshot(camera.position),
       target: vectorSnapshot(controls.target),
       up: vectorSnapshot(camera.up),
+      navigationUp: vectorSnapshot(walkNavigationUp),
+      rollDegrees: Number(signedCameraRollDegrees().toFixed(4)),
       targetDistance: Number(camera.position.distanceTo(controls.target).toFixed(6)),
       walkFocusDistance: Number(walkFocusDistance.toFixed(6)),
       navigationSensitivity: Number(navigationSensitivity.toFixed(3)),
@@ -597,6 +685,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     nextCameraView: () => nextCameraView(1),
     pan,
     orbit,
+    lookPixels: rotateWalk,
     zoom,
     reset,
     getNavigationState,

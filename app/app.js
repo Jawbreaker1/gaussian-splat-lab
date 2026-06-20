@@ -110,6 +110,9 @@ const viewerScene = {
 if (typeof window !== 'undefined') {
   window.__gslabViewerDebug = {
     getSparkNavigationState: () => viewerScene.sparkController?.getNavigationState?.() ?? null,
+    lookPixels: (deltaX, deltaY) => viewerScene.sparkController?.lookPixels?.(deltaX, deltaY),
+    pan: (deltaX, deltaY) => viewerScene.sparkController?.pan?.(deltaX, deltaY),
+    zoom: (factor) => viewerScene.sparkController?.zoom?.(factor),
     getUiState: () => ({
       mode: viewerScene.mode,
       sparkNavigationMode: viewerScene.sparkNavigationMode,

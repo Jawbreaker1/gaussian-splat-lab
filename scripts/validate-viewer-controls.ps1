@@ -154,9 +154,11 @@ try {
   const distance = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
   const finiteState = (value) => (
     Number.isFinite(value.targetDistance)
+      && Number.isFinite(value.rollDegrees)
       && value.position.every(Number.isFinite)
       && value.target.every(Number.isFinite)
       && value.up.every(Number.isFinite)
+      && value.navigationUp.every(Number.isFinite)
   );
   const run = async (label, selector, limits) => {
     const before = state();
@@ -205,6 +207,25 @@ try {
   await sleep(500);
   byId('#viewerResetButton').click();
   await sleep(500);
+  if (typeof debug.lookPixels !== 'function') throw new Error('viewer debug lookPixels hook is unavailable');
+  const resetRoll = Math.abs(state().rollDegrees);
+  if (resetRoll > 1.5) throw new Error(`walk reset left camera rolled by ${resetRoll.toFixed(3)} degrees`);
+  for (let index = 0; index < 30; index += 1) {
+    debug.lookPixels(24, 0);
+    await sleep(12);
+  }
+  const horizontalSwipeRight = state();
+  if (Math.abs(horizontalSwipeRight.rollDegrees) > 1.5) {
+    throw new Error(`horizontal walk swipe accumulated roll: ${horizontalSwipeRight.rollDegrees.toFixed(3)} degrees`);
+  }
+  for (let index = 0; index < 30; index += 1) {
+    debug.lookPixels(-24, 0);
+    await sleep(12);
+  }
+  const horizontalSwipeReturn = state();
+  if (Math.abs(horizontalSwipeReturn.rollDegrees) > 1.5) {
+    throw new Error(`horizontal walk swipe return left roll: ${horizontalSwipeReturn.rollDegrees.toFixed(3)} degrees`);
+  }
 
   const walkMoveLimits = { position: 0.16, target: 0.2, distance: 0.04, maxTargetDistance: 8.05 };
   const walkLookLimits = { position: 0.025, target: 0.16, distance: 0.04, maxTargetDistance: 8.05 };
