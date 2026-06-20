@@ -143,14 +143,20 @@ const trainingProfileEstimates = {
   rtx_reference: 25 * 60,
   rtx_high_quality: 55 * 60,
   rtx_ultra_quality: 2 * 60 * 60,
+  rtx_stable_quality: 3 * 60 * 60,
   rtx_ceiling_quality: 3 * 60 * 60,
   rtx_max_quality: 5 * 60 * 60,
+  splatfacto_preview: 20 * 60,
+  splatfacto_reference: 60 * 60,
 };
 const qualityPresetLabels = {
   quality_probe: 'Fast probe',
   rtx_high_quality: 'High quality',
   rtx_ultra_quality: 'Ultra quality',
-  rtx_max_quality: 'Max quality',
+  rtx_stable_quality: 'Max stable',
+  rtx_max_quality: 'Max stress',
+  splatfacto_preview: 'Splatfacto preview',
+  splatfacto_reference: 'Best quality',
 };
 const fallbackStageNames = {
   framework_license: 'Dependency Review',
@@ -860,6 +866,12 @@ function viewerQuality(status, training = {}, runConfig = {}) {
   }
   if (profile === 'rtx_ultra_quality') {
     return { text: training.renderReview?.status === 'pass' ? 'ultra inspect' : 'ultra warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
+  }
+  if (profile === 'rtx_stable_quality') {
+    return { text: training.renderReview?.status === 'pass' ? 'max stable inspect' : 'max stable warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
+  }
+  if (profile === 'splatfacto_preview' || profile === 'splatfacto_reference') {
+    return { text: training.renderReview?.status === 'pass' ? 'splatfacto inspect' : 'splatfacto warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };
   }
   if (profile === 'rtx_ceiling_quality') {
     return { text: training.renderReview?.status === 'pass' ? 'ceiling inspect' : 'ceiling warning', type: training.renderReview?.status === 'pass' ? 'pass' : 'warning' };

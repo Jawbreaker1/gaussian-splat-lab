@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -180,6 +181,32 @@ TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "pruneOpa": 0.0011,
         "absgrad": False,
     },
+    "rtx_stable_quality": {
+        "iterations": 30000,
+        "maxImages": 144,
+        "maxPoints": 280000,
+        "maxRenderSize": 1600,
+        "maxGaussians": 1600000,
+        "sampleEvery": 500,
+        "reviewSamples": 24,
+        "initialOpacity": 0.065,
+        "initialScaleMultiplier": 0.21,
+        "ssimWeight": 0.27,
+        "meanLr": 0.00021,
+        "colorLr": 0.015,
+        "scaleLr": 0.0026,
+        "opacityLr": 0.0125,
+        "quatLr": 0.00046,
+        "densifyStrategy": "default",
+        "refineStartIter": 100,
+        "refineStopIter": 20500,
+        "refineEvery": 100,
+        "resetEvery": 3000,
+        "growGrad2d": 0.000058,
+        "growScale3d": 0.0032,
+        "pruneOpa": 0.0011,
+        "absgrad": False,
+    },
     "rtx_ceiling_quality": {
         "iterations": 30000,
         "maxImages": 173,
@@ -235,6 +262,33 @@ TRAINING_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 DENSIFY_STRATEGIES = {"none", "default"}
 
+SPLATFACTO_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "splatfacto_preview": {
+        "method": "splatfacto",
+        "iterations": 1000,
+        "downscaleFactor": 2,
+        "cacheImages": "cpu",
+        "evalInterval": 8,
+        "stepsPerEvalImage": 500,
+        "stepsPerEvalAllImages": 1000,
+        "stepsPerSave": 1000,
+        "estimatedSeconds": 10 * 60,
+        "timeoutSeconds": 2 * 60 * 60,
+    },
+    "splatfacto_reference": {
+        "method": "splatfacto",
+        "iterations": 30000,
+        "downscaleFactor": 2,
+        "cacheImages": "cpu",
+        "evalInterval": 8,
+        "stepsPerEvalImage": 5000,
+        "stepsPerEvalAllImages": 30000,
+        "stepsPerSave": 30000,
+        "estimatedSeconds": 45 * 60,
+        "timeoutSeconds": 8 * 60 * 60,
+    },
+}
+
 TRAINING_TIMEOUT_SECONDS: dict[str, int] = {
     "smoke": 30 * 60,
     "baseline": 45 * 60,
@@ -242,8 +296,11 @@ TRAINING_TIMEOUT_SECONDS: dict[str, int] = {
     "rtx_reference": 4 * 60 * 60,
     "rtx_high_quality": 8 * 60 * 60,
     "rtx_ultra_quality": 12 * 60 * 60,
+    "rtx_stable_quality": 16 * 60 * 60,
     "rtx_ceiling_quality": 16 * 60 * 60,
     "rtx_max_quality": 20 * 60 * 60,
+    "splatfacto_preview": 2 * 60 * 60,
+    "splatfacto_reference": 8 * 60 * 60,
 }
 
 
@@ -611,6 +668,288 @@ def build_training_subprocess_environment(torch_cuda: dict[str, Any]) -> tuple[d
         "TORCH_CUDA_ARCH_LIST": env.get("TORCH_CUDA_ARCH_LIST"),
         "MAX_JOBS": env.get("MAX_JOBS"),
     }
+
+
+def nerfstudio_venv_paths() -> dict[str, Path]:
+    venv = repo_root_from_script() / ".venv-nerfstudio-py312"
+    bin_dir = venv / "bin"
+    return {
+        "venv": venv,
+        "bin": bin_dir,
+        "python": bin_dir / "python",
+        "ns_train": bin_dir / "ns-train",
+        "ns_export": bin_dir / "ns-export",
+        "ns_eval": bin_dir / "ns-eval",
+    }
+
+
+def build_nerfstudio_environment() -> tuple[dict[str, str], dict[str, Any]]:
+    env = os.environ.copy()
+    paths = nerfstudio_venv_paths()
+    path_prepend: list[str] = []
+    if paths["bin"].exists():
+        path_prepend.append(str(paths["bin"]))
+
+    cuda_home = cuda_home_candidate()
+    if cuda_home is not None:
+        env["CUDA_HOME"] = str(cuda_home)
+        cuda_bin = cuda_home / "bin"
+        if cuda_bin.exists():
+            path_prepend.append(str(cuda_bin))
+        cuda_lib = cuda_home / "lib64"
+        if cuda_lib.exists():
+            existing_ld = env.get("LD_LIBRARY_PATH", "")
+            env["LD_LIBRARY_PATH"] = os.pathsep.join(
+                [str(cuda_lib)] + ([existing_ld] if existing_ld else [])
+            )
+
+    current_path = env.get("PATH", "")
+    env["PATH"] = os.pathsep.join(path_prepend + ([current_path] if current_path else []))
+    env.setdefault("MPLCONFIGDIR", "/tmp/gsl-mpl")
+    env.setdefault("WANDB_MODE", "disabled")
+    env.setdefault(
+        "TORCH_EXTENSIONS_DIR",
+        str(repo_root_from_script() / "outputs" / "experiments" / "nerfstudio" / "torch_extensions"),
+    )
+    env.setdefault("TORCH_CUDA_ARCH_LIST", "12.0")
+    env.setdefault("MAX_JOBS", "4")
+    # Nerfstudio 1.1.5 checkpoints are produced locally by this pipeline. PyTorch
+    # 2.6+ defaults otherwise reject them during export/eval.
+    env.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
+    return env, {
+        "venv": str(paths["venv"]),
+        "CUDA_HOME": env.get("CUDA_HOME"),
+        "PATH_PREPEND": path_prepend,
+        "LD_LIBRARY_PATH_PREPEND": [env.get("LD_LIBRARY_PATH", "").split(os.pathsep)[0]]
+        if env.get("LD_LIBRARY_PATH")
+        else [],
+        "TORCH_EXTENSIONS_DIR": env.get("TORCH_EXTENSIONS_DIR"),
+        "TORCH_CUDA_ARCH_LIST": env.get("TORCH_CUDA_ARCH_LIST"),
+        "MAX_JOBS": env.get("MAX_JOBS"),
+    }
+
+
+def tail_text(path: Path, max_chars: int = 8000) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if len(text) <= max_chars:
+        return text
+    return f"... [truncated]\n{text[-max_chars:]}"
+
+
+def write_training_progress(progress_path: Path, payload: dict[str, Any]) -> None:
+    try:
+        write_json(progress_path, payload)
+    except Exception:
+        # Progress is best-effort. The stage report is authoritative.
+        return
+
+
+def run_logged_command_with_estimated_progress(
+    command: list[str],
+    *,
+    timeout_seconds: int,
+    env: dict[str, str],
+    log_path: Path,
+    progress_path: Path,
+    progress_base: dict[str, Any],
+    estimated_total_seconds: int,
+) -> dict[str, Any]:
+    executable = shutil.which(command[0], path=env.get("PATH"))
+    if executable is None:
+        return {
+            "name": command[0],
+            "command": command,
+            "status": "setup_gap",
+            "exitCode": None,
+            "stdout": "",
+            "stderr": f"{command[0]} not found on PATH",
+        }
+
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    start = time.monotonic()
+    timed_out = False
+    exit_code: int | None = None
+    with log_path.open("w", encoding="utf-8", errors="replace") as log_handle:
+        process = subprocess.Popen(
+            command,
+            cwd=repo_root_from_script(),
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        while True:
+            exit_code = process.poll()
+            elapsed = max(time.monotonic() - start, 0.0)
+            percent = min((elapsed / max(float(estimated_total_seconds), 1.0)) * 100.0, 96.0)
+            iterations = int(progress_base.get("iterations") or 0)
+            write_training_progress(
+                progress_path,
+                {
+                    **progress_base,
+                    "status": "running" if exit_code is None else "pass",
+                    "percent": round(percent, 2) if exit_code is None else 100.0,
+                    "iteration": int(iterations * percent / 100.0) if exit_code is None else iterations,
+                    "elapsedSeconds": round(elapsed, 1),
+                    "estimatedTotalSeconds": estimated_total_seconds,
+                    "updatedAt": utc_now(),
+                },
+            )
+            if exit_code is not None:
+                break
+            if elapsed > timeout_seconds:
+                timed_out = True
+                process.kill()
+                exit_code = process.wait()
+                break
+            time.sleep(5)
+
+    elapsed = max(time.monotonic() - start, 0.0)
+    output_tail = tail_text(log_path)
+    final_status = "fail" if timed_out else ("pass" if exit_code == 0 else "fail")
+    write_training_progress(
+        progress_path,
+        {
+            **progress_base,
+            "status": final_status,
+            "percent": 100.0 if final_status == "pass" else min(
+                (elapsed / max(float(estimated_total_seconds), 1.0)) * 100.0,
+                100.0,
+            ),
+            "iteration": int(progress_base.get("iterations") or 0) if final_status == "pass" else None,
+            "elapsedSeconds": round(elapsed, 1),
+            "estimatedTotalSeconds": estimated_total_seconds,
+            "updatedAt": utc_now(),
+        },
+    )
+    return {
+        "name": command[0],
+        "command": command,
+        "status": final_status,
+        "exitCode": exit_code,
+        "stdout": output_tail,
+        "stderr": f"command timed out after {timeout_seconds}s" if timed_out else "",
+        "logPath": str(log_path),
+        "wallTimeSeconds": round(elapsed, 3),
+        "timeoutSeconds": timeout_seconds,
+    }
+
+
+def link_or_copytree(source: Path, target: Path) -> None:
+    if target.exists() or target.is_symlink():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(source.resolve(), target, target_is_directory=True)
+    except OSError:
+        shutil.copytree(source, target)
+
+
+def prepare_downscaled_images(source_dir: Path, output_dir: Path, factor: int) -> int:
+    if factor <= 1:
+        return 0
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suffixes = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+    source_images = sorted(path for path in source_dir.iterdir() if path.suffix.lower() in suffixes)
+    existing = [path for path in output_dir.iterdir() if path.suffix.lower() in suffixes] if output_dir.exists() else []
+    if len(existing) >= len(source_images) and source_images:
+        return len(existing)
+
+    from PIL import Image  # type: ignore[import-not-found]
+
+    for source in source_images:
+        target = output_dir / source.name
+        if target.exists():
+            continue
+        with Image.open(source) as image:
+            width = max(1, image.width // factor)
+            height = max(1, image.height // factor)
+            resized = image.convert("RGB").resize((width, height), Image.Resampling.LANCZOS)
+            save_kwargs: dict[str, Any] = {}
+            if target.suffix.lower() in {".jpg", ".jpeg"}:
+                save_kwargs = {"quality": 94, "subsampling": 1, "optimize": True}
+            resized.save(target, **save_kwargs)
+    return len(source_images)
+
+
+def prepare_nerfstudio_colmap_data(
+    *,
+    data_dir: Path,
+    sparse_model_path: Path,
+    colmap_image_dir: Path,
+    downscale_factor: int,
+) -> dict[str, Any]:
+    images_link = data_dir / "images"
+    sparse_link = data_dir / "colmap" / "sparse" / "0"
+    link_or_copytree(colmap_image_dir, images_link)
+    link_or_copytree(sparse_model_path, sparse_link)
+    downscaled_count = 0
+    if downscale_factor > 1:
+        downscaled_count = prepare_downscaled_images(
+            colmap_image_dir,
+            data_dir / f"images_{downscale_factor}",
+            downscale_factor,
+        )
+    return {
+        "dataDir": str(data_dir),
+        "imagesPath": str(images_link),
+        "sparseModelPath": str(sparse_link),
+        "downscaleFactor": downscale_factor,
+        "downscaledImages": downscaled_count,
+    }
+
+
+def selected_images_from_colmap_text(colmap_text_dir: Path, image_dir: Path) -> list[dict[str, Any]]:
+    images = parse_colmap_images(colmap_text_dir / "images.txt")
+    return [
+        {
+            "imageId": image["imageId"],
+            "name": image["name"],
+            "cameraId": image["cameraId"],
+            "path": str(image_dir / image["name"]),
+        }
+        for image in sorted(images.values(), key=lambda item: int(item["imageId"]))
+    ]
+
+
+def build_image_contact_sheet(image_paths: list[Path], output_path: Path, max_images: int = 12) -> Path | None:
+    existing_images = [path for path in image_paths if path.exists()]
+    if not existing_images:
+        return None
+
+    from PIL import Image, ImageDraw  # type: ignore[import-not-found]
+
+    thumbs: list[tuple[str, Image.Image]] = []
+    for index, path in enumerate(existing_images[:max_images]):
+        with Image.open(path) as image:
+            thumb = image.convert("RGB")
+            thumb.thumbnail((720, 240), Image.Resampling.LANCZOS)
+            canvas = Image.new("RGB", (720, 270), (18, 22, 28))
+            canvas.paste(thumb, ((720 - thumb.width) // 2, 26))
+            draw = ImageDraw.Draw(canvas)
+            draw.text((12, 8), f"eval {index:02d}", fill=(226, 232, 240))
+            thumbs.append((path.name, canvas))
+
+    columns = 2
+    rows = math.ceil(len(thumbs) / columns)
+    padding = 12
+    sheet = Image.new(
+        "RGB",
+        (
+            columns * 720 + (columns + 1) * padding,
+            rows * 270 + (rows + 1) * padding,
+        ),
+        (8, 12, 18),
+    )
+    for index, (_, thumb) in enumerate(thumbs):
+        x = padding + (index % columns) * (720 + padding)
+        y = padding + (index // columns) * (270 + padding)
+        sheet.paste(thumb, (x, y))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(output_path, quality=92)
+    return output_path
 
 
 def check_torch_cuda() -> dict[str, Any]:
@@ -1694,6 +2033,451 @@ def bool_setting(config: dict[str, Any], key: str, default: bool) -> bool:
     return bool(raw_value) if raw_value is not None else default
 
 
+def optional_path(value: Any) -> Path | None:
+    return Path(value) if isinstance(value, str) and value else None
+
+
+def build_splatfacto_training_report(
+    *,
+    job_path: Path,
+    base: dict[str, Any],
+    sparse_model_path: Path,
+    colmap_image_dir: Path,
+    training_config: dict[str, Any],
+    requested_profile: str,
+) -> dict[str, Any]:
+    paths = nerfstudio_venv_paths()
+    trainer_env, trainer_env_summary = build_nerfstudio_environment()
+    base["commandEnvironment"] = trainer_env_summary
+    base["training"] = {
+        **training_config,
+        "backend": "nerfstudio_splatfacto",
+        "profile": requested_profile,
+    }
+    base["trainingDirectory"] = str(splat_training_run_directory(job_path))
+    training_dir = Path(base["trainingDirectory"])
+    progress_path = training_dir / "training_progress.json"
+    commands: dict[str, Any] = {}
+    base["commands"] = commands
+
+    binary_checks = [
+        {
+            "id": "nerfstudio_virtualenv",
+            "status": "pass" if paths["venv"].exists() else "setup_gap",
+            "summary": "isolated Nerfstudio environment exists"
+            if paths["venv"].exists()
+            else "isolated Nerfstudio environment is missing",
+            "path": str(paths["venv"]),
+        },
+        {
+            "id": "ns_train",
+            "status": "pass" if paths["ns_train"].exists() else "setup_gap",
+            "summary": "ns-train is available" if paths["ns_train"].exists() else "ns-train is missing",
+            "path": str(paths["ns_train"]),
+        },
+        {
+            "id": "ns_export",
+            "status": "pass" if paths["ns_export"].exists() else "setup_gap",
+            "summary": "ns-export is available" if paths["ns_export"].exists() else "ns-export is missing",
+            "path": str(paths["ns_export"]),
+        },
+        {
+            "id": "ns_eval",
+            "status": "pass" if paths["ns_eval"].exists() else "setup_gap",
+            "summary": "ns-eval is available" if paths["ns_eval"].exists() else "ns-eval is missing",
+            "path": str(paths["ns_eval"]),
+        },
+    ]
+    base["checks"].extend(binary_checks)
+    if any(check["status"] == "setup_gap" for check in binary_checks):
+        base["stage"]["status"] = "setup_gap"
+        return base
+
+    import_check = run_command(
+        [
+            str(paths["python"]),
+            "-c",
+            (
+                "import nerfstudio, torch, gsplat; "
+                "device=torch.cuda.get_device_name(0) if torch.cuda.is_available() else None; "
+                "print('nerfstudio=%s torch=%s cuda=%s device=%s gsplat=%s' % "
+                "(getattr(nerfstudio, '__version__', None), torch.__version__, torch.cuda.is_available(), device, getattr(gsplat, '__version__', None)))"
+            ),
+        ],
+        timeout_seconds=60,
+        env=trainer_env,
+    )
+    commands["nerfstudioImportCheck"] = import_check
+    import_stdout = str(import_check.get("stdout") or "")
+    import_text = f"{import_stdout}\n{import_check.get('stderr') or ''}"
+    import_status = "pass" if import_check["status"] == "pass" and "cuda=True" in import_stdout else "setup_gap"
+    if "Found no NVIDIA driver" in import_text:
+        import_status = "setup_gap"
+    base["checks"].append(
+        {
+            "id": "nerfstudio_cuda",
+            "status": import_status,
+            "summary": import_stdout or command_summary(import_check) or "Nerfstudio CUDA check did not pass",
+            "details": import_check,
+        }
+    )
+    if import_status != "pass":
+        base["stage"]["status"] = import_status
+        return base
+
+    profile = requested_profile if requested_profile in SPLATFACTO_PROFILE_DEFAULTS else "splatfacto_reference"
+    defaults = SPLATFACTO_PROFILE_DEFAULTS[profile]
+    method = str(training_config.get("method", defaults["method"]))
+    if method not in {"splatfacto", "splatfacto-big"}:
+        method = str(defaults["method"])
+    cache_images = str(training_config.get("cacheImages", defaults["cacheImages"]))
+    if cache_images not in {"cpu", "gpu"}:
+        cache_images = str(defaults["cacheImages"])
+    run_config = {
+        "backend": "nerfstudio_splatfacto",
+        "profile": profile,
+        "requestedProfile": requested_profile,
+        "method": method,
+        "iterations": positive_int_setting(training_config, "iterations", int(defaults["iterations"]), 1, 150000),
+        "downscaleFactor": positive_int_setting(training_config, "downscaleFactor", int(defaults["downscaleFactor"]), 1, 8),
+        "cacheImages": cache_images,
+        "evalInterval": positive_int_setting(training_config, "evalInterval", int(defaults["evalInterval"]), 1, 512),
+        "stepsPerEvalImage": positive_int_setting(
+            training_config,
+            "stepsPerEvalImage",
+            int(defaults["stepsPerEvalImage"]),
+            1,
+            150000,
+        ),
+        "stepsPerEvalAllImages": positive_int_setting(
+            training_config,
+            "stepsPerEvalAllImages",
+            int(defaults["stepsPerEvalAllImages"]),
+            1,
+            150000,
+        ),
+        "stepsPerSave": positive_int_setting(training_config, "stepsPerSave", int(defaults["stepsPerSave"]), 1, 150000),
+        "estimatedSeconds": positive_int_setting(
+            training_config,
+            "estimatedSeconds",
+            int(defaults["estimatedSeconds"]),
+            60,
+            24 * 60 * 60,
+        ),
+        "timeoutSeconds": positive_int_setting(
+            training_config,
+            "timeoutSeconds",
+            int(defaults["timeoutSeconds"]),
+            60,
+            24 * 60 * 60,
+        ),
+    }
+    base["runConfig"] = run_config
+
+    try:
+        data_summary = prepare_nerfstudio_colmap_data(
+            data_dir=training_dir / "nerfstudio-data",
+            sparse_model_path=sparse_model_path,
+            colmap_image_dir=colmap_image_dir,
+            downscale_factor=int(run_config["downscaleFactor"]),
+        )
+    except Exception as exc:  # noqa: BLE001 - report dataset setup failures directly
+        base["stage"]["status"] = "fail"
+        base["checks"].append(
+            {
+                "id": "nerfstudio_dataset_layout",
+                "status": "fail",
+                "summary": str(exc),
+            }
+        )
+        return base
+
+    base["nerfstudioData"] = data_summary
+    base["checks"].append(
+        {
+            "id": "nerfstudio_dataset_layout",
+            "status": "pass",
+            "summary": "Nerfstudio COLMAP dataset layout prepared",
+            "details": data_summary,
+        }
+    )
+
+    colmap_text_dir = training_dir / "colmap_txt"
+    colmap_text_dir.mkdir(parents=True, exist_ok=True)
+    model_converter = run_command(
+        [
+            "colmap",
+            "model_converter",
+            "--input_path",
+            str(sparse_model_path),
+            "--output_path",
+            str(colmap_text_dir),
+            "--output_type",
+            "TXT",
+        ],
+        timeout_seconds=300,
+        env=trainer_env,
+    )
+    commands["colmapModelConverter"] = model_converter
+    base["checks"].append(
+        {
+            "id": "colmap_text_export",
+            "status": model_converter["status"],
+            "summary": "COLMAP text model exported"
+            if model_converter["status"] == "pass"
+            else command_summary(model_converter) or "COLMAP text export failed",
+        }
+    )
+    if model_converter["status"] != "pass":
+        base["stage"]["status"] = model_converter["status"]
+        return base
+
+    selected_images = selected_images_from_colmap_text(colmap_text_dir, colmap_image_dir)
+    timestamp = training_dir.name
+    runs_dir = training_dir / "nerfstudio-runs"
+    experiment_name = profile
+    train_log_path = training_dir / "logs" / "ns-train.log"
+    train_command = [
+        str(paths["ns_train"]),
+        method,
+        "--output-dir",
+        str(runs_dir),
+        "--experiment-name",
+        experiment_name,
+        "--timestamp",
+        timestamp,
+        "--vis",
+        "tensorboard",
+        "--max-num-iterations",
+        str(run_config["iterations"]),
+        "--steps-per-save",
+        str(run_config["stepsPerSave"]),
+        "--steps-per-eval-image",
+        str(run_config["stepsPerEvalImage"]),
+        "--steps-per-eval-all-images",
+        str(run_config["stepsPerEvalAllImages"]),
+        "--viewer.quit-on-train-completion",
+        "True",
+        "--pipeline.datamanager.cache-images",
+        str(run_config["cacheImages"]),
+        "colmap",
+        "--data",
+        str(training_dir / "nerfstudio-data"),
+        "--downscale-factor",
+        str(run_config["downscaleFactor"]),
+        "--eval-mode",
+        "interval",
+        "--eval-interval",
+        str(run_config["evalInterval"]),
+    ]
+    progress_base = {
+        "backend": "nerfstudio_splatfacto",
+        "profile": profile,
+        "method": method,
+        "iterations": int(run_config["iterations"]),
+        "startedAt": utc_now(),
+    }
+    trainer = run_logged_command_with_estimated_progress(
+        train_command,
+        timeout_seconds=int(run_config["timeoutSeconds"]),
+        env=trainer_env,
+        log_path=train_log_path,
+        progress_path=progress_path,
+        progress_base=progress_base,
+        estimated_total_seconds=int(run_config["estimatedSeconds"]),
+    )
+    commands["splatfactoTrainer"] = trainer
+    if trainer["status"] != "pass":
+        base["stage"]["status"] = trainer["status"]
+        base["checks"].append(
+            {
+                "id": "splatfacto_trainer",
+                "status": trainer["status"],
+                "summary": command_summary(trainer) or "Nerfstudio Splatfacto training failed",
+                "logPath": str(train_log_path),
+            }
+        )
+        return base
+
+    config_path = runs_dir / experiment_name / method / timestamp / "config.yml"
+    if not config_path.exists():
+        candidates = sorted(runs_dir.glob(f"{experiment_name}/*/{timestamp}/config.yml"))
+        if candidates:
+            config_path = candidates[-1]
+    checkpoint_dir = config_path.parent / "nerfstudio_models"
+    checkpoint_candidates = sorted(checkpoint_dir.glob("*.ckpt")) if checkpoint_dir.exists() else []
+    checkpoint_path = checkpoint_candidates[-1] if checkpoint_candidates else None
+
+    export_dir = training_dir / "exports"
+    export_filename = f"{profile}.ply"
+    export_command = [
+        str(paths["ns_export"]),
+        "gaussian-splat",
+        "--load-config",
+        str(config_path),
+        "--output-dir",
+        str(export_dir),
+        "--output-filename",
+        export_filename,
+    ]
+    export_result = run_command(export_command, timeout_seconds=2 * 60 * 60, env=trainer_env)
+    commands["splatfactoExport"] = export_result
+    exported_artifact_path = export_dir / export_filename
+
+    eval_dir = training_dir / "render_review"
+    eval_json = eval_dir / "eval.json"
+    eval_renders = eval_dir / "eval-renders"
+    eval_command = [
+        str(paths["ns_eval"]),
+        "--load-config",
+        str(config_path),
+        "--output-path",
+        str(eval_json),
+        "--render-output-path",
+        str(eval_renders),
+    ]
+    eval_result = run_command(eval_command, timeout_seconds=2 * 60 * 60, env=trainer_env)
+    commands["splatfactoEval"] = eval_result
+
+    eval_payload = read_json(eval_json) if eval_json.exists() else {}
+    eval_metrics = eval_payload.get("results") if isinstance(eval_payload.get("results"), dict) else {}
+    eval_images = sorted(eval_renders.glob("*.png")) if eval_renders.exists() else []
+    contact_sheet_path = build_image_contact_sheet(eval_images, eval_dir / "contact_sheet.png")
+    sample_render_path = eval_images[0] if eval_images else None
+
+    ply_header = parse_ply_header(exported_artifact_path) if exported_artifact_path.exists() else {}
+    gaussian_count = ply_header.get("vertexCount")
+    render_review = {
+        "status": "pass" if eval_result["status"] == "pass" and eval_json.exists() else "warning",
+        "psnr": eval_metrics.get("psnr"),
+        "ssim": eval_metrics.get("ssim"),
+        "lpips": eval_metrics.get("lpips"),
+        "fps": eval_metrics.get("fps"),
+        "evalImageCount": len(eval_images),
+        "evalJsonPath": str(eval_json) if eval_json.exists() else None,
+        "contactSheetPath": str(contact_sheet_path) if contact_sheet_path else None,
+    }
+    training_metrics = {
+        "backend": "nerfstudio_splatfacto",
+        "profile": profile,
+        "method": method,
+        "iterations": int(run_config["iterations"]),
+        "imagesUsed": len(selected_images),
+        "selectedImages": selected_images,
+        "gaussianCount": gaussian_count,
+        "initialGaussianCount": None,
+        "gaussianGrowthFactor": None,
+        "wallTimeSeconds": trainer.get("wallTimeSeconds"),
+        "downscaleFactor": run_config["downscaleFactor"],
+        "renderReview": render_review,
+    }
+    artifact_ok = (
+        export_result["status"] == "pass"
+        and exported_artifact_path.exists()
+        and exported_artifact_path.stat().st_size > 0
+    )
+    checkpoint_exists = checkpoint_path is not None and checkpoint_path.exists()
+    result_status = "pass" if config_path.exists() and checkpoint_exists and artifact_ok else "fail"
+    result = {
+        "schemaVersion": 1,
+        "status": result_status,
+        "backend": "nerfstudio_splatfacto",
+        "checkpointPath": str(checkpoint_path) if checkpoint_path is not None else None,
+        "configPath": str(config_path) if config_path.exists() else None,
+        "exportedArtifactPath": str(exported_artifact_path),
+        "splatArtifactPath": str(exported_artifact_path),
+        "sampleRenderPath": str(sample_render_path) if sample_render_path else None,
+        "sampleTargetPath": None,
+        "renderReviewPath": str(contact_sheet_path) if contact_sheet_path else None,
+        "training": training_metrics,
+        "versions": {"nerfstudio": import_stdout},
+    }
+    result_path = training_dir / "training_result.json"
+    write_json(result_path, result)
+
+    artifact_checks = [
+        {
+            "id": "splatfacto_trainer",
+            "status": trainer["status"],
+            "summary": "Nerfstudio Splatfacto training completed",
+            "logPath": str(train_log_path),
+        },
+        {
+            "id": "splatfacto_config",
+            "status": "pass" if config_path.exists() else "fail",
+            "summary": "Nerfstudio config exists" if config_path.exists() else "Nerfstudio config was not found",
+            "path": str(config_path),
+        },
+        {
+            "id": "checkpoint",
+            "status": "pass" if checkpoint_exists else "fail",
+            "summary": "checkpoint exists" if checkpoint_exists else "checkpoint was not found",
+            "path": str(checkpoint_path) if checkpoint_path is not None else None,
+        },
+        {
+            "id": "splatfacto_export",
+            "status": export_result["status"],
+            "summary": "Splatfacto PLY exported"
+            if export_result["status"] == "pass"
+            else command_summary(export_result) or "Splatfacto export failed",
+        },
+        {
+            "id": "exported_artifact",
+            "status": "pass"
+            if exported_artifact_path.exists() and exported_artifact_path.stat().st_size > 0
+            else "fail",
+            "summary": "exported splat artifact exists"
+            if exported_artifact_path.exists()
+            else "exported splat artifact was not written",
+            "path": str(exported_artifact_path),
+        },
+        {
+            "id": "splatfacto_eval",
+            "status": eval_result["status"] if eval_result["status"] == "pass" else "warning",
+            "summary": "Nerfstudio eval metrics and review renders written"
+            if eval_result["status"] == "pass"
+            else command_summary(eval_result) or "Nerfstudio eval did not complete",
+            "path": str(eval_json),
+        },
+        {
+            "id": "render_review_artifact",
+            "status": "pass" if contact_sheet_path and contact_sheet_path.exists() else "warning",
+            "summary": "render review contact sheet exists"
+            if contact_sheet_path and contact_sheet_path.exists()
+            else "render review contact sheet was not written",
+            "path": str(contact_sheet_path) if contact_sheet_path else None,
+        },
+    ]
+    base["checks"].extend(artifact_checks)
+    base["trainingResultPath"] = str(result_path)
+    base["trainingResult"] = result
+    base["checkpointPath"] = str(checkpoint_path) if checkpoint_path is not None else None
+    base["configPath"] = str(config_path) if config_path.exists() else None
+    base["exportedArtifactPath"] = str(exported_artifact_path)
+    base["splatArtifactPath"] = str(exported_artifact_path)
+    base["sampleRenderPath"] = str(sample_render_path) if sample_render_path else None
+    base["sampleTargetPath"] = None
+    base["renderReviewPath"] = str(contact_sheet_path) if contact_sheet_path else None
+    base["metrics"] = training_metrics
+    base["device"] = {"targetWorker": training_config.get("targetWorker", "windows-rtx-5090")}
+    base["versions"] = {"nerfstudioImport": import_stdout}
+    base["artifact"] = {
+        "path": str(exported_artifact_path),
+        "format": "ply",
+        "sizeBytes": exported_artifact_path.stat().st_size if exported_artifact_path.exists() else 0,
+        "sha256": file_sha256(exported_artifact_path) if exported_artifact_path.exists() else None,
+    }
+
+    check_statuses = [check.get("status") for check in base["checks"] if isinstance(check, dict)]
+    if any(status == "fail" for status in check_statuses):
+        base["stage"]["status"] = "fail"
+    elif any(status == "warning" for status in check_statuses):
+        base["stage"]["status"] = "warning"
+    else:
+        base["stage"]["status"] = "pass"
+    return base
+
+
 def prepare_colmap_image_directory(frames: list[Any], image_dir: Path) -> tuple[list[dict[str, str]], list[str]]:
     image_dir.mkdir(parents=True, exist_ok=True)
     copied: list[dict[str, str]] = []
@@ -2340,6 +3124,19 @@ def build_splat_training_report(
         )
         return base
 
+    training_config = base["training"] if isinstance(base.get("training"), dict) else {}
+    requested_profile = str(training_profile_override or training_config.get("profile") or "smoke")
+    requested_backend = str(training_config.get("backend") or "").strip().lower()
+    if requested_backend in {"nerfstudio_splatfacto", "splatfacto", "nerfstudio"} or requested_profile in SPLATFACTO_PROFILE_DEFAULTS:
+        return build_splatfacto_training_report(
+            job_path=job_path,
+            base=base,
+            sparse_model_path=sparse_model_path,
+            colmap_image_dir=colmap_image_dir,
+            training_config=training_config,
+            requested_profile=requested_profile,
+        )
+
     torch_cuda = check_torch_cuda()
     gsplat = check_python_import("gsplat")
     env_checks = [
@@ -2554,23 +3351,39 @@ def build_splat_training_report(
     result_checks = result.get("checks", []) if isinstance(result.get("checks"), list) else []
     base["checks"].extend(check for check in result_checks if isinstance(check, dict))
 
-    checkpoint_path = Path(str(result.get("checkpointPath") or ""))
-    exported_artifact_path = Path(str(result.get("exportedArtifactPath") or result.get("splatArtifactPath") or ""))
-    sample_render_path = Path(str(result.get("sampleRenderPath") or ""))
-    render_review_path = Path(str(result.get("renderReviewPath") or ""))
+    checkpoint_path = optional_path(result.get("checkpointPath"))
+    exported_artifact_path = optional_path(result.get("exportedArtifactPath")) or optional_path(result.get("splatArtifactPath"))
+    sample_render_path = optional_path(result.get("sampleRenderPath"))
+    render_review_path = optional_path(result.get("renderReviewPath"))
+    checkpoint_exists = checkpoint_path is not None and checkpoint_path.exists()
+    exported_artifact_exists = (
+        exported_artifact_path is not None
+        and exported_artifact_path.exists()
+        and exported_artifact_path.stat().st_size > 0
+    )
+    sample_render_exists = (
+        sample_render_path is not None
+        and sample_render_path.exists()
+        and sample_render_path.stat().st_size > 0
+    )
+    render_review_exists = (
+        render_review_path is not None
+        and render_review_path.exists()
+        and render_review_path.stat().st_size > 0
+    )
     loss_samples = result.get("training", {}).get("lossSamples") if isinstance(result.get("training"), dict) else None
     artifact_checks = [
         {
             "id": "checkpoint",
-            "status": "pass" if checkpoint_path.exists() else "fail",
-            "summary": "checkpoint exists" if checkpoint_path.exists() else "checkpoint was not written",
-            "path": str(checkpoint_path),
+            "status": "pass" if checkpoint_exists else "fail",
+            "summary": "checkpoint exists" if checkpoint_exists else "checkpoint was not written",
+            "path": str(checkpoint_path) if checkpoint_path is not None else None,
         },
         {
             "id": "exported_artifact",
-            "status": "pass" if exported_artifact_path.exists() and exported_artifact_path.stat().st_size > 0 else "fail",
-            "summary": "exported splat artifact exists" if exported_artifact_path.exists() else "exported splat artifact was not written",
-            "path": str(exported_artifact_path),
+            "status": "pass" if exported_artifact_exists else "fail",
+            "summary": "exported splat artifact exists" if exported_artifact_exists else "exported splat artifact was not written",
+            "path": str(exported_artifact_path) if exported_artifact_path is not None else None,
         },
         {
             "id": "loss_samples",
@@ -2579,32 +3392,32 @@ def build_splat_training_report(
         },
         {
             "id": "sample_render",
-            "status": "pass" if sample_render_path.exists() and sample_render_path.stat().st_size > 0 else "fail",
-            "summary": "sample render exists" if sample_render_path.exists() else "sample render was not written",
-            "path": str(sample_render_path),
+            "status": "pass" if sample_render_exists else "fail",
+            "summary": "sample render exists" if sample_render_exists else "sample render was not written",
+            "path": str(sample_render_path) if sample_render_path is not None else None,
         },
         {
             "id": "render_review_artifact",
-            "status": "pass" if render_review_path.exists() and render_review_path.stat().st_size > 0 else "fail",
-            "summary": "render review contact sheet exists" if render_review_path.exists() else "render review contact sheet was not written",
-            "path": str(render_review_path),
+            "status": "pass" if render_review_exists else "fail",
+            "summary": "render review contact sheet exists" if render_review_exists else "render review contact sheet was not written",
+            "path": str(render_review_path) if render_review_path is not None else None,
         },
     ]
     base["checks"].extend(artifact_checks)
-    base["checkpointPath"] = str(checkpoint_path)
-    base["exportedArtifactPath"] = str(exported_artifact_path)
-    base["splatArtifactPath"] = str(exported_artifact_path)
-    base["sampleRenderPath"] = str(sample_render_path)
+    base["checkpointPath"] = str(checkpoint_path) if checkpoint_path is not None else None
+    base["exportedArtifactPath"] = str(exported_artifact_path) if exported_artifact_path is not None else None
+    base["splatArtifactPath"] = str(exported_artifact_path) if exported_artifact_path is not None else None
+    base["sampleRenderPath"] = str(sample_render_path) if sample_render_path is not None else None
     base["sampleTargetPath"] = result.get("sampleTargetPath")
-    base["renderReviewPath"] = str(render_review_path)
+    base["renderReviewPath"] = str(render_review_path) if render_review_path is not None else None
     base["metrics"] = result.get("training", {})
     base["device"] = result.get("device", {})
     base["versions"] = result.get("versions", {})
     base["artifact"] = {
-        "path": str(exported_artifact_path),
+        "path": str(exported_artifact_path) if exported_artifact_path is not None else None,
         "format": "ply",
-        "sizeBytes": exported_artifact_path.stat().st_size if exported_artifact_path.exists() else 0,
-        "sha256": file_sha256(exported_artifact_path) if exported_artifact_path.exists() else None,
+        "sizeBytes": exported_artifact_path.stat().st_size if exported_artifact_exists and exported_artifact_path is not None else 0,
+        "sha256": file_sha256(exported_artifact_path) if exported_artifact_exists and exported_artifact_path is not None else None,
     }
 
     check_statuses = [check.get("status") for check in base["checks"] if isinstance(check, dict)]
@@ -3625,7 +4438,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_stage.add_argument(
         "--training-profile",
-        choices=sorted(TRAINING_PROFILE_DEFAULTS),
+        choices=sorted({*TRAINING_PROFILE_DEFAULTS, *SPLATFACTO_PROFILE_DEFAULTS}),
         help="Override the configured splat_training profile for this run.",
     )
     run_stage.set_defaults(func=command_run_stage)

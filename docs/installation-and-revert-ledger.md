@@ -23,9 +23,9 @@ Generated install logs can live under ignored `logs/`, but curated decisions and
 
 ## Current Session
 
-No packages, binaries, Python wheels, npm packages, CUDA components, COLMAP builds or gsplat/Nerfstudio packages were installed by Codex in this session.
+2026-06-20 update: an isolated Nerfstudio/Splatfacto Python environment was added under `.venv-nerfstudio-py312/` for trainer comparison and GUI pipeline integration. It is intentionally separate from the repo's main `.venv/` so it can be removed cleanly if the Splatfacto path is replaced or pinned differently.
 
-The environment stage implemented in this session only detects installed tools and writes `setup_gap` when something is missing.
+No system packages, drivers or CUDA Toolkit files were installed by Codex in this update.
 
 ## Entry Template
 
@@ -55,6 +55,57 @@ Prefer isolated environments:
 - CUDA/NVIDIA: record driver/toolkit versions and rollback path before changing them
 
 If a dependency is installed into a shared system environment, document that explicitly and treat rollback as a manual machine-level operation.
+
+## Entry: 2026-06-20 Isolated Nerfstudio/Splatfacto environment
+
+Date: 2026-06-20
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Evaluate and integrate a higher-quality Apache-2.0 Gaussian Splat trainer without mixing Nerfstudio's larger dependency tree into the repo's main `.venv`.
+Dependency: Nerfstudio `1.1.5`, gsplat `1.4.0`, torch `2.12.1+cu130` and Nerfstudio transitive Python dependencies
+Commercial decision: `nerfstudio-splatfacto`, `nerfstudio-gsplat` and PyTorch are `accepted` / `allowed_with_notice` in `framework-evaluation.json`; transitive dependencies still require notices/review before production packaging.
+Commands:
+
+```bash
+.venv/bin/python -m pip install --target /tmp/gsl-virtualenv virtualenv
+PYTHONPATH=/tmp/gsl-virtualenv .venv/bin/python -m virtualenv .venv-nerfstudio-py312
+.venv-nerfstudio-py312/bin/python -m pip install nerfstudio
+```
+
+Runtime environment used for Splatfacto commands:
+
+```bash
+MPLCONFIGDIR=/tmp/gsl-mpl
+WANDB_MODE=disabled
+TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
+CUDA_HOME=/usr/local/cuda-12.8
+PATH=.venv-nerfstudio-py312/bin:/usr/local/cuda-12.8/bin:$PATH
+LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH
+TORCH_EXTENSIONS_DIR=/home/engwall/projects/gaussian-splat-lab/outputs/experiments/nerfstudio/torch_extensions
+TORCH_CUDA_ARCH_LIST=12.0
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: create ignored `.venv-nerfstudio-py312/`; build/cache CUDA extension outputs under ignored `outputs/experiments/nerfstudio/torch_extensions`; create ignored Splatfacto experiment outputs under `outputs/experiments/nerfstudio/`; no system package changes.
+Validation:
+
+```bash
+.venv-nerfstudio-py312/bin/python -m pip show nerfstudio gsplat torch
+env ... .venv-nerfstudio-py312/bin/ns-train splatfacto --max-num-iterations 1000 ...
+env ... .venv-nerfstudio-py312/bin/ns-export gaussian-splat --load-config <config.yml> --output-dir <export-dir> --output-filename <name>.ply
+env ... .venv-nerfstudio-py312/bin/ns-eval --load-config <config.yml> --output-path <eval.json> --render-output-path <eval-renders>
+```
+
+Result: pass. `pip show` reports Nerfstudio `1.1.5`, gsplat `1.4.0` and torch `2.12.1`. CUDA import smoke reports `cuda=True` on `NVIDIA GeForce RTX 5090`. A full Splatfacto reference run on the local Hugging Face sample video completed 30000 iterations, exported a `59 MB` PLY with `246863` gaussians, and evaluated at PSNR `28.4849`, SSIM `0.9209`, LPIPS `0.0946`. The integrated pipeline smoke `splatfacto_preview` completed train/export/eval/package/viewer validation with `96610` exported gaussians.
+Revert plan:
+
+```bash
+rm -rf .venv-nerfstudio-py312
+rm -rf /tmp/gsl-virtualenv /tmp/gsl-mpl
+rm -rf outputs/experiments/nerfstudio
+```
+
+Notes: `TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1` is required because Nerfstudio `1.1.5` checkpoint loading is not yet updated for PyTorch's newer default `weights_only=True` behavior. This is acceptable for locally produced checkpoints in this lab, but should be revisited before production hardening.
 
 ## Entry: 2026-06-07 PyTorch CUDA venv bootstrap
 

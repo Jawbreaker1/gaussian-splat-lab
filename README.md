@@ -12,15 +12,17 @@ This is meant to be inspectable work, not a black-box demo. Each step writes a r
 
 Status: working local pipeline with browser viewer.
 
-Current reference job:
+Current local-video reference job:
 
-`outputs/jobs/mipnerf360-flowers-reference-20260617T142004Z`
+`outputs/jobs/capture-video-20260619T103507Z-20260619T103515Z`
 
-Current active viewer artifact:
+Current best-quality trainer result from that capture:
 
-- profile: `rtx_ultra_quality`
-- splats: `1,600,000`
-- PLY size: `89.6 MB`
+- profile: `splatfacto_reference`
+- trainer: Nerfstudio Splatfacto
+- splats: `246,863`
+- PLY size: `59 MB`
+- eval: PSNR `28.48`, SSIM `0.921`, LPIPS `0.095`
 - renderer: Spark + Three.js Gaussian Splat viewer
 - navigation: Walk, Orbit, mouse-look, wheel zoom, reference cameras and debug point-cloud mode
 - export: streamed PLY and viewer-manifest download
@@ -61,8 +63,8 @@ Gaussian Splat Lab can now:
 - import local videos into controlled capture paths
 - extract frames with FFmpeg
 - solve camera poses with COLMAP SfM
-- train Gaussian Splats locally with PyTorch/CUDA and `gsplat`
-- run multiple quality profiles from quick probes to heavy RTX ceiling tests
+- train Gaussian Splats locally with PyTorch/CUDA, either through the repo-local mini `gsplat` trainer or Nerfstudio Splatfacto
+- run multiple quality profiles from quick probes to Splatfacto best-quality runs and heavy RTX ceiling tests
 - package a binary PLY splat plus viewer manifest
 - render the result in a browser with a real Gaussian Splat renderer
 - switch between production render mode and debug point-cloud mode
@@ -82,7 +84,7 @@ The workflow is boring on purpose: one step writes evidence, the next step reads
 | 3 | Video intake | Confirm the selected source exists and that capture quality/source rights are acceptable for the current purpose. | `intake.json` | Blocks missing files and records source/license warnings. |
 | 4 | Frame sampling | Extract frames deterministically from video. | `frames/`, frame manifest, contact sheet | Verifies frame count, hashes and extraction metadata. |
 | 5 | SfM camera solve | Run COLMAP feature extraction, matching and mapping. | sparse COLMAP model | Verifies registered images, sparse points and model analyzer output. |
-| 6 | Splat training | Train Gaussian Splats with `gsplat` on the RTX GPU. | checkpoint, PLY, sample render, render-review sheet | Verifies CUDA, training completion, exported PLY and render/target review metrics. |
+| 6 | Splat training | Train Gaussian Splats on the RTX GPU. `Best quality` uses Nerfstudio Splatfacto; debug/stress profiles use the repo-local `gsplat` trainer. | checkpoint, PLY, sample render, render-review sheet | Verifies CUDA, training completion, exported PLY and render/target review metrics. |
 | 7 | Packaging | Build the browser viewer manifest around the active splat artifact. | `viewer-manifest.json` | Verifies PLY hash, size, header and reference camera views. |
 | 8 | Viewer validation | Confirm the local browser viewer can load the packaged artifact. | `viewer.json` | Verifies manifest, artifact hash, camera views and viewer hooks. |
 | 9 | Quality report | Summarize the whole run. | `quality_report.json` | Classifies the run as usable, weak, incomplete, blocked or failed. |
@@ -91,7 +93,14 @@ Each step can be run on its own. Later steps stop when earlier ones fail, unless
 
 ## Quality Profiles
 
-The current trainer uses `gsplat` with explicit profiles:
+The upload wizard exposes two kinds of quality choices.
+
+Splatfacto quality path:
+
+- `splatfacto_reference`: `Best quality` in the GUI. Uses Nerfstudio Splatfacto, 30k iterations, COLMAP data, downscale factor `2`, CPU image cache, PLY export and Nerfstudio eval renders. This is the current best visual path for user-facing generation.
+- `splatfacto_preview`: short integration smoke profile, useful for checking that train/export/eval/package/viewer still work without waiting for a full run.
+
+Repo-local `gsplat` debug and stress profiles:
 
 - `smoke`: very fast sanity check
 - `baseline`: first densifying profile
@@ -99,10 +108,11 @@ The current trainer uses `gsplat` with explicit profiles:
 - `rtx_reference`: stable RTX reference run
 - `rtx_high_quality`: balanced 1.0M-splat profile
 - `rtx_ultra_quality`: current best active 1.6M-splat profile
-- `rtx_ceiling_quality`: controlled 2.0M-splat ceiling test
-- `rtx_max_quality`: heavy stress profile for lab-only ceiling exploration
+- `rtx_stable_quality`: max-stable mini-trainer profile that stays near the current 1.6M practical cap
+- `rtx_ceiling_quality`: controlled 2.0M-splat lab ceiling test
+- `rtx_max_quality`: heavy CLI stress profile for lab-only ceiling exploration
 
-Current quality-ceiling results are tracked in [docs/quality-ceiling-results.md](docs/quality-ceiling-results.md). For the Mip-NeRF 360 flowers reference scene, the current practical ceiling is around 1.6M splats. Larger 2.0M and 2.5M artifacts were worse under the current training settings, so bigger files are not automatically better.
+Current quality-ceiling results are tracked in [docs/quality-ceiling-results.md](docs/quality-ceiling-results.md). For the local Hugging Face sample video, Splatfacto produced a much cleaner eval render than simply pushing the mini-trainer to more splats. Bigger files are not automatically better: the 1.6M mini-trainer artifact is larger than the 247k Splatfacto artifact, but the Splatfacto eval render is visibly sharper and scores better on Nerfstudio metrics. The normal upload wizard now exposes `Best quality` for Splatfacto; the larger mini-trainer ceiling and stress profiles should be run deliberately from the lab/CLI when the GPU is at known-stable clocks.
 
 ## Browser UI
 
@@ -253,6 +263,16 @@ Run heavy splat training on purpose:
   --accept-warning \
   --allow-heavy \
   --training-profile rtx_ultra_quality
+```
+
+Run the current best-quality Splatfacto path on purpose:
+
+```bash
+.venv/bin/python scripts/lab-pipeline.py run-stage splat_training \
+  --job outputs/jobs/<job-id>/job.json \
+  --accept-warning \
+  --allow-heavy \
+  --training-profile splatfacto_reference
 ```
 
 ## Machine Topology

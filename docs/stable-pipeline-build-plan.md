@@ -21,7 +21,8 @@ Already in place:
 - video intake stage with explicit missing-file and metadata stop conditions
 - frame sampling stage with FFmpeg extraction, SHA256 frame manifest and contact sheet
 - SfM stage boundary with COLMAP CPU feature extraction, matching, mapper and model analyzer
-- gsplat training orchestration with `smoke`, `baseline`, `quality_probe`, `rtx_reference`, `rtx_high_quality`, `rtx_ultra_quality`, `rtx_ceiling_quality` and `rtx_max_quality` profiles, including DefaultStrategy densification and render-review evidence for non-smoke runs
+- gsplat training orchestration with `smoke`, `baseline`, `quality_probe`, `rtx_reference`, `rtx_high_quality`, `rtx_ultra_quality`, `rtx_stable_quality`, `rtx_ceiling_quality` and `rtx_max_quality` profiles, including DefaultStrategy densification and render-review evidence for non-smoke runs
+- Nerfstudio Splatfacto training orchestration with `splatfacto_preview` and `splatfacto_reference`, isolated in `.venv-nerfstudio-py312`
 - artifact packaging that writes a viewer manifest with PLY hash, byte size, header metadata and COLMAP/training reference camera views
 - local browser UI that loads the packaged binary PLY through a safe job-artifact route and renders it through Spark + Three.js as an interactive Gaussian Splat scene
 - debug browser UI mode that still renders an interactive WebGL PLY point cloud for artifact-scale and malformed-export diagnosis
@@ -30,7 +31,7 @@ Already in place:
 Not yet real:
 
 - a clean commercially reusable capture; the current reference assets are technical validation evidence
-- commercial showcase visual quality; the current Spark render is navigable and scene-like but still visibly soft on the reference run
+- commercial showcase visual quality; Splatfacto is much closer, but we still need self-captured/commercially cleared source material and viewer QA before treating the output as product-grade
 - screenshot/canvas-pixel browser automation for viewer QA across viewports
 
 ## Current Environment Result
@@ -49,6 +50,8 @@ As of 2026-06-16, the repo-local `.venv` and workstation validate:
 - `splat_training`, `packaging` and `viewer` now pass on the Mip-NeRF 360 flowers reference capture; the current technical reference is the `rtx_reference` profile with `9000` iterations, `64` images at `1256x828`, growth from `43287` sparse points to `400000` gaussians and a `22.4 MB` binary PLY
 - `quality_probe` remains the faster quality check profile: `2500` iterations, `48` images, `120000` gaussians and mean MAE `18.8967`
 - render-review validation now writes a multi-view render/target/diff contact sheet; the current Mip-NeRF flowers `rtx_reference` run passes the initial visual threshold with mean MAE `17.1369`, but remains visibly soft and is not product-showcase quality
+- the local Hugging Face sample video now has a passing Splatfacto reference run: 30000 iterations, 184 images, 246863 exported gaussians, 59 MB PLY, PSNR `28.4849`, SSIM `0.9209`, LPIPS `0.0946`
+- the integrated `splatfacto_preview` smoke passed train, PLY export, Nerfstudio eval, packaging and viewer validation in the pipeline path
 - quality remains `warning` because framework/capture provenance is not product-ready
 
 ## Workload Safety
@@ -61,7 +64,7 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 Move from technical golden path to controlled quality experiments and product-readiness hardening.
 
-Current setup note: PyTorch CUDA works on the RTX 5090, gsplat 1.5.3 trains with a fast `smoke` profile, a densifying `baseline` profile, a stronger `quality_probe` profile, a stable `rtx_reference` profile, a balanced `rtx_high_quality` profile, an upper-ceiling `rtx_ultra_quality` profile, a controlled 2M-splat `rtx_ceiling_quality` profile and a heavy `rtx_max_quality` lab stress profile. `rtx_high_quality` targets the likely sweet spot at `18000` iterations, `112` images and `1000000` gaussians. `rtx_ultra_quality` tests whether quality keeps improving at `24000` iterations, `144` images and `1600000` gaussians. `rtx_ceiling_quality` tests the next ceiling at `30000` iterations, all `173` registered images and `2000000` gaussians with less aggressive growth than the old max stress profile. `rtx_max_quality` raises the cap to `30000` iterations, `160` images, `1600` max render size and `2500000` gaussians so the workstation can stress the upper ceiling before product/user caps are exposed. Current measured ceiling results are tracked in `docs/quality-ceiling-results.md`; for the flowers scene, 1.6M gaussians currently beats the 2.0M and 2.5M tests. Packaging writes a viewer manifest with reference camera views and export metadata, and the local UI can fetch, render and download the exported binary PLY as an interactive Spark + Three.js Gaussian Splat scene. The UI also keeps the point-debug mode, latest render/target pair and multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture/framework state is not product-ready.
+Current setup note: PyTorch CUDA works on the RTX 5090. The repo-local mini `gsplat` trainer remains useful for fast debug and ceiling experiments with `smoke`, `baseline`, `quality_probe`, `rtx_reference`, `rtx_high_quality`, `rtx_ultra_quality`, `rtx_stable_quality`, `rtx_ceiling_quality` and `rtx_max_quality`. Nerfstudio Splatfacto is now integrated as the higher-quality GUI path with `splatfacto_preview` and `splatfacto_reference`. `splatfacto_reference` is the normal `Best quality` choice for user-uploaded videos; it prepares Nerfstudio COLMAP data, trains with Splatfacto, exports PLY, runs Nerfstudio eval and writes the same viewer manifest as the mini-trainer path. `rtx_ceiling_quality` and `rtx_max_quality` remain deliberate lab profiles for stock-stable hardware only. Current measured ceiling results are tracked in `docs/quality-ceiling-results.md`; for the local upload, a 247k-gaussian Splatfacto artifact is visibly and metrically better than the 1.6M mini-trainer artifact. Packaging writes a viewer manifest with reference camera views and export metadata, and the local UI can fetch, render and download the exported binary PLY as an interactive Spark + Three.js Gaussian Splat scene. The UI also keeps the point-debug mode, latest render/target pair and multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture/framework state is not product-ready.
 
 Why next:
 
@@ -96,7 +99,7 @@ Next viewer step:
 - add browser automation that captures reference-camera Spark screenshots and compares them against the `gsplat` render-review sheet
 - add explicit viewer diagnostics for camera-pose mismatch, blank canvas and point-debug/render disagreement
 - keep the Spark dependency path isolated and pinned until product packaging/notices are finalized
-- expose user-selectable quality caps only after the lab has stable quality/performance measurements for `quality_probe`, `rtx_reference`, `rtx_high_quality`, `rtx_ultra_quality`, `rtx_ceiling_quality` and `rtx_max_quality`
+- expose Splatfacto as the default best-quality path, keep mini-trainer ceiling profiles as explicit lab stress profiles, and avoid treating bigger splat counts as better unless render-review/eval evidence agrees
 
 ## Golden Path Implementation Sequence
 
@@ -207,8 +210,8 @@ Inputs:
 
 Components:
 
-- repo-local `gsplat` trainer with explicit `smoke`, `baseline`, `quality_probe`, `rtx_reference`, `rtx_high_quality`, `rtx_ultra_quality`, `rtx_ceiling_quality` and `rtx_max_quality` profiles
-- Nerfstudio/Splatfacto remains a later alternative once dependency impact is justified
+- Nerfstudio Splatfacto for `Best quality` user-facing generation
+- repo-local `gsplat` trainer with explicit `smoke`, `baseline`, `quality_probe`, `rtx_reference`, `rtx_high_quality`, `rtx_ultra_quality`, `rtx_stable_quality`, `rtx_ceiling_quality` and `rtx_max_quality` profiles for fast debug and controlled ceiling tests
 
 Output:
 
@@ -219,7 +222,8 @@ Validation:
 
 - training command and versions recorded
 - gsplat CUDA extension prerequisites checked before training: CUDA Toolkit `nvcc`, Python development headers and `ninja`
-- densification strategy, gaussian growth and render-review metrics recorded for non-smoke runs
+- Splatfacto prerequisites checked before training: isolated venv, `ns-train`, `ns-export`, `ns-eval`, CUDA-visible PyTorch and `gsplat`
+- densification strategy, gaussian growth and render-review metrics recorded where the trainer exposes them
 - export exists
 - loss samples and wall time recorded
 - sample render/target evidence and multi-view render-review contact sheet saved where practical
