@@ -52,7 +52,7 @@ TRAINING_STAGE_TIMEOUTS = {
 }
 UI_QUALITY_PRESETS = {
     "quality_probe": {
-        "label": "Quality probe",
+        "label": "Quick preview",
         "targetFps": 2,
         "maxFrames": 180,
         "trainingProfile": "quality_probe",
@@ -121,7 +121,7 @@ UI_QUALITY_PRESETS = {
         },
     },
     "splatfacto_reference": {
-        "label": "Standard Splatfacto",
+        "label": "Standard 3DGS",
         "targetFps": 3,
         "maxFrames": 360,
         "trainingProfile": "splatfacto_reference",

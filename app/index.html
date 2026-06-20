@@ -72,18 +72,17 @@
                   </label>
 
                   <label class="field">
-                    <span>Quality</span>
+                    <span>Generation strategy</span>
                     <select id="wizardQualityPreset">
-                      <option value="quality_probe">Fast probe</option>
-                      <option value="rtx_high_quality">High quality</option>
-                      <option value="rtx_ultra_quality">Ultra quality</option>
-                      <option value="rtx_stable_quality">Max stable</option>
+                      <option value="splatfacto_reference">Standard 3DGS</option>
                       <option value="splatfacto_big_quality">Best quality</option>
-                      <option value="splatfacto_reference">Standard Splatfacto</option>
+                      <option value="quality_probe">Quick preview</option>
                       <option value="splatfacto_ceiling">Ceiling test</option>
                     </select>
                   </label>
                 </div>
+
+                <div class="strategy-estimate" id="wizardStrategyEstimate" aria-live="polite"></div>
               </div>
             </section>
 

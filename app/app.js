@@ -12,6 +12,7 @@ const els = {
   wizardCaptureName: document.querySelector('#wizardCaptureName'),
   wizardSceneKind: document.querySelector('#wizardSceneKind'),
   wizardQualityPreset: document.querySelector('#wizardQualityPreset'),
+  wizardStrategyEstimate: document.querySelector('#wizardStrategyEstimate'),
   wizardSelfCaptured: document.querySelector('#wizardSelfCaptured'),
   generatePipelineButton: document.querySelector('#generatePipelineButton'),
   wizardStatus: document.querySelector('#wizardStatus'),
@@ -155,15 +156,33 @@ const trainingProfileEstimates = {
   splatfacto_ceiling: 3 * 60 * 60,
 };
 const qualityPresetLabels = {
-  quality_probe: 'Fast probe',
+  quality_probe: 'Quick preview',
   rtx_high_quality: 'High quality',
   rtx_ultra_quality: 'Ultra quality',
   rtx_stable_quality: 'Max stable',
   rtx_max_quality: 'Max stress',
   splatfacto_preview: 'Splatfacto preview',
-  splatfacto_reference: 'Standard Splatfacto',
+  splatfacto_reference: 'Standard 3DGS',
   splatfacto_big_quality: 'Best quality',
   splatfacto_ceiling: 'Ceiling test',
+};
+const generationStrategyDetails = {
+  splatfacto_reference: {
+    purpose: 'Full 3DGS scene with balanced runtime.',
+    training: 'Splatfacto, 30k iterations',
+  },
+  splatfacto_big_quality: {
+    purpose: 'Recommended when final visual quality matters.',
+    training: 'Splatfacto Big, 30k iterations',
+  },
+  quality_probe: {
+    purpose: 'Fast validation of upload, frame sampling and camera solve.',
+    training: 'Short local trainer probe',
+  },
+  splatfacto_ceiling: {
+    purpose: 'Lab run for testing the quality ceiling on strong input.',
+    training: 'Splatfacto Big, full-resolution path',
+  },
 };
 const fallbackStageNames = {
   framework_license: 'Dependency Review',
@@ -228,7 +247,7 @@ function selectedLicenseCheck() {
 }
 
 function selectedTrainingProfile() {
-  return els.wizardQualityPreset.value || 'quality_probe';
+  return els.wizardQualityPreset?.value || 'splatfacto_reference';
 }
 
 function formatDuration(seconds) {
@@ -273,7 +292,27 @@ function setWizardStatus(text, type = 'neutral') {
   els.wizardStatus.dataset.type = type;
 }
 
+function updateWizardStrategyEstimate() {
+  if (!els.wizardStrategyEstimate) return;
+  const profile = selectedTrainingProfile();
+  const label = qualityPresetLabels[profile] ?? profile;
+  const detail = generationStrategyDetails[profile] ?? {};
+  const estimate = formatDuration(totalEstimateSeconds(profile));
+
+  const kicker = document.createElement('span');
+  kicker.textContent = 'Estimated full run';
+
+  const value = document.createElement('strong');
+  value.textContent = `${estimate} · ${label}`;
+
+  const description = document.createElement('small');
+  description.textContent = [detail.training, detail.purpose].filter(Boolean).join('. ');
+
+  els.wizardStrategyEstimate.replaceChildren(kicker, value, description);
+}
+
 function updateWizardControls() {
+  updateWizardStrategyEstimate();
   const file = els.videoFileInput.files?.[0] ?? null;
   const hasName = Boolean(els.wizardCaptureName.value.trim());
   const hasRights = els.wizardSelfCaptured.checked;
@@ -290,7 +329,7 @@ function updateWizardControls() {
     } else {
       const profile = selectedTrainingProfile();
       const label = qualityPresetLabels[profile] ?? profile;
-      setWizardStatus(`${label}: estimated full run ${formatDuration(totalEstimateSeconds(profile))}.`);
+      setWizardStatus(`Ready to generate with ${label}. Estimated full run ${formatDuration(totalEstimateSeconds(profile))}.`);
     }
   }
   updateImportControls();
