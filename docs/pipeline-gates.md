@@ -98,12 +98,12 @@ Initial thresholds are intentionally conservative and can be tuned after known-g
 | Frame sampling | 50-250 frames; no missing files; contact sheet generated |
 | SfM | pass at 70% registered frames; warning at 50-70%; sparse points and reprojection error recorded |
 | Training | gsplat CUDA extension available; exported splat exists; final report includes iterations, wall time and loss samples |
-| Packaging | artifact hash and byte size recorded; selected viewer supports the format; reference camera views exported when COLMAP text is available |
+| Packaging | artifact hash and byte size recorded; selected viewer supports the format; Splatfacto viewer artifacts are filtered for extreme floaters while preserving the original export; reference camera views are exported in the same coordinate space as the viewer artifact |
 | Viewer | artifact hash/header validate; Spark render path can load the packaged splat; camera reset returns to a reference camera pose; render-review sheet is available |
 
 ## Current Workload Guard
 
-SfM, training and viewer validation remain guarded heavy stages. Training now has a minimal gsplat orchestration behind `--allow-heavy`; on the RTX workstation it produces a checkpoint, binary PLY, sample render/target pair and render-review sheet. Packaging writes a viewer manifest with hash, byte size, PLY header metadata, preview artifact paths and COLMAP/training reference camera views. Viewer validation reads that manifest, verifies the artifact hash/header, checks reference camera availability and keeps the local Spark 3DGS render path separate from the older WebGL point-debug fallback.
+SfM, training and viewer validation remain guarded heavy stages. Training now has a minimal gsplat orchestration behind `--allow-heavy`; on the RTX workstation it produces a checkpoint, binary PLY, sample render/target pair and render-review sheet. Packaging writes a viewer manifest with hash, byte size, PLY header metadata, preview artifact paths and reference camera views. For Splatfacto, packaging applies Nerfstudio's dataparser transform to the camera views and writes a viewer-optimized PLY when floaters would otherwise dominate browser framing. Viewer validation reads that manifest, verifies the artifact hash/header, checks reference camera availability and keeps the local Spark 3DGS render path separate from the older WebGL point-debug fallback.
 
 ## Responsibility Boundaries
 

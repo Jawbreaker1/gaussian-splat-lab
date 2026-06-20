@@ -3,8 +3,9 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 phase1_import_contract_dir="${repo_root}/data/tmp/phase-1-import-contract"
+splatfacto_contract_jobs_dir="${repo_root}/data/tmp/phase-1-splatfacto-contract-jobs"
 phase1_tmp_dir="$(mktemp -d)"
-trap 'rm -rf "${phase1_import_contract_dir}" "${phase1_tmp_dir}"' EXIT
+trap 'rm -rf "${phase1_import_contract_dir}" "${splatfacto_contract_jobs_dir}" "${phase1_tmp_dir}"' EXIT
 
 python3 -m json.tool "${repo_root}/data/manifests/captures.example.json" >/dev/null
 python3 -m json.tool "${repo_root}/data/manifests/viewer-assets.example.json" >/dev/null
@@ -147,5 +148,113 @@ python3 "${repo_root}/scripts/lab-pipeline.py" run-stage splat_training   --job 
 grep -q "splat_training_status=blocked_workload" "${phase1_tmp_dir}"/heavy-training.txt
 python3 "${repo_root}/scripts/lab-pipeline.py" run-stage viewer   --job "${heavy_job_manifest}"   >"${phase1_tmp_dir}"/heavy-viewer.txt || true
 grep -q "viewer_status=blocked_workload" "${phase1_tmp_dir}"/heavy-viewer.txt
+
+python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --jobs-dir "${splatfacto_contract_jobs_dir}"   >"${phase1_tmp_dir}"/splatfacto-contracts.txt
+splatfacto_job_manifest="$(sed -n 's/^job_manifest=//p' "${phase1_tmp_dir}"/splatfacto-contracts.txt)"
+python3 - <<'PYCODE' "${splatfacto_job_manifest}"
+from pathlib import Path
+import json
+import struct
+import sys
+
+job_path = Path(sys.argv[1])
+job_dir = job_path.parent
+training_dir = job_dir / "splats" / "splatfacto-contract"
+colmap_dir = training_dir / "colmap_txt"
+reports_dir = job_dir / "reports"
+reports_dir.mkdir(parents=True, exist_ok=True)
+colmap_dir.mkdir(parents=True, exist_ok=True)
+
+artifact = training_dir / "splatfacto-contract.ply"
+header = "\n".join(
+    [
+        "ply",
+        "format binary_little_endian 1.0",
+        "element vertex 1200",
+        "property float x",
+        "property float y",
+        "property float z",
+        "property float opacity",
+        "property float scale_0",
+        "property float scale_1",
+        "property float scale_2",
+        "end_header",
+    ]
+) + "\n"
+with artifact.open("wb") as handle:
+    handle.write(header.encode("ascii"))
+    for index in range(1200):
+        if index >= 1190:
+            x, y, z = 80.0 + index, 80.0 + index, 80.0 + index
+            opacity = -6.0
+            scale = -0.2
+        else:
+            x = (index % 17) / 16
+            y = ((index // 17) % 17) / 16
+            z = ((index // 289) % 5) / 4
+            opacity = 5.0
+            scale = -5.0
+        handle.write(struct.pack("<7f", x, y, z, opacity, scale, scale, scale))
+
+(colmap_dir / "cameras.txt").write_text(
+    "1 SIMPLE_RADIAL 1600 900 900 800 450 0\n",
+    encoding="utf-8",
+)
+(colmap_dir / "images.txt").write_text(
+    "1 1 0 0 0 -2 -4 -6 1 frame_000001.jpg\n",
+    encoding="utf-8",
+)
+
+report = {
+    "schemaVersion": 1,
+    "stage": {"id": "splat_training", "status": "pass"},
+    "trainingDirectory": str(training_dir),
+    "exportedArtifactPath": str(artifact),
+    "splatArtifactPath": str(artifact),
+    "metrics": {
+        "backend": "nerfstudio_splatfacto",
+        "profile": "splatfacto_reference",
+        "method": "splatfacto",
+        "iterations": 30000,
+        "imagesUsed": 1,
+        "selectedImages": [{"imageId": 1, "name": "frame_000001.jpg"}],
+        "gaussianCount": 1200,
+        "coordinateTransform": {
+            "source": "nerfstudio_dataparser",
+            "path": str(training_dir / "dataparser_transforms.json"),
+            "matrix": [
+                [1, 0, 0, 1],
+                [0, 1, 0, 2],
+                [0, 0, 1, 3],
+            ],
+            "scale": 0.5,
+        },
+    },
+}
+(reports_dir / "splat_training.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+PYCODE
+python3 "${repo_root}/scripts/lab-pipeline.py" run-stage packaging   --job "${splatfacto_job_manifest}"   >"${phase1_tmp_dir}"/splatfacto-packaging.txt
+grep -q "packaging_status=pass" "${phase1_tmp_dir}"/splatfacto-packaging.txt
+splatfacto_packaging_report="$(sed -n 's/^packaging_report=//p' "${phase1_tmp_dir}"/splatfacto-packaging.txt)"
+python3 - <<'PYCODE' "${splatfacto_packaging_report}"
+from pathlib import Path
+import json
+import sys
+
+packaging_report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+manifest_path = Path(packaging_report["viewerManifestPath"])
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+assert manifest["artifact"]["viewerOptimized"] is True
+assert manifest["artifact"]["path"].endswith(".viewer.ply")
+assert manifest["originalArtifact"]["path"].endswith("splatfacto-contract.ply")
+assert manifest["viewerFilter"]["removedVertexCount"] > 0
+assert manifest["viewerFilter"]["vertexCount"] < manifest["viewerFilter"]["originalVertexCount"]
+assert manifest["cameraViewSource"]["coordinateSpace"] == "nerfstudio_dataparser"
+first_view = manifest["cameraViews"][0]
+assert first_view["coordinateSpace"] == "nerfstudio_dataparser"
+assert first_view["position"] == [1.5, 3.0, 4.5]
+assert manifest["export"]["primaryAssetRepoRelativePath"].endswith("splatfacto-contract.ply")
+assert manifest["export"]["viewerAssetRepoRelativePath"].endswith("splatfacto-contract.viewer.ply")
+PYCODE
 
 echo "phase1_contract_validation=passed"

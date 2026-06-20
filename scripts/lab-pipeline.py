@@ -12,6 +12,7 @@ import os
 import platform
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import sysconfig
@@ -2307,6 +2308,8 @@ def build_splatfacto_training_report(
     checkpoint_dir = config_path.parent / "nerfstudio_models"
     checkpoint_candidates = sorted(checkpoint_dir.glob("*.ckpt")) if checkpoint_dir.exists() else []
     checkpoint_path = checkpoint_candidates[-1] if checkpoint_candidates else None
+    dataparser_transform_path = config_path.parent / "dataparser_transforms.json"
+    dataparser_transform = read_json(dataparser_transform_path) if dataparser_transform_path.exists() else {}
 
     export_dir = training_dir / "exports"
     export_filename = f"{profile}.ply"
@@ -2371,6 +2374,13 @@ def build_splatfacto_training_report(
         "downscaleFactor": run_config["downscaleFactor"],
         "renderReview": render_review,
     }
+    if isinstance(dataparser_transform.get("transform"), list) and isinstance(dataparser_transform.get("scale"), (int, float)):
+        training_metrics["coordinateTransform"] = {
+            "source": "nerfstudio_dataparser",
+            "path": str(dataparser_transform_path),
+            "matrix": dataparser_transform["transform"],
+            "scale": dataparser_transform["scale"],
+        }
     artifact_ok = (
         export_result["status"] == "pass"
         and exported_artifact_path.exists()
@@ -3481,6 +3491,237 @@ def parse_ply_header(path: Path) -> dict[str, Any]:
     }
 
 
+PLY_PROPERTY_SIZES = {
+    "char": 1,
+    "int8": 1,
+    "uchar": 1,
+    "uint8": 1,
+    "short": 2,
+    "int16": 2,
+    "ushort": 2,
+    "uint16": 2,
+    "int": 4,
+    "int32": 4,
+    "uint": 4,
+    "uint32": 4,
+    "float": 4,
+    "float32": 4,
+    "double": 8,
+    "float64": 8,
+}
+
+PLY_PROPERTY_FORMATS = {
+    "char": "b",
+    "int8": "b",
+    "uchar": "B",
+    "uint8": "B",
+    "short": "h",
+    "int16": "h",
+    "ushort": "H",
+    "uint16": "H",
+    "int": "i",
+    "int32": "i",
+    "uint": "I",
+    "uint32": "I",
+    "float": "f",
+    "float32": "f",
+    "double": "d",
+    "float64": "d",
+}
+
+
+def sigmoid(value: float) -> float:
+    if value >= 0:
+        exponent = math.exp(-value)
+        return 1 / (1 + exponent)
+    exponent = math.exp(value)
+    return exponent / (1 + exponent)
+
+
+def percentile(values: list[float], fraction: float) -> float:
+    if not values:
+        raise ValueError("cannot calculate percentile for an empty value list")
+    ordered = sorted(values)
+    index = round((len(ordered) - 1) * min(1.0, max(0.0, fraction)))
+    return ordered[index]
+
+
+def parse_binary_ply_layout(data: bytes) -> dict[str, Any]:
+    marker = b"end_header"
+    marker_index = data.find(marker)
+    if marker_index < 0:
+        raise ValueError("PLY header does not contain end_header")
+    header_end = marker_index + len(marker)
+    while header_end < len(data) and data[header_end] in (10, 13):
+        header_end += 1
+
+    header = data[:header_end].decode("ascii", errors="replace")
+    lines = header.splitlines()
+    ply_format = None
+    vertex_count = None
+    in_vertex = False
+    properties: list[dict[str, Any]] = []
+    for line in lines:
+        fields = line.strip().split()
+        if len(fields) >= 2 and fields[0] == "format":
+            ply_format = fields[1]
+        elif len(fields) >= 3 and fields[0] == "element":
+            in_vertex = fields[1] == "vertex"
+            if in_vertex:
+                vertex_count = int(fields[2])
+        elif in_vertex and len(fields) >= 3 and fields[0] == "property":
+            property_type = fields[1]
+            if property_type == "list":
+                raise ValueError("PLY vertex list properties are not supported for viewer filtering")
+            property_size = PLY_PROPERTY_SIZES.get(property_type)
+            property_format = PLY_PROPERTY_FORMATS.get(property_type)
+            if property_size is None or property_format is None:
+                raise ValueError(f"unsupported PLY property type {property_type}")
+            properties.append(
+                {
+                    "name": fields[2],
+                    "type": property_type,
+                    "size": property_size,
+                    "format": property_format,
+                    "offset": 0,
+                }
+            )
+
+    if ply_format != "binary_little_endian":
+        raise ValueError(f"unsupported PLY format {ply_format or 'unknown'}")
+    if vertex_count is None or vertex_count <= 0:
+        raise ValueError("PLY vertex count is empty")
+
+    stride = 0
+    for prop in properties:
+        prop["offset"] = stride
+        stride += prop["size"]
+    properties_by_name = {prop["name"]: prop for prop in properties}
+    for required in ("x", "y", "z"):
+        if required not in properties_by_name:
+            raise ValueError(f"PLY missing {required}")
+
+    vertex_bytes_end = header_end + vertex_count * stride
+    if vertex_bytes_end > len(data):
+        raise ValueError("PLY vertex data is shorter than the declared vertex count")
+
+    return {
+        "header": header,
+        "headerEnd": header_end,
+        "vertexCount": vertex_count,
+        "properties": properties,
+        "propertiesByName": properties_by_name,
+        "stride": stride,
+        "vertexBytesEnd": vertex_bytes_end,
+    }
+
+
+def read_ply_property(view: memoryview, base: int, prop: dict[str, Any]) -> float:
+    return float(struct.unpack_from("<" + prop["format"], view, base + int(prop["offset"]))[0])
+
+
+def replace_ply_vertex_count(header: str, vertex_count: int) -> bytes:
+    lines = []
+    replaced = False
+    for line in header.splitlines():
+        fields = line.strip().split()
+        if len(fields) >= 3 and fields[0] == "element" and fields[1] == "vertex":
+            lines.append(f"element vertex {vertex_count}")
+            replaced = True
+        else:
+            lines.append(line)
+    if not replaced:
+        raise ValueError("PLY header has no vertex element")
+    return ("\n".join(lines) + "\n").encode("ascii")
+
+
+def build_viewer_filtered_ply(source: Path, target: Path) -> dict[str, Any]:
+    data = source.read_bytes()
+    layout = parse_binary_ply_layout(data)
+    props = layout["propertiesByName"]
+    stride = int(layout["stride"])
+    header_end = int(layout["headerEnd"])
+    vertex_count = int(layout["vertexCount"])
+    view = memoryview(data)
+
+    has_opacity = "opacity" in props
+    has_scale = all(name in props for name in ("scale_0", "scale_1", "scale_2"))
+    records: list[dict[str, float]] = []
+    scale_values: list[float] = []
+    for index in range(vertex_count):
+        base = header_end + index * stride
+        opacity = sigmoid(read_ply_property(view, base, props["opacity"])) if has_opacity else 1.0
+        if has_scale:
+            average_log_scale = (
+                read_ply_property(view, base, props["scale_0"])
+                + read_ply_property(view, base, props["scale_1"])
+                + read_ply_property(view, base, props["scale_2"])
+            ) / 3
+            average_scale = math.exp(average_log_scale)
+        else:
+            average_scale = 0.0
+        records.append(
+            {
+                "index": float(index),
+                "x": read_ply_property(view, base, props["x"]),
+                "y": read_ply_property(view, base, props["y"]),
+                "z": read_ply_property(view, base, props["z"]),
+                "opacity": opacity,
+                "averageScale": average_scale,
+            }
+        )
+        scale_values.append(average_scale)
+
+    max_scale = percentile(scale_values, 0.995) if has_scale else float("inf")
+    initial = [
+        item
+        for item in records
+        if item["opacity"] >= 0.02 and item["averageScale"] <= max_scale
+    ]
+    if len(initial) < max(1000, int(vertex_count * 0.4)):
+        initial = records
+
+    bounds: dict[str, tuple[float, float]] = {}
+    for axis in ("x", "y", "z"):
+        values = [item[axis] for item in initial]
+        low = percentile(values, 0.005)
+        high = percentile(values, 0.995)
+        padding = max((high - low) * 0.08, 1.0e-6)
+        bounds[axis] = (low - padding, high + padding)
+
+    kept_indices = [
+        int(item["index"])
+        for item in initial
+        if all(bounds[axis][0] <= item[axis] <= bounds[axis][1] for axis in ("x", "y", "z"))
+    ]
+    if len(kept_indices) < max(1000, int(vertex_count * 0.35)):
+        kept_indices = [int(item["index"]) for item in records]
+        bounds = {}
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as handle:
+        handle.write(replace_ply_vertex_count(str(layout["header"]), len(kept_indices)))
+        for index in kept_indices:
+            base = header_end + index * stride
+            handle.write(data[base : base + stride])
+        tail_start = int(layout["vertexBytesEnd"])
+        if tail_start < len(data):
+            handle.write(data[tail_start:])
+
+    return {
+        "status": "pass",
+        "summary": f"viewer PLY filtered from {vertex_count} to {len(kept_indices)} splats",
+        "path": str(target),
+        "repoRelativePath": repo_relative_path(target),
+        "originalVertexCount": vertex_count,
+        "vertexCount": len(kept_indices),
+        "removedVertexCount": vertex_count - len(kept_indices),
+        "keptRatio": round(len(kept_indices) / max(vertex_count, 1), 6),
+        "maxAverageScale": max_scale if math.isfinite(max_scale) else None,
+        "bounds": {axis: [round(pair[0], 6), round(pair[1], 6)] for axis, pair in bounds.items()},
+    }
+
+
 def colmap_content_lines(path: Path) -> list[str]:
     if not path.exists():
         return []
@@ -3569,6 +3810,48 @@ def normalize3(vector: list[float]) -> list[float]:
 
 def rounded3(vector: list[float]) -> list[float]:
     return [round(value, 8) for value in vector]
+
+
+def nerfstudio_camera_transform(training_metrics: dict[str, Any]) -> dict[str, Any] | None:
+    transform = training_metrics.get("coordinateTransform")
+    if not isinstance(transform, dict):
+        return None
+    matrix = transform.get("matrix")
+    scale = transform.get("scale")
+    if (
+        not isinstance(matrix, list)
+        or len(matrix) != 3
+        or not all(isinstance(row, list) and len(row) == 4 for row in matrix)
+        or not isinstance(scale, (int, float))
+    ):
+        return None
+    return {"matrix": matrix, "scale": float(scale)}
+
+
+def apply_nerfstudio_transform_to_view(view: dict[str, Any], transform: dict[str, Any]) -> dict[str, Any]:
+    matrix = transform["matrix"]
+    scale = transform["scale"]
+
+    def transform_point(point: list[float]) -> list[float]:
+        return [
+            scale * (float(row[0]) * point[0] + float(row[1]) * point[1] + float(row[2]) * point[2] + float(row[3]))
+            for row in matrix
+        ]
+
+    def transform_direction(vector: list[float]) -> list[float]:
+        return normalize3(
+            [
+                float(row[0]) * vector[0] + float(row[1]) * vector[1] + float(row[2]) * vector[2]
+                for row in matrix
+            ]
+        )
+
+    adjusted = dict(view)
+    adjusted["position"] = rounded3(transform_point([float(value) for value in view["position"]]))
+    adjusted["forward"] = rounded3(transform_direction([float(value) for value in view["forward"]]))
+    adjusted["up"] = rounded3(transform_direction([float(value) for value in view["up"]]))
+    adjusted["coordinateSpace"] = "nerfstudio_dataparser"
+    return adjusted
 
 
 def camera_intrinsics_for_manifest(
@@ -3681,6 +3964,7 @@ def build_camera_views(training_report: dict[str, Any]) -> dict[str, Any]:
     render_height = int(render_height) if isinstance(render_height, (int, float)) else None
     review = metrics.get("renderReview", {}) if isinstance(metrics.get("renderReview"), dict) else {}
     review_samples = review.get("samples", []) if isinstance(review.get("samples"), list) else []
+    camera_transform = nerfstudio_camera_transform(metrics)
 
     ordered_items: list[tuple[int, dict[str, Any] | None]] = []
     seen_indices: set[int] = set()
@@ -3711,16 +3995,17 @@ def build_camera_views(training_report: dict[str, Any]) -> dict[str, Any]:
         camera = cameras.get(image["cameraId"])
         if camera is None:
             continue
-        views.append(
-            camera_view_from_colmap(
-                image=image,
-                camera=camera,
-                selected_index=selected_index,
-                render_width=render_width,
-                render_height=render_height,
-                review_sample=review_sample,
-            )
+        view = camera_view_from_colmap(
+            image=image,
+            camera=camera,
+            selected_index=selected_index,
+            render_width=render_width,
+            render_height=render_height,
+            review_sample=review_sample,
         )
+        if camera_transform is not None:
+            view = apply_nerfstudio_transform_to_view(view, camera_transform)
+        views.append(view)
 
     return {
         "status": "pass" if views else "warning",
@@ -3730,6 +4015,7 @@ def build_camera_views(training_report: dict[str, Any]) -> dict[str, Any]:
             "colmapTextPath": str(colmap_text_dir),
             "selectedImageCount": len(selected_images),
             "renderReviewSampleCount": len(review_samples),
+            "coordinateSpace": "nerfstudio_dataparser" if camera_transform is not None else "colmap_world",
         },
     }
 
@@ -3746,10 +4032,25 @@ def build_viewer_manifest(
     sample_render_path = Path(sample_render_raw) if isinstance(sample_render_raw, str) and sample_render_raw else None
     sample_target_path = Path(sample_target_raw) if isinstance(sample_target_raw, str) and sample_target_raw else None
     render_review_path = Path(render_review_raw) if isinstance(render_review_raw, str) and render_review_raw else None
-    ply_header = parse_ply_header(artifact)
-    camera_views = build_camera_views(training_report)
     training_metrics = training_report.get("metrics", {}) if isinstance(training_report.get("metrics"), dict) else {}
     profile = training_metrics.get("profile") or training_report.get("runConfig", {}).get("profile") or "splat"
+    viewer_artifact = artifact
+    viewer_filter: dict[str, Any] | None = None
+    if training_metrics.get("backend") == "nerfstudio_splatfacto":
+        viewer_candidate = artifact.with_name(f"{artifact.stem}.viewer.ply")
+        try:
+            viewer_filter = build_viewer_filtered_ply(artifact, viewer_candidate)
+            if viewer_candidate.exists() and viewer_candidate.stat().st_size > 0:
+                viewer_artifact = viewer_candidate
+        except Exception as exc:
+            viewer_filter = {
+                "status": "warning",
+                "summary": f"viewer PLY filtering failed; using original artifact: {exc}",
+                "path": str(viewer_candidate),
+            }
+    ply_header = parse_ply_header(viewer_artifact)
+    original_ply_header = parse_ply_header(artifact)
+    camera_views = build_camera_views(training_report)
     export_file_stem = f"gaussian-splat-lab-{profile}-{artifact.stem}"
     return {
         "schemaVersion": 1,
@@ -3762,12 +4063,23 @@ def build_viewer_manifest(
         "artifact": {
             "kind": "gaussian_splat_ply",
             "format": "ply",
+            "path": str(viewer_artifact),
+            "repoRelativePath": repo_relative_path(viewer_artifact),
+            "sizeBytes": viewer_artifact.stat().st_size,
+            "sha256": file_sha256(viewer_artifact),
+            "ply": ply_header,
+            "viewerOptimized": viewer_artifact != artifact,
+        },
+        "originalArtifact": {
+            "kind": "gaussian_splat_ply",
+            "format": "ply",
             "path": str(artifact),
             "repoRelativePath": repo_relative_path(artifact),
             "sizeBytes": artifact.stat().st_size,
             "sha256": file_sha256(artifact),
-            "ply": ply_header,
+            "ply": original_ply_header,
         },
+        "viewerFilter": viewer_filter,
         "preview": {
             "sampleRenderPath": str(sample_render_path) if sample_render_path else None,
             "sampleRenderRepoRelativePath": repo_relative_path(sample_render_path) if sample_render_path else None,
@@ -3789,8 +4101,9 @@ def build_viewer_manifest(
             "recommendedManifestFileName": f"{export_file_stem}.viewer-manifest.json",
             "recommendedSplatFileName": f"{export_file_stem}.ply",
             "primaryAssetRepoRelativePath": repo_relative_path(artifact),
-            "includes": ["gaussian_splat_ply", "viewer_manifest", "reference_camera_views", "preview_images"],
-            "coordinateSpace": "COLMAP world coordinates transformed at viewer load time for browser navigation",
+            "viewerAssetRepoRelativePath": repo_relative_path(viewer_artifact),
+            "includes": ["gaussian_splat_ply", "viewer_manifest", "reference_camera_views", "preview_images", "original_gaussian_splat_ply"],
+            "coordinateSpace": "viewer artifact and reference cameras share the packaged splat coordinate space",
             "note": "This is a Gaussian Splat environment export, not a triangle mesh/GLB export.",
         },
         "training": training_metrics,

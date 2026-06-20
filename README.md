@@ -85,7 +85,7 @@ The workflow is boring on purpose: one step writes evidence, the next step reads
 | 4 | Frame sampling | Extract frames deterministically from video. | `frames/`, frame manifest, contact sheet | Verifies frame count, hashes and extraction metadata. |
 | 5 | SfM camera solve | Run COLMAP feature extraction, matching and mapping. | sparse COLMAP model | Verifies registered images, sparse points and model analyzer output. |
 | 6 | Splat training | Train Gaussian Splats on the RTX GPU. `Best quality` uses Nerfstudio Splatfacto; debug/stress profiles use the repo-local `gsplat` trainer. | checkpoint, PLY, sample render, render-review sheet | Verifies CUDA, training completion, exported PLY and render/target review metrics. |
-| 7 | Packaging | Build the browser viewer manifest around the active splat artifact. | `viewer-manifest.json` | Verifies PLY hash, size, header and reference camera views. |
+| 7 | Packaging | Build the browser viewer manifest around the active splat artifact. Splatfacto exports keep the original PLY for download and add a viewer-optimized PLY for browser navigation when needed. | `viewer-manifest.json` | Verifies PLY hash, size, header, viewer artifact and reference camera views. |
 | 8 | Viewer validation | Confirm the local browser viewer can load the packaged artifact. | `viewer.json` | Verifies manifest, artifact hash, camera views and viewer hooks. |
 | 9 | Quality report | Summarize the whole run. | `quality_report.json` | Classifies the run as usable, weak, incomplete, blocked or failed. |
 
@@ -97,7 +97,7 @@ The upload wizard exposes two kinds of quality choices.
 
 Splatfacto quality path:
 
-- `splatfacto_reference`: `Best quality` in the GUI. Uses Nerfstudio Splatfacto, 30k iterations, COLMAP data, downscale factor `2`, CPU image cache, PLY export and Nerfstudio eval renders. This is the current best visual path for user-facing generation.
+- `splatfacto_reference`: `Best quality` in the GUI. Uses Nerfstudio Splatfacto, 30k iterations, COLMAP data, downscale factor `2`, CPU image cache, PLY export and Nerfstudio eval renders. Packaging also applies Nerfstudio's camera transform and creates a browser-preview PLY that removes extreme floaters while preserving the original export for download. This is the current best visual path for user-facing generation.
 - `splatfacto_preview`: short integration smoke profile, useful for checking that train/export/eval/package/viewer still work without waiting for a full run.
 
 Repo-local `gsplat` debug and stress profiles:
@@ -175,6 +175,7 @@ There is also a browser/CDP version for environments where Chrome or Edge DevToo
 The primary export today is a viewer environment bundle:
 
 - binary little-endian Gaussian Splat PLY
+- optional viewer-optimized PLY for browser rendering
 - viewer manifest
 - reference camera views
 - preview and render-review images
