@@ -137,6 +137,30 @@ Then open:
 http://127.0.0.1:8765/
 ```
 
+To reach the UI from another computer on the same local network, start the server on all interfaces:
+
+```bash
+python3 scripts/lab-ui-server.py --host 0.0.0.0 --port 8769
+```
+
+On WSL2, Windows may also need a portproxy and a private-network firewall rule. Run this from an elevated Windows PowerShell:
+
+```powershell
+.\scripts\expose-ui-lan.ps1 -Port 8769
+```
+
+If the elevated PowerShell is not opened in the repo folder, call the script through the WSL share instead:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File "\\wsl.localhost\Ubuntu-24.04\home\engwall\projects\gaussian-splat-lab\scripts\expose-ui-lan.ps1" -Port 8769
+```
+
+The script prints the LAN URL to open from another device, for example `http://192.168.50.212:8769/`. To remove the exposure again:
+
+```powershell
+.\scripts\expose-ui-lan.ps1 -Port 8769 -Remove
+```
+
 The UI is a local lab console with:
 
 - a guided scene capture wizard for direct video upload
