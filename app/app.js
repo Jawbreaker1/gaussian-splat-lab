@@ -69,6 +69,7 @@ let autoRun = null;
 let autoRunTimer = null;
 let latestJobProgress = null;
 let progressPolling = false;
+let runningStageStartedAt = null;
 let importingVideo = false;
 let viewerLoadToken = 0;
 let viewerReadyResolved = false;
@@ -195,6 +196,53 @@ const fallbackStageNames = {
   viewer: 'Viewer Validation',
   quality_report: 'Quality Report',
 };
+const stageDetails = {
+  framework_license: {
+    summary: 'Confirms that the runtime frameworks are allowed for the intended use.',
+    inside: 'Checks dependency decisions, license notes and commercial-use conditions.',
+    output: 'Dependency decision report',
+  },
+  environment: {
+    summary: 'Checks that this workstation can run the local video-to-3DGS pipeline.',
+    inside: 'Checks FFmpeg, COLMAP, Python, CUDA/PyTorch and RTX visibility.',
+    output: 'Machine readiness report',
+  },
+  intake: {
+    summary: 'Reads the uploaded video and records the source metadata.',
+    inside: 'Checks file access, duration, codec, resolution and capture provenance.',
+    output: 'Capture metadata',
+  },
+  frame_sampling: {
+    summary: 'Extracts stable still frames from the video for reconstruction.',
+    inside: 'Samples frames, writes timestamps and builds hashes plus a contact sheet.',
+    output: 'Frame manifest',
+  },
+  sfm: {
+    summary: 'Solves camera positions so training knows where each frame was captured.',
+    inside: 'COLMAP extracts features, matches nearby frames and builds sparse cameras. CPU load is expected here.',
+    output: 'Camera solve report',
+  },
+  splat_training: {
+    summary: 'Optimizes the Gaussian splats from the solved cameras and frames.',
+    inside: 'Runs the selected trainer, tracks iterations and exports render evidence.',
+    output: 'Training report and splat export',
+  },
+  packaging: {
+    summary: 'Turns the training output into files the web viewer and exports can use.',
+    inside: 'Copies artifacts, writes hashes, records size/format and prepares gallery metadata.',
+    output: 'Viewer artifact manifest',
+  },
+  viewer: {
+    summary: 'Checks that the generated scene can be opened and navigated in the browser.',
+    inside: 'Loads the artifact, checks the canvas and validates orbit, pan, zoom and reset.',
+    output: 'Viewer validation report',
+  },
+  quality_report: {
+    summary: 'Collects all stage results into one final usability verdict.',
+    inside: 'Summarizes pass, warning and failure boundaries for the finished generation.',
+    output: 'Quality report',
+  },
+};
 
 function statusType(status) {
   if (status === 'pass' || status === 'accepted' || status === 'preferred') return 'pass';
@@ -267,6 +315,54 @@ function stageEstimateSeconds(stage, profile = selectedTrainingProfile()) {
 
 function totalEstimateSeconds(profile = selectedTrainingProfile()) {
   return automatedStageOrder.reduce((total, stage) => total + stageEstimateSeconds(stage, profile), 0);
+}
+
+function activeTrainingProfile() {
+  return autoRun?.trainingProfile || selectedTrainingProfile();
+}
+
+function activeStageId() {
+  return runningStage || autoRun?.currentStage || null;
+}
+
+function stageElapsedSeconds(stage) {
+  if (autoRun?.active && autoRun.currentStage === stage && autoRun.stageStartedAt) {
+    return Math.max(0, (Date.now() - autoRun.stageStartedAt) / 1000);
+  }
+  if (runningStage === stage && runningStageStartedAt) {
+    return Math.max(0, (Date.now() - runningStageStartedAt) / 1000);
+  }
+  return 0;
+}
+
+function stageProgress(stage, trainingProgress = null) {
+  const estimate = stageEstimateSeconds(stage, activeTrainingProfile());
+  if (stage === 'splat_training' && trainingProgress?.status === 'running') {
+    const elapsed = Number(trainingProgress.elapsedSeconds || stageElapsedSeconds(stage));
+    const total = Number(trainingProgress.estimatedTotalSeconds || estimate);
+    const percent = clamp(Number(trainingProgress.percent || 0), 0, 99.9);
+    return {
+      elapsed,
+      total,
+      remaining: Math.max(0, total - elapsed),
+      percent,
+      source: trainingProgress.progressSource === 'nerfstudio_log' ? 'trainer log' : 'elapsed time',
+      iteration: Number(trainingProgress.iteration || 0),
+      iterations: Number(trainingProgress.iterations || 0),
+      etaText: trainingProgress.etaText || '',
+    };
+  }
+  const elapsed = stageElapsedSeconds(stage);
+  return {
+    elapsed,
+    total: estimate,
+    remaining: Math.max(0, estimate - elapsed),
+    percent: clamp((elapsed / Math.max(estimate, 1)) * 100, elapsed ? 2 : 0, 96),
+    source: 'elapsed time',
+    iteration: 0,
+    iterations: 0,
+    etaText: '',
+  };
 }
 
 function estimateRemainingSeconds() {
@@ -439,20 +535,58 @@ function buildStageItem(gate, index, jobStages) {
   const stage = jobStages.find((item) => item.id === gate.id);
   const item = document.createElement('article');
   const stageStatus = stage?.status ?? 'planned';
-  item.className = `stage-item stage-${statusType(stageStatus)}`;
+  const current = activeStageId() === gate.id;
+  item.className = `stage-item stage-${statusType(stageStatus)}${current ? ' stage-running' : ''}`;
 
   const number = document.createElement('div');
   number.className = 'stage-index';
   number.textContent = String(index);
 
   const body = document.createElement('div');
+  body.className = 'stage-body';
   const title = document.createElement('div');
   title.className = 'stage-title';
   title.textContent = stageDisplayName(gate);
-  const contract = document.createElement('div');
-  contract.className = 'stage-contract';
-  contract.textContent = `${gate.inputContract} → ${gate.outputContract}`;
-  body.append(title, contract);
+
+  const detail = stageDetails[gate.id] ?? {};
+  const summary = document.createElement('div');
+  summary.className = 'stage-summary';
+  summary.textContent = detail.summary || gate.validation || `${gate.inputContract} to ${gate.outputContract}`;
+
+  const inside = document.createElement('div');
+  inside.className = 'stage-inside';
+  inside.textContent = detail.inside || gate.validation || '';
+
+  const meta = document.createElement('div');
+  meta.className = 'stage-meta';
+  const estimate = document.createElement('span');
+  estimate.textContent = `Typical ${formatDuration(stageEstimateSeconds(gate.id, activeTrainingProfile()))}`;
+  const output = document.createElement('span');
+  output.textContent = `Output: ${detail.output || gate.outputContract}`;
+  meta.append(estimate, output);
+
+  body.append(title, summary, inside, meta);
+
+  if (current) {
+    const trainingProgress = latestJobProgress?.trainingProgress ?? null;
+    const progress = stageProgress(gate.id, trainingProgress);
+    const live = document.createElement('div');
+    live.className = 'stage-live';
+    if (gate.id === 'splat_training' && progress.iteration && progress.iterations) {
+      live.textContent = `Running: ${progress.percent.toFixed(1)}% · ${progress.iteration}/${progress.iterations} iterations · elapsed ${formatDuration(progress.elapsed)} · remaining ${formatDuration(progress.remaining)} · source ${progress.source}`;
+    } else {
+      live.textContent = `Running: elapsed ${formatDuration(progress.elapsed)} · estimated remaining ${formatDuration(progress.remaining)}`;
+    }
+
+    const track = document.createElement('div');
+    track.className = 'stage-mini-track';
+    track.setAttribute('aria-hidden', 'true');
+    const bar = document.createElement('div');
+    bar.className = 'stage-mini-bar';
+    bar.style.width = `${Math.round(progress.percent)}%`;
+    track.append(bar);
+    body.append(live, track);
+  }
 
   const status = pill(stage?.status ?? 'planned', statusType(stage?.status ?? 'planned'));
   if (runnableStages.has(gate.id)) {
@@ -488,7 +622,7 @@ function renderPipelineProgress(gates, jobStages) {
   let warnings = 0;
   let blocked = 0;
   let currentGate = null;
-  const currentStageId = runningStage || autoRun?.currentStage || null;
+  const currentStageId = activeStageId();
   const trainingProgress = latestJobProgress?.trainingProgress ?? null;
   for (const gate of gates) {
     const status = stageById.get(gate.id)?.status ?? 'planned';
@@ -514,24 +648,27 @@ function renderPipelineProgress(gates, jobStages) {
 
   if (autoRun?.active) {
     const current = currentStageId;
-    if (current === 'splat_training' && trainingProgress?.iteration) {
-      const trainPercent = Number(trainingProgress.percent || 0).toFixed(1);
-      const elapsed = Number(trainingProgress.elapsedSeconds || 0);
-      const totalEstimate = Number(trainingProgress.estimatedTotalSeconds || 0);
-      const remaining = Math.max(0, totalEstimate - elapsed);
-      const message = `Training splats ${trainPercent}% (${trainingProgress.iteration}/${trainingProgress.iterations})`;
-      els.pipelineCurrentStage.textContent = message;
-      els.pipelineEtaText.textContent = `Training ETA ${formatDuration(remaining)}`;
-      setWizardStatus(message, 'neutral');
+    if (current) {
+      const detail = stageDetails[current] ?? {};
+      const progress = stageProgress(current, trainingProgress);
+      if (current === 'splat_training' && progress.iteration && progress.iterations) {
+        const message = `Training splats ${progress.percent.toFixed(1)}% (${progress.iteration}/${progress.iterations})`;
+        els.pipelineCurrentStage.textContent = message;
+        els.pipelineEtaText.textContent = `Elapsed ${formatDuration(progress.elapsed)} · remaining ${formatDuration(progress.remaining)} · ${progress.source}`;
+        setWizardStatus(`${stageDisplayName({ id: current })}: ${message}`, 'neutral');
+      } else {
+        els.pipelineCurrentStage.textContent = `${stageDisplayName({ id: current })}: ${detail.summary ?? 'running'}`;
+        els.pipelineEtaText.textContent = `Elapsed ${formatDuration(progress.elapsed)} · estimated remaining ${formatDuration(progress.remaining)}`;
+      }
     } else {
-      els.pipelineCurrentStage.textContent = current
-        ? `Running ${stageDisplayName({ id: current })}`
-        : 'Preparing automatic run';
+      els.pipelineCurrentStage.textContent = 'Preparing automatic run';
       els.pipelineEtaText.textContent = `ETA ${formatDuration(estimateRemainingSeconds())}`;
     }
   } else if (runningStage) {
-    els.pipelineCurrentStage.textContent = `Running ${stageDisplayName({ id: runningStage })}`;
-    els.pipelineEtaText.textContent = `Estimated remaining step: ${formatDuration(stageEstimateSeconds(runningStage))}`;
+    const progress = stageProgress(runningStage, trainingProgress);
+    const detail = stageDetails[runningStage] ?? {};
+    els.pipelineCurrentStage.textContent = `${stageDisplayName({ id: runningStage })}: ${detail.summary ?? 'running'}`;
+    els.pipelineEtaText.textContent = `Elapsed ${formatDuration(progress.elapsed)} · estimated remaining ${formatDuration(progress.remaining)}`;
   } else if (blocked) {
     els.pipelineCurrentStage.textContent = `Needs attention: ${stageDisplayName(currentGate ?? gates[0])}`;
     els.pipelineEtaText.textContent = 'Paused until the blocking check is resolved';
@@ -698,7 +835,12 @@ async function createJob(captureId = null, options = {}) {
 async function runStage(stage, options = {}) {
   if (!activeJob || runningStage) return;
   runningStage = stage;
+  runningStageStartedAt = Date.now();
   latestJobProgress = null;
+  const manualProgressTimer = autoRun?.active ? null : window.setInterval(() => {
+    pollJobProgress();
+    renderStages();
+  }, 1000);
   renderStages();
   try {
     const response = await fetch('/api/jobs/run-stage', {
@@ -733,12 +875,14 @@ async function runStage(stage, options = {}) {
     return null;
   } finally {
     runningStage = null;
+    runningStageStartedAt = null;
+    if (manualProgressTimer) window.clearInterval(manualProgressTimer);
     renderStages();
   }
 }
 
 async function pollJobProgress() {
-  if (!autoRun?.active || !activeJob?.jobPath || progressPolling) return;
+  if ((!autoRun?.active && !runningStage) || !activeJob?.jobPath || progressPolling) return;
   progressPolling = true;
   try {
     const params = new URLSearchParams({ jobPath: activeJob.jobPath });
@@ -816,7 +960,7 @@ async function generatePipeline() {
       autoRun.currentStage = stage;
       autoRun.currentIndex = index;
       autoRun.stageStartedAt = Date.now();
-      setWizardStatus(`Running ${stageDisplayName({ id: stage })}; ETA ${formatDuration(estimateRemainingSeconds())}`, 'neutral');
+      setWizardStatus(`${stageDisplayName({ id: stage })}: ${stageDetails[stage]?.summary ?? 'running'} ETA ${formatDuration(estimateRemainingSeconds())}`, 'neutral');
       await runStage(stage, {
         silent: true,
         acceptWarning: true,

@@ -142,7 +142,9 @@ The UI is a local lab console with:
 - a guided scene capture wizard for direct video upload
 - scene type and quality profile selection
 - automatic upload, job planning and stage-by-stage generation
-- progress text and ETA for the full generation run
+- progress text, elapsed time and ETA for the full generation run
+- per-step cards that explain what is happening, what the step produces and which internal checks are running
+- live training progress from Nerfstudio logs when available, including iteration count and remaining time
 - source/capture selection
 - local video import controls
 - live pipeline panel on the right

@@ -466,7 +466,7 @@ select {
 }
 
 .strategy-estimate strong {
-  color: var(--text);
+  color: var(--ink);
   font-size: 13px;
   line-height: 1.35;
 }
@@ -804,6 +804,11 @@ select {
   background: rgba(255, 123, 114, 0.05);
 }
 
+.stage-item.stage-running {
+  border-color: rgba(88, 166, 255, 0.34);
+  background: linear-gradient(180deg, rgba(88, 166, 255, 0.075), rgba(255, 255, 255, 0.026));
+}
+
 .stage-index {
   width: 28px;
   height: 28px;
@@ -815,13 +820,79 @@ select {
   font-weight: 760;
 }
 
+.stage-body {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
 .stage-title {
   font-weight: 760;
   overflow-wrap: anywhere;
 }
 
+.stage-summary {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.45;
+}
+
+.stage-inside {
+  color: rgba(229, 232, 240, 0.68);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.stage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 740;
+}
+
+.stage-meta span {
+  min-height: 22px;
+  padding: 3px 7px;
+  border: 1px solid rgba(53, 215, 200, 0.16);
+  border-radius: 7px;
+  background: rgba(53, 215, 200, 0.06);
+}
+
+.stage-live {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 760;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.stage-mini-track {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.stage-mini-bar {
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  transition: width 180ms ease;
+}
+
 .stage-contract {
   display: none;
+}
+
+.stage-item > .pill {
+  align-self: start;
 }
 
 .stage-action {
