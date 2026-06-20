@@ -217,6 +217,24 @@ The primary export today is a viewer environment bundle:
 
 This is not a triangle mesh or GLB export yet. The current goal is high-quality Gaussian Splat viewing and handoff. Mesh conversion or GLB packaging can be added later as a separate export stage if product needs require it.
 
+## Cleanup
+
+3DGS runs leave useful but heavy working data behind: sampled frames, COLMAP databases, Nerfstudio checkpoints, TensorBoard logs and extra eval renders. The gallery only needs the packaged viewer/export files plus manifests.
+
+Preview a cleanup plan without deleting anything:
+
+```bash
+python3 scripts/cleanup-generated-data.py --all-safe --write-report
+```
+
+Apply that plan:
+
+```bash
+python3 scripts/cleanup-generated-data.py --all-safe --apply --write-report
+```
+
+`--all-safe` removes `outputs/deleted-jobs`, removes duplicate trainer workspaces under `outputs/experiments`, and prunes gallery jobs while keeping packaged PLY exports, viewer manifests, reports and referenced preview images. Use the narrower flags (`--purge-deleted-jobs`, `--purge-experiments`, `--prune-gallery-workdirs`) when you want smaller, more deliberate cleanup.
+
 ## Licensing and Commercial Use
 
 This repo tracks commercial-use risk, but it is not a legal opinion. The pipeline records framework and capture-source notes so we do not accidentally build product work on non-commercial code or unclear media.
