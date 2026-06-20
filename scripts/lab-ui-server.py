@@ -414,6 +414,7 @@ def latest_job() -> dict[str, Any] | None:
         return None
     job = read_json(candidates[0])
     job["jobPath"] = str(candidates[0])
+    job["reportSummaries"] = job_report_summaries(candidates[0])
     return job
 
 
@@ -424,6 +425,72 @@ def safe_read_report(path: Path) -> dict[str, Any] | None:
         return read_json(path)
     except Exception:
         return None
+
+
+def slim_check(check: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(check, dict):
+        return None
+    slim: dict[str, Any] = {}
+    for key in (
+        "id",
+        "status",
+        "summary",
+        "registeredImages",
+        "frameCount",
+        "registeredFraction",
+        "passThreshold",
+        "warningThreshold",
+        "copiedFrameCount",
+        "path",
+    ):
+        if key in check:
+            slim[key] = check[key]
+    messages = check.get("messages")
+    if isinstance(messages, list):
+        slim["messages"] = [str(item) for item in messages[:5]]
+    return slim
+
+
+def summarize_stage_report(report: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(report, dict):
+        return None
+    stage = report.get("stage") if isinstance(report.get("stage"), dict) else {}
+    checks = report.get("checks") if isinstance(report.get("checks"), list) else []
+    problem_statuses = {"fail", "blocked", "blocked_license", "blocked_workload", "setup_gap"}
+    problem = next(
+        (
+            check for check in checks
+            if isinstance(check, dict) and str(check.get("status") or "") in problem_statuses
+        ),
+        None,
+    )
+    if problem is None:
+        problem = next(
+            (
+                check for check in checks
+                if isinstance(check, dict) and str(check.get("status") or "") == "warning"
+            ),
+            None,
+        )
+    return {
+        "status": stage.get("status"),
+        "generatedAt": stage.get("generatedAt"),
+        "problemCheck": slim_check(problem),
+    }
+
+
+def job_report_summaries(job_path: Path) -> dict[str, Any]:
+    reports: dict[str, Any] = {}
+    reports_dir = job_path.parent / "reports"
+    for report_path in sorted(reports_dir.glob("*.json")):
+        report = safe_read_report(report_path)
+        summary = summarize_stage_report(report)
+        if summary is not None:
+            reports[report_path.stem] = {
+                **summary,
+                "path": str(report_path),
+            }
+    return reports
 
 
 def latest_training_progress(job_path: Path) -> dict[str, Any] | None:
@@ -447,21 +514,8 @@ def latest_training_progress(job_path: Path) -> dict[str, Any] | None:
 def job_progress(job_path: Path) -> dict[str, Any]:
     job = read_json(job_path)
     job["jobPath"] = str(job_path)
-    reports: dict[str, Any] = {}
-    reports_dir = job_path.parent / "reports"
-    for stage in job.get("stages", []):
-        if not isinstance(stage, dict):
-            continue
-        stage_id = str(stage.get("id") or "")
-        report_path = reports_dir / f"{stage_id}.json"
-        report = safe_read_report(report_path)
-        if report is None:
-            continue
-        reports[stage_id] = {
-            "status": report.get("stage", {}).get("status"),
-            "generatedAt": report.get("stage", {}).get("generatedAt"),
-            "path": str(report_path),
-        }
+    reports = job_report_summaries(job_path)
+    job["reportSummaries"] = reports
     return {
         "job": job,
         "reports": reports,
@@ -742,12 +796,16 @@ def run_job_stage(
 
     job = read_json(job_path)
     job["jobPath"] = str(job_path)
+    report_path = job_path.parent / "reports" / f"{stage}.json"
+    report = safe_read_report(report_path)
+    job["reportSummaries"] = job_report_summaries(job_path)
     return {
         "job": job,
         "stage": stage,
         "returnCode": result.returncode,
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
+        "reportSummary": summarize_stage_report(report),
     }
 
 

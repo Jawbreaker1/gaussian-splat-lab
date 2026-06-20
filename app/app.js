@@ -365,6 +365,45 @@ function stageProgress(stage, trainingProgress = null) {
   };
 }
 
+function stageReportSummary(stage) {
+  return latestJobProgress?.reports?.[stage] ?? activeJob?.reportSummaries?.[stage] ?? null;
+}
+
+function stageIssueText(stage, summary = stageReportSummary(stage)) {
+  const check = summary?.problemCheck;
+  if (!check) return '';
+  if (stage === 'sfm' && check.id === 'registered_frames') {
+    const registered = Number(check.registeredImages ?? 0);
+    const total = Number(check.frameCount ?? 0);
+    const threshold = Math.round(Number(check.passThreshold ?? 0.7) * 100);
+    const frameText = registered && total ? `${registered}/${total} frames registered` : check.summary;
+    return `Camera solve failed: ${frameText}. Need about ${threshold}% for a robust 3DGS. Try a slower capture with more overlap, clearer texture and less motion blur.`;
+  }
+  const label = stageDisplayName({ id: stage });
+  return `${label}: ${check.summary || summary.status || 'needs attention'}`;
+}
+
+function stageFailureMessage(stage, payload = {}) {
+  const summary = payload.reportSummary ?? summarizeInlineReport(payload.report);
+  const issue = stageIssueText(stage, summary);
+  if (issue) return issue;
+  return payload.stderr || payload.stdout || `${stageDisplayName({ id: stage })} failed`;
+}
+
+function summarizeInlineReport(report) {
+  if (!report || typeof report !== 'object') return null;
+  const stage = report.stage && typeof report.stage === 'object' ? report.stage : {};
+  const checks = Array.isArray(report.checks) ? report.checks : [];
+  const problem = checks.find((check) => ['fail', 'blocked', 'blocked_license', 'blocked_workload', 'setup_gap'].includes(check?.status))
+    ?? checks.find((check) => check?.status === 'warning')
+    ?? null;
+  return {
+    status: stage.status,
+    generatedAt: stage.generatedAt,
+    problemCheck: problem,
+  };
+}
+
 function estimateRemainingSeconds() {
   if (!autoRun?.active) return totalEstimateSeconds(selectedTrainingProfile());
   const profile = autoRun.trainingProfile;
@@ -567,6 +606,14 @@ function buildStageItem(gate, index, jobStages) {
 
   body.append(title, summary, inside, meta);
 
+  const issue = stageIssueText(gate.id);
+  if (issue && ['fail', 'blocked', 'blocked_license', 'blocked_workload', 'setup_gap'].includes(stageStatus)) {
+    const issueElement = document.createElement('div');
+    issueElement.className = 'stage-issue';
+    issueElement.textContent = issue;
+    body.append(issueElement);
+  }
+
   if (current) {
     const trainingProgress = latestJobProgress?.trainingProgress ?? null;
     const progress = stageProgress(gate.id, trainingProgress);
@@ -671,7 +718,7 @@ function renderPipelineProgress(gates, jobStages) {
     els.pipelineEtaText.textContent = `Elapsed ${formatDuration(progress.elapsed)} · estimated remaining ${formatDuration(progress.remaining)}`;
   } else if (blocked) {
     els.pipelineCurrentStage.textContent = `Needs attention: ${stageDisplayName(currentGate ?? gates[0])}`;
-    els.pipelineEtaText.textContent = 'Paused until the blocking check is resolved';
+    els.pipelineEtaText.textContent = stageIssueText(currentGate?.id) || 'Paused until the blocking check is resolved';
   } else if (currentGate) {
     els.pipelineCurrentStage.textContent = `Next: ${stageDisplayName(currentGate)}`;
     els.pipelineEtaText.textContent = `Estimated full run: ${formatDuration(totalEstimateSeconds())}`;
@@ -855,12 +902,17 @@ async function runStage(stage, options = {}) {
       }),
     });
     const payload = await response.json();
+    if (payload.job) {
+      activeJob = payload.job;
+      renderStages();
+      renderJob();
+    }
     if (!response.ok) throw new Error(payload.error || `stage ${response.status}`);
     if (payload.returnCode && payload.returnCode !== 0) {
-      const message = payload.stderr || payload.stdout || `${stage} failed`;
+      const message = stageFailureMessage(stage, payload);
+      await loadState().catch(() => {});
       throw new Error(message);
     }
-    activeJob = payload.job;
     await loadState();
     return payload;
   } catch (error) {
