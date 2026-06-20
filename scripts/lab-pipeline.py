@@ -288,6 +288,30 @@ SPLATFACTO_PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "estimatedSeconds": 45 * 60,
         "timeoutSeconds": 8 * 60 * 60,
     },
+    "splatfacto_big_quality": {
+        "method": "splatfacto-big",
+        "iterations": 30000,
+        "downscaleFactor": 2,
+        "cacheImages": "cpu",
+        "evalInterval": 8,
+        "stepsPerEvalImage": 5000,
+        "stepsPerEvalAllImages": 30000,
+        "stepsPerSave": 30000,
+        "estimatedSeconds": 90 * 60,
+        "timeoutSeconds": 12 * 60 * 60,
+    },
+    "splatfacto_ceiling": {
+        "method": "splatfacto-big",
+        "iterations": 30000,
+        "downscaleFactor": 1,
+        "cacheImages": "cpu",
+        "evalInterval": 8,
+        "stepsPerEvalImage": 5000,
+        "stepsPerEvalAllImages": 30000,
+        "stepsPerSave": 30000,
+        "estimatedSeconds": 2 * 60 * 60,
+        "timeoutSeconds": 20 * 60 * 60,
+    },
 }
 
 TRAINING_TIMEOUT_SECONDS: dict[str, int] = {
@@ -302,6 +326,8 @@ TRAINING_TIMEOUT_SECONDS: dict[str, int] = {
     "rtx_max_quality": 20 * 60 * 60,
     "splatfacto_preview": 2 * 60 * 60,
     "splatfacto_reference": 8 * 60 * 60,
+    "splatfacto_big_quality": 12 * 60 * 60,
+    "splatfacto_ceiling": 20 * 60 * 60,
 }
 
 
@@ -747,6 +773,29 @@ def write_training_progress(progress_path: Path, payload: dict[str, Any]) -> Non
         return
 
 
+NERFSTUDIO_PROGRESS_PATTERN = re.compile(
+    r"(?m)^\s*(\d+)\s+\(([\d.]+)%\)\s+([\d.]+)\s+ms\s+([^\n]+?)\s+([\d.]+\s+[KMG])"
+)
+
+
+def parse_nerfstudio_training_progress(log_path: Path) -> dict[str, Any] | None:
+    text = tail_text(log_path, max_chars=200_000)
+    if not text:
+        return None
+    clean = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
+    matches = list(NERFSTUDIO_PROGRESS_PATTERN.finditer(clean))
+    if not matches:
+        return None
+    match = matches[-1]
+    return {
+        "iteration": int(match.group(1)),
+        "percent": float(match.group(2)),
+        "trainIterationMs": float(match.group(3)),
+        "etaText": match.group(4).strip(),
+        "trainRaysPerSec": match.group(5).strip(),
+    }
+
+
 def run_logged_command_with_estimated_progress(
     command: list[str],
     *,
@@ -784,18 +833,35 @@ def run_logged_command_with_estimated_progress(
         while True:
             exit_code = process.poll()
             elapsed = max(time.monotonic() - start, 0.0)
-            percent = min((elapsed / max(float(estimated_total_seconds), 1.0)) * 100.0, 96.0)
             iterations = int(progress_base.get("iterations") or 0)
+            parsed_progress = parse_nerfstudio_training_progress(log_path)
+            if parsed_progress is not None:
+                percent = min(max(float(parsed_progress["percent"]), 0.0), 99.99)
+                iteration = int(parsed_progress["iteration"])
+                estimated_from_progress = int(round(elapsed / max(percent / 100.0, 0.001)))
+                effective_estimated_total = max(estimated_from_progress, int(elapsed))
+                progress_details = {
+                    "trainIterationMs": parsed_progress.get("trainIterationMs"),
+                    "etaText": parsed_progress.get("etaText"),
+                    "trainRaysPerSec": parsed_progress.get("trainRaysPerSec"),
+                    "progressSource": "nerfstudio_log",
+                }
+            else:
+                percent = min((elapsed / max(float(estimated_total_seconds), 1.0)) * 100.0, 96.0)
+                iteration = int(iterations * percent / 100.0)
+                effective_estimated_total = estimated_total_seconds
+                progress_details = {"progressSource": "wall_clock_estimate"}
             write_training_progress(
                 progress_path,
                 {
                     **progress_base,
                     "status": "running" if exit_code is None else "pass",
                     "percent": round(percent, 2) if exit_code is None else 100.0,
-                    "iteration": int(iterations * percent / 100.0) if exit_code is None else iterations,
+                    "iteration": iteration if exit_code is None else iterations,
                     "elapsedSeconds": round(elapsed, 1),
-                    "estimatedTotalSeconds": estimated_total_seconds,
+                    "estimatedTotalSeconds": effective_estimated_total,
                     "updatedAt": utc_now(),
+                    **progress_details,
                 },
             )
             if exit_code is not None:

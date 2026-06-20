@@ -145,10 +145,13 @@ def wait_for_devtools(host: str, port: int, timeout: float) -> list[dict]:
 def evaluate_text(client: CdpClient) -> str:
     expression = """
     (() => {
-      const pill = document.querySelector('#viewerStatusPill')?.textContent || '';
-      const overlay = document.querySelector('#sparkOverlay')?.textContent || '';
+      const mainPill = document.querySelector('#viewerStatusPill')?.textContent || '';
+      const mainOverlay = document.querySelector('#sparkOverlay')?.textContent || '';
+      const galleryPill = document.querySelector('#sceneStatusPill')?.textContent || '';
+      const galleryOverlay = document.querySelector('#gallerySparkOverlay')?.textContent || '';
+      const galleryStatus = document.querySelector('#galleryStatus')?.textContent || '';
       const mode = document.querySelector('#viewerModeSparkButton')?.classList.contains('active') ? 'spark' : 'debug';
-      return `${mode}|${pill}|${overlay}`;
+      return `${mode}|${mainPill}|${mainOverlay}|${galleryPill}|${galleryOverlay}|${galleryStatus}`;
     })()
     """
     result = client.command("Runtime.evaluate", {"expression": expression, "returnByValue": True})

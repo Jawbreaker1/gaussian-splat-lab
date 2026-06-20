@@ -97,7 +97,9 @@ The upload wizard exposes two kinds of quality choices.
 
 Splatfacto quality path:
 
-- `splatfacto_reference`: `Best quality` in the GUI. Uses Nerfstudio Splatfacto, 30k iterations, COLMAP data, downscale factor `2`, CPU image cache, PLY export and Nerfstudio eval renders. Packaging also applies Nerfstudio's camera transform and creates a browser-preview PLY that removes extreme floaters while preserving the original export for download. This is the current best visual path for user-facing generation.
+- `splatfacto_big_quality`: `Best quality` in the GUI. Uses Nerfstudio `splatfacto-big`, 30k iterations, COLMAP data, downscale factor `2`, CPU image cache, PLY export and Nerfstudio eval renders. This is the current best measured user-facing path.
+- `splatfacto_reference`: standard Nerfstudio Splatfacto, 30k iterations and downscale factor `2`. It is lighter than `splatfacto_big_quality` and remains useful as a comparison point.
+- `splatfacto_ceiling`: deliberate lab profile for finding the current quality ceiling. Uses Nerfstudio `splatfacto-big`, 30k iterations, downscale factor `1`, more COLMAP features and a longer timeout. It can run for hours on large 4K videos and should be treated as an experiment, not the default user path. A 40k full-resolution attempt hit the practical VRAM ceiling on the RTX 5090 before export.
 - `splatfacto_preview`: short integration smoke profile, useful for checking that train/export/eval/package/viewer still work without waiting for a full run.
 
 Repo-local `gsplat` debug and stress profiles:
@@ -273,7 +275,17 @@ Run the current best-quality Splatfacto path on purpose:
   --job outputs/jobs/<job-id>/job.json \
   --accept-warning \
   --allow-heavy \
-  --training-profile splatfacto_reference
+  --training-profile splatfacto_big_quality
+```
+
+Run the heavier ceiling profile when the workstation can be left busy for several hours:
+
+```bash
+.venv/bin/python scripts/lab-pipeline.py run-stage splat_training \
+  --job outputs/jobs/<job-id>/job.json \
+  --accept-warning \
+  --allow-heavy \
+  --training-profile splatfacto_ceiling
 ```
 
 ## Machine Topology
