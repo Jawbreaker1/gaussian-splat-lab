@@ -43,7 +43,7 @@ def write_texture_png(path: Path, width: int, height: int, shift: int) -> None:
 
 
 def run_command(command: list[str], timeout: int, env: dict[str, str] | None = None) -> dict[str, Any]:
-    started = time.time()
+    started = time.monotonic()
     executable = shutil.which(command[0], path=(env or os.environ).get("PATH"))
     if executable is None:
         return {
@@ -70,7 +70,7 @@ def run_command(command: list[str], timeout: int, env: dict[str, str] | None = N
             "executable": executable,
             "status": "fail",
             "exitCode": None,
-            "durationSeconds": round(time.time() - started, 3),
+            "durationSeconds": round(time.monotonic() - started, 3),
             "stdout": exc.stdout or "",
             "stderr": f"timed out after {timeout}s",
         }
@@ -79,7 +79,7 @@ def run_command(command: list[str], timeout: int, env: dict[str, str] | None = N
         "executable": executable,
         "status": "pass" if result.returncode == 0 else "fail",
         "exitCode": result.returncode,
-        "durationSeconds": round(time.time() - started, 3),
+        "durationSeconds": round(time.monotonic() - started, 3),
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
     }
@@ -103,6 +103,17 @@ def compact_command_result(result: dict[str, Any]) -> dict[str, Any]:
 def command_summary(result: dict[str, Any]) -> str:
     text = str(result.get("stdout") or result.get("stderr") or "")
     return "\n".join(line for line in text.splitlines()[:4] if line.strip())
+
+
+def colmap_command_help(binary: str, command_name: str, env: dict[str, str]) -> str:
+    result = run_command([binary, command_name, "--help"], timeout=20, env=env)
+    return "\n".join(str(result.get(key) or "") for key in ("stdout", "stderr"))
+
+
+def colmap_option(help_text: str, legacy_name: str, current_name: str) -> str:
+    if f"--{current_name}" in help_text:
+        return f"--{current_name}"
+    return f"--{legacy_name}"
 
 
 def validate_colmap_binary(binary: str, allow_gpu: bool, qt_offscreen: bool, keep_workdir: bool) -> dict[str, Any]:
@@ -129,6 +140,18 @@ def validate_colmap_binary(binary: str, allow_gpu: bool, qt_offscreen: bool, kee
         }
     )
 
+    feature_help = colmap_command_help(binary, "feature_extractor", env)
+    matcher_help = colmap_command_help(binary, "exhaustive_matcher", env)
+    feature_gpu_option = colmap_option(feature_help, "SiftExtraction.use_gpu", "FeatureExtraction.use_gpu")
+    feature_threads_option = colmap_option(feature_help, "SiftExtraction.num_threads", "FeatureExtraction.num_threads")
+    feature_max_image_size_option = colmap_option(
+        feature_help,
+        "SiftExtraction.max_image_size",
+        "FeatureExtraction.max_image_size",
+    )
+    matcher_gpu_option = colmap_option(matcher_help, "SiftMatching.use_gpu", "FeatureMatching.use_gpu")
+    matcher_threads_option = colmap_option(matcher_help, "SiftMatching.num_threads", "FeatureMatching.num_threads")
+
     cpu_db = workdir / "cpu.db"
     cpu_feature = run_command(
         [
@@ -140,11 +163,11 @@ def validate_colmap_binary(binary: str, allow_gpu: bool, qt_offscreen: bool, kee
             str(image_dir),
             "--ImageReader.single_camera",
             "1",
-            "--SiftExtraction.use_gpu",
+            feature_gpu_option,
             "0",
-            "--SiftExtraction.num_threads",
+            feature_threads_option,
             "1",
-            "--SiftExtraction.max_image_size",
+            feature_max_image_size_option,
             "800",
             "--SiftExtraction.max_num_features",
             "1024",
@@ -168,9 +191,9 @@ def validate_colmap_binary(binary: str, allow_gpu: bool, qt_offscreen: bool, kee
                 "exhaustive_matcher",
                 "--database_path",
                 str(cpu_db),
-                "--SiftMatching.use_gpu",
+                matcher_gpu_option,
                 "0",
-                "--SiftMatching.num_threads",
+                matcher_threads_option,
                 "1",
             ],
             timeout=90,
@@ -197,11 +220,11 @@ def validate_colmap_binary(binary: str, allow_gpu: bool, qt_offscreen: bool, kee
                 str(image_dir),
                 "--ImageReader.single_camera",
                 "1",
-                "--SiftExtraction.use_gpu",
+                feature_gpu_option,
                 "1",
-                "--SiftExtraction.num_threads",
+                feature_threads_option,
                 "1",
-                "--SiftExtraction.max_image_size",
+                feature_max_image_size_option,
                 "800",
                 "--SiftExtraction.max_num_features",
                 "1024",
@@ -225,9 +248,9 @@ def validate_colmap_binary(binary: str, allow_gpu: bool, qt_offscreen: bool, kee
                     "exhaustive_matcher",
                     "--database_path",
                     str(gpu_db),
-                    "--SiftMatching.use_gpu",
+                    matcher_gpu_option,
                     "1",
-                    "--SiftMatching.num_threads",
+                    matcher_threads_option,
                     "1",
                 ],
                 timeout=90,

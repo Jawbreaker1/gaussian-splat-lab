@@ -8,6 +8,7 @@ import copy
 import importlib.util
 import json
 import mimetypes
+import os
 import re
 import shutil
 import subprocess
@@ -244,6 +245,17 @@ UI_SCENE_PROFILES = {
 }
 
 
+def cuda_colmap_sidecar_active() -> bool:
+    binary = (os.environ.get("GSL_COLMAP_BIN") or "").strip()
+    if not binary:
+        return False
+    path = Path(binary)
+    if not path.is_absolute():
+        path = (REPO_ROOT / path).resolve()
+    sidecar = (REPO_ROOT / "outputs/tools/colmap-cuda/bin/colmap").resolve()
+    return path == sidecar and path.exists()
+
+
 def apply_scene_profile(quality_key: str, scene_kind: str) -> tuple[dict[str, Any], dict[str, Any], str]:
     normalized_scene = scene_kind if scene_kind in UI_SCENE_PROFILES else "room"
     quality = copy.deepcopy(UI_QUALITY_PRESETS.get(quality_key, UI_QUALITY_PRESETS["quality_probe"]))
@@ -272,6 +284,8 @@ def apply_scene_profile(quality_key: str, scene_kind: str) -> tuple[dict[str, An
             sfm_controls[key] = max(int(sfm_controls[key]), value) if normalized_scene != "object" else value
         else:
             sfm_controls[key] = value
+    if cuda_colmap_sidecar_active():
+        sfm_controls["useGpu"] = True
     quality["sfm"] = sfm_controls
     return quality, scene, normalized_scene
 

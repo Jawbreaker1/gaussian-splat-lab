@@ -90,6 +90,13 @@ Defaults:
 
 This is a source compilation step and can keep many CPU cores busy for tens of minutes or longer.
 
+Result on 2026-06-21:
+
+- build pass
+- installed binary: `outputs/tools/colmap-cuda/bin/colmap`
+- version: `COLMAP 4.0.4`, commit `9c23f69`, `with CUDA`
+- build log: `logs/build/colmap-cuda-sidecar-foreground.log`
+
 ## Validation
 
 Keep the fallback validated:
@@ -110,6 +117,8 @@ Only after both sidecar checks pass should the UI or CLI be launched with:
 ```bash
 GSL_COLMAP_BIN="$(pwd)/outputs/tools/colmap-cuda/bin/colmap"
 ```
+
+Result on 2026-06-21: pass. The GPU smoke logged `Creating SIFT GPU feature extractor`, `Bind FeatureMatcherWorker to GPU device 0`, and `Creating SIFT GPU feature matcher`.
 
 ## Rollback
 

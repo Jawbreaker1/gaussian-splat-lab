@@ -26,6 +26,8 @@ data/tmp/
 artifacts/
 outputs/
 logs/
+colmap.*
+colmap.*.log.*
 
 # Generated reports; commit curated reports elsewhere when useful
 reports/generated/

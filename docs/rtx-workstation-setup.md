@@ -115,8 +115,8 @@ Pipeline status:
 - The pipeline resolves COLMAP through `GSL_COLMAP_BIN` when set; otherwise it uses `colmap` from `PATH`.
 - Keep `/usr/bin/colmap` installed as the CPU fallback. A CUDA COLMAP should be side-by-side, not a replacement.
 - `scripts/validate-colmap-binary.py` validates a candidate COLMAP binary with synthetic images before it is used in the UI/pipeline.
-- All GUI presets keep `useGpu: False` for now because the active COLMAP binary cannot run the GPU path reliably.
-- Do not expose a user-facing COLMAP GPU toggle until a CUDA/headless-capable COLMAP binary has passed a small SfM smoke test.
+- GUI jobs keep `useGpu: False` when the server uses `/usr/bin/colmap`.
+- If the UI server is started with `GSL_COLMAP_BIN` pointing at the repo-local CUDA sidecar, new GUI uploads are planned with `pipeline.sfm.useGpu=True`.
 
 Viable upgrade paths:
 
@@ -126,7 +126,7 @@ Viable upgrade paths:
 
 Official COLMAP documentation notes that default Linux distribution packages do not come with CUDA support and require a manual source build for CUDA. It also documents CUDA/Docker options and GPU feature extraction/matching controls.
 
-### 2026-06-21 CUDA COLMAP Sidecar Plan
+### 2026-06-21 CUDA COLMAP Sidecar Build
 
 Chosen path: build COLMAP from source in WSL into a repo-local sidecar prefix, not over the Ubuntu package.
 
@@ -142,16 +142,24 @@ Build script:
 ./scripts/build-colmap-cuda-sidecar.sh
 ```
 
-Current prerequisite inventory:
+Prerequisite inventory:
 
 - present: `build-essential`, `git`, `g++`, `libssl-dev`, `/usr/local/cuda-12.8/bin/nvcc`
 - missing from PATH before any install: `cmake`, `ninja`
+- first CMake attempt also required `libopencv-dev` and `libcurand-dev-12-8`
 - Docker not installed, so the Docker CUDA path is not the short-term route
-- no system packages were installed by this inventory check
 
 The script defaults to COLMAP `4.0.4`, `CUDA_ENABLED=ON`, `GUI_ENABLED=OFF`, `OPENGL_ENABLED=OFF`, `CGAL_ENABLED=OFF`, and `CMAKE_CUDA_ARCHITECTURES=native`. It builds under `outputs/build/colmap-cuda/` and installs under `outputs/tools/colmap-cuda/`, both ignored by git.
 
-Expected validation sequence:
+Validated sidecar:
+
+```text
+outputs/tools/colmap-cuda/bin/colmap
+COLMAP 4.0.4 -- Structure-from-Motion and Multi-View Stereo
+(Commit 9c23f69 on 2026-04-27 with CUDA)
+```
+
+Validation sequence:
 
 ```bash
 python3 scripts/validate-colmap-binary.py --binary /usr/bin/colmap
@@ -159,7 +167,14 @@ python3 scripts/validate-colmap-binary.py --binary "$(pwd)/outputs/tools/colmap-
 python3 scripts/validate-colmap-binary.py --binary "$(pwd)/outputs/tools/colmap-cuda/bin/colmap" --allow-gpu --qt-offscreen
 ```
 
-Only after the GPU validation passes should `GSL_COLMAP_BIN` point at the sidecar for UI or pipeline runs.
+Result: pass. The GPU smoke created a SIFT GPU feature extractor and GPU feature matcher on device `0`. The same GPU validation also passes without `QT_QPA_PLATFORM=offscreen`, so the UI start command only needs `GSL_COLMAP_BIN`.
+
+Start the UI with the CUDA sidecar:
+
+```bash
+GSL_COLMAP_BIN="$(pwd)/outputs/tools/colmap-cuda/bin/colmap" \
+  python3 scripts/lab-ui-server.py --host 0.0.0.0 --port 8769
+```
 
 ## FFmpeg / ffprobe
 

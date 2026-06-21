@@ -490,6 +490,32 @@ def colmap_command(*args: str, env: dict[str, str] | None = None) -> list[str]:
     return [external_tool_binary("colmap", "GSL_COLMAP_BIN", env), *args]
 
 
+_COLMAP_OPTION_HELP_CACHE: dict[tuple[str, str], str] = {}
+
+
+def colmap_command_help(command_name: str) -> str:
+    binary = external_tool_binary("colmap", "GSL_COLMAP_BIN")
+    cache_key = (binary, command_name)
+    cached = _COLMAP_OPTION_HELP_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    result = run_command(colmap_command(command_name, "--help"), timeout_seconds=15)
+    help_text = "\n".join(
+        str(result.get(key) or "")
+        for key in ("stdout", "stderr")
+    )
+    _COLMAP_OPTION_HELP_CACHE[cache_key] = help_text
+    return help_text
+
+
+def colmap_option(command_name: str, legacy_name: str, current_name: str) -> str:
+    help_text = colmap_command_help(command_name)
+    if f"--{current_name}" in help_text:
+        return f"--{current_name}"
+    return f"--{legacy_name}"
+
+
 def run_command(command: list[str], timeout_seconds: int = 20, env: dict[str, str] | None = None) -> dict[str, Any]:
     executable = shutil.which(command[0], path=env.get("PATH") if env else None)
     if executable is None:
@@ -2914,6 +2940,28 @@ def run_colmap_sfm_attempt(
     sparse_dir.mkdir(parents=True, exist_ok=True)
     sift_use_gpu = "1" if profile.get("useGpu") else "0"
     matcher_kind = str(profile["matcherKind"])
+    feature_gpu_option = colmap_option("feature_extractor", "SiftExtraction.use_gpu", "FeatureExtraction.use_gpu")
+    feature_threads_option = colmap_option("feature_extractor", "SiftExtraction.num_threads", "FeatureExtraction.num_threads")
+    feature_max_image_size_option = colmap_option(
+        "feature_extractor",
+        "SiftExtraction.max_image_size",
+        "FeatureExtraction.max_image_size",
+    )
+    matcher_gpu_option = colmap_option(
+        "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
+        "SiftMatching.use_gpu",
+        "FeatureMatching.use_gpu",
+    )
+    matcher_threads_option = colmap_option(
+        "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
+        "SiftMatching.num_threads",
+        "FeatureMatching.num_threads",
+    )
+    matcher_guided_option = colmap_option(
+        "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
+        "SiftMatching.guided_matching",
+        "FeatureMatching.guided_matching",
+    )
     commands: dict[str, Any] = {}
     commands["featureExtractor"] = run_command(
         [
@@ -2924,11 +2972,11 @@ def run_colmap_sfm_attempt(
             str(colmap_image_dir),
             "--ImageReader.single_camera",
             "1",
-            "--SiftExtraction.use_gpu",
+            feature_gpu_option,
             sift_use_gpu,
-            "--SiftExtraction.num_threads",
+            feature_threads_option,
             str(profile["featureNumThreads"]),
-            "--SiftExtraction.max_image_size",
+            feature_max_image_size_option,
             str(profile["featureMaxImageSize"]),
             "--SiftExtraction.max_num_features",
             str(profile["featureMaxNumFeatures"]),
@@ -2961,11 +3009,11 @@ def run_colmap_sfm_attempt(
         *colmap_command("exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher"),
         "--database_path",
         str(database_path),
-        "--SiftMatching.use_gpu",
+        matcher_gpu_option,
         sift_use_gpu,
-        "--SiftMatching.num_threads",
+        matcher_threads_option,
         str(profile["matcherNumThreads"]),
-        "--SiftMatching.guided_matching",
+        matcher_guided_option,
         "1" if profile.get("guidedMatching") else "0",
     ]
     if matcher_kind == "exhaustive":

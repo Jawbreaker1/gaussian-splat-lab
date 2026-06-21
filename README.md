@@ -327,6 +327,13 @@ python3 scripts/validate-colmap-binary.py \
 
 Only set `GSL_COLMAP_BIN` after that sidecar validation passes. The default remains `/usr/bin/colmap`, which is the known-good CPU fallback.
 
+Start the UI with GPU SfM enabled:
+
+```bash
+GSL_COLMAP_BIN="$(pwd)/outputs/tools/colmap-cuda/bin/colmap" \
+  python3 scripts/lab-ui-server.py --host 0.0.0.0 --port 8769
+```
+
 List captures:
 
 ```bash

@@ -35,7 +35,7 @@ COLMAP 3.9.1 -- Structure-from-Motion and Multi-View Stereo
 
 ## CUDA Candidate Rule
 
-Any future CUDA COLMAP build must be installed side-by-side and validated before use:
+CUDA COLMAP builds must be installed side-by-side and validated before use:
 
 ```bash
 python3 scripts/validate-colmap-binary.py \
@@ -44,7 +44,26 @@ python3 scripts/validate-colmap-binary.py \
   --qt-offscreen
 ```
 
-Only after that passes should the UI or CLI be started with:
+Current result: pass.
+
+Validated binary:
+
+```text
+outputs/tools/colmap-cuda/bin/colmap
+COLMAP 4.0.4 -- Structure-from-Motion and Multi-View Stereo
+(Commit 9c23f69 on 2026-04-27 with CUDA)
+```
+
+Checks:
+
+- `colmap --help`: pass
+- CPU SIFT feature extraction/matching: pass
+- GPU SIFT feature extraction/matching: pass
+- GPU SIFT feature extraction/matching without `QT_QPA_PLATFORM=offscreen`: pass
+
+The validator supports both COLMAP 3.9's `SiftExtraction.*` / `SiftMatching.*` options and COLMAP 4.0's `FeatureExtraction.*` / `FeatureMatching.*` options.
+
+Start UI or CLI jobs with:
 
 ```bash
 GSL_COLMAP_BIN="$(pwd)/outputs/tools/colmap-cuda/bin/colmap"

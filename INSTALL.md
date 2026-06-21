@@ -241,8 +241,10 @@ Run the pipeline with that binary only when you choose to:
 
 ```bash
 GSL_COLMAP_BIN="$(pwd)/outputs/tools/colmap-cuda/bin/colmap" \
-  python3 scripts/lab-ui-server.py --host 127.0.0.1 --port 8769
+  python3 scripts/lab-ui-server.py --host 0.0.0.0 --port 8769
 ```
+
+When the UI server is started this way, newly uploaded GUI jobs are planned with `pipeline.sfm.useGpu=True`. Without `GSL_COLMAP_BIN`, GUI jobs keep the apt CPU fallback.
 
 or for a one-off CLI stage:
 
