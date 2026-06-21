@@ -1061,7 +1061,7 @@ function renderQueueItem(item) {
     const afterStage = document.createElement('button');
     afterStage.className = 'secondary-mini-action';
     afterStage.type = 'button';
-    afterStage.textContent = 'After stage';
+    afterStage.textContent = 'Stop after step';
     afterStage.disabled = item.status === 'cancel_requested' || queueActionBusy;
     afterStage.addEventListener('click', () => cancelQueueItem(item.id, true));
     actions.append(cancel, afterStage);
@@ -1138,7 +1138,7 @@ function renderRenderModal() {
   }
   els.renderModalProgressBar.style.width = `${Math.round(progress.percent)}%`;
   els.renderModalNote.textContent = item.status === 'cancel_requested'
-    ? 'Cancel has been requested. The current process is being stopped or the current stage is being allowed to finish.'
+    ? 'Stop has been requested. The current process is stopping, or this step is being allowed to finish before the next one starts.'
     : 'The server worker owns this render. You can leave the page open, add more jobs to the queue, or cancel this job.';
   els.renderCancelButton.disabled = queueActionBusy || item.status === 'cancel_requested';
   els.renderCancelAfterStageButton.disabled = queueActionBusy || item.status === 'cancel_requested';

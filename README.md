@@ -191,7 +191,7 @@ The UI is a local lab console with:
 - capture profile and quality strategy selection
 - automatic upload, job planning and queued stage-by-stage generation
 - an editable render queue for overnight batches: queued items can be reordered, edited, cancelled or removed before they start
-- a rendering modal for active jobs, with current stage, elapsed time, estimated remaining time and immediate or after-stage cancel controls
+- a rendering modal for active jobs, with current step, elapsed time, estimated remaining time and immediate or after-current-step stop controls
 - progress text, elapsed time and ETA for the full generation run
 - per-step cards that explain what is happening, what the step produces and which internal checks are running
 - live training progress from Nerfstudio logs when available, including iteration count and remaining time
