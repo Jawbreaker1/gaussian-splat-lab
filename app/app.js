@@ -16,6 +16,21 @@ const els = {
   wizardSelfCaptured: document.querySelector('#wizardSelfCaptured'),
   generatePipelineButton: document.querySelector('#generatePipelineButton'),
   wizardStatus: document.querySelector('#wizardStatus'),
+  queueSummary: document.querySelector('#queueSummary'),
+  queueWorkerStatus: document.querySelector('#queueWorkerStatus'),
+  queueList: document.querySelector('#queueList'),
+  renderModal: document.querySelector('#renderModal'),
+  renderModalTitle: document.querySelector('#renderModalTitle'),
+  renderModalSubtitle: document.querySelector('#renderModalSubtitle'),
+  renderModalMeta: document.querySelector('#renderModalMeta'),
+  renderModalStage: document.querySelector('#renderModalStage'),
+  renderModalEta: document.querySelector('#renderModalEta'),
+  renderModalProgressBar: document.querySelector('#renderModalProgressBar'),
+  renderModalNote: document.querySelector('#renderModalNote'),
+  renderCancelButton: document.querySelector('#renderCancelButton'),
+  renderCancelAfterStageButton: document.querySelector('#renderCancelAfterStageButton'),
+  renderModalMinimizeButton: document.querySelector('#renderModalMinimizeButton'),
+  renderModalRestoreButton: document.querySelector('#renderModalRestoreButton'),
   jobBox: document.querySelector('#jobBox'),
   preflightList: document.querySelector('#preflightList'),
   pipelineList: document.querySelector('#pipelineList'),
@@ -67,6 +82,12 @@ let activeJob = null;
 let runningStage = null;
 let autoRun = null;
 let autoRunTimer = null;
+let queueState = null;
+let queuePollingTimer = null;
+let queueActionBusy = false;
+let renderModalMinimized = false;
+let lastQueueSignature = '';
+let wizardBusy = false;
 let latestJobProgress = null;
 let progressPolling = false;
 let runningStageStartedAt = null;
@@ -325,6 +346,27 @@ function selectedSceneProfileKey() {
   return els.wizardSceneKind?.value || 'room';
 }
 
+function activeQueueItem() {
+  return queueState?.active
+    ?? queueState?.items?.find((item) => item.status === 'running' || item.status === 'cancel_requested')
+    ?? null;
+}
+
+function queueHasLiveWork() {
+  return Boolean(queueState?.items?.some((item) => ['queued', 'running', 'cancel_requested'].includes(item.status)));
+}
+
+function queueItemLabel(item) {
+  return item?.displayName || item?.captureId || item?.id || 'Render job';
+}
+
+function queueStatusType(status) {
+  if (status === 'complete') return 'pass';
+  if (status === 'running' || status === 'cancel_requested') return 'warning';
+  if (status === 'failed' || status === 'cancelled') return 'fail';
+  return 'neutral';
+}
+
 function sceneProfileFor(sceneKey = selectedSceneProfileKey()) {
   return state?.sceneProfiles?.[sceneKey] ?? fallbackSceneProfiles[sceneKey] ?? fallbackSceneProfiles.room;
 }
@@ -389,14 +431,23 @@ function totalEstimateSeconds(profile = selectedTrainingProfile(), sceneKey = se
 }
 
 function activeTrainingProfile() {
-  return autoRun?.trainingProfile || selectedTrainingProfile();
+  return activeQueueItem()?.qualityPreset || autoRun?.trainingProfile || selectedTrainingProfile();
+}
+
+function activeSceneProfileKey() {
+  return activeQueueItem()?.sceneKind || autoRun?.sceneKind || selectedSceneProfileKey();
 }
 
 function activeStageId() {
-  return runningStage || autoRun?.currentStage || null;
+  return runningStage || autoRun?.currentStage || activeQueueItem()?.currentStage || null;
 }
 
 function stageElapsedSeconds(stage) {
+  const queueItem = activeQueueItem();
+  if (queueItem?.currentStage === stage && queueItem.stageStartedAt) {
+    const started = Date.parse(queueItem.stageStartedAt);
+    if (Number.isFinite(started)) return Math.max(0, (Date.now() - started) / 1000);
+  }
   if (autoRun?.active && autoRun.currentStage === stage && autoRun.stageStartedAt) {
     return Math.max(0, (Date.now() - autoRun.stageStartedAt) / 1000);
   }
@@ -407,7 +458,7 @@ function stageElapsedSeconds(stage) {
 }
 
 function stageProgress(stage, trainingProgress = null) {
-  const estimate = stageEstimateSeconds(stage, activeTrainingProfile());
+  const estimate = stageEstimateSeconds(stage, activeTrainingProfile(), activeSceneProfileKey());
   if (stage === 'splat_training' && trainingProgress?.status === 'running') {
     const elapsed = Number(trainingProgress.elapsedSeconds || stageElapsedSeconds(stage));
     const total = Number(trainingProgress.estimatedTotalSeconds || estimate);
@@ -529,10 +580,10 @@ function updateWizardControls() {
   const file = els.videoFileInput.files?.[0] ?? null;
   const hasName = Boolean(els.wizardCaptureName.value.trim());
   const hasRights = els.wizardSelfCaptured.checked;
-  const running = Boolean(autoRun?.active);
-  els.generatePipelineButton.disabled = running || !file || !hasName || !hasRights;
-  els.generatePipelineButton.textContent = running ? 'Generating' : 'Generate Scene';
-  if (!running) {
+  const busy = Boolean(wizardBusy);
+  els.generatePipelineButton.disabled = busy || !file || !hasName || !hasRights;
+  els.generatePipelineButton.textContent = busy ? 'Adding' : 'Add to Queue';
+  if (!busy) {
     if (!file) {
       setWizardStatus('No video selected.');
     } else if (!hasRights) {
@@ -562,7 +613,7 @@ function updateImportControls() {
   const file = els.videoFileInput.files?.[0] ?? null;
   const licenseStatus = selectedLicenseCheck()?.status;
   const needsWarningAcceptance = licenseStatus === 'warning';
-  const running = Boolean(autoRun?.active);
+  const running = Boolean(autoRun?.active) || Boolean(activeQueueItem());
   els.acceptCaptureWarningRow.hidden = !needsWarningAcceptance;
   els.importVideoButton.disabled = running || !capture || !file || importingVideo || (needsWarningAcceptance && !els.acceptCaptureWarning.checked);
   els.importVideoButton.textContent = importingVideo ? 'Importing' : 'Import video';
@@ -720,7 +771,7 @@ function buildStageItem(gate, index, jobStages) {
     action.className = 'stage-action';
     action.type = 'button';
     action.textContent = runningStage === gate.id ? 'Running' : heavyStages.has(gate.id) ? 'Heavy run' : 'Run';
-    action.disabled = !activeJob || Boolean(runningStage) || Boolean(autoRun?.active);
+    action.disabled = !activeJob || Boolean(runningStage) || Boolean(autoRun?.active) || Boolean(activeQueueItem());
     action.title = heavyStages.has(gate.id) ? `${stageDisplayName(gate)} can place sustained load on CPU/GPU` : `Run ${stageDisplayName(gate)}`;
     action.addEventListener('click', () => runStage(gate.id, {
       acceptWarning: true,
@@ -772,7 +823,28 @@ function renderPipelineProgress(gates, jobStages) {
   els.pipelineProgressText.textContent = `${passed}/${gates.length} passed${warnings ? `, ${warnings} warning` : ''}`;
   els.pipelineProgressBar.style.width = `${percent}%`;
 
-  if (autoRun?.active) {
+  const queueItem = activeQueueItem();
+  if (queueItem) {
+    const current = currentStageId;
+    const queueLabel = queueItemLabel(queueItem);
+    if (current) {
+      const detail = stageDetails[current] ?? {};
+      const progress = stageProgress(current, trainingProgress);
+      if (current === 'splat_training' && progress.iteration && progress.iterations) {
+        els.pipelineCurrentStage.textContent = `${queueLabel}: training ${progress.percent.toFixed(1)}% (${progress.iteration}/${progress.iterations})`;
+        els.pipelineEtaText.textContent = `Elapsed ${formatDuration(progress.elapsed)} · remaining ${formatDuration(progress.remaining)} · ${progress.source}`;
+      } else {
+        els.pipelineCurrentStage.textContent = `${queueLabel}: ${stageDisplayName({ id: current })}`;
+        els.pipelineEtaText.textContent = `${detail.summary ?? 'Running'} · elapsed ${formatDuration(progress.elapsed)} · remaining ${formatDuration(progress.remaining)}`;
+      }
+    } else if (queueItem.status === 'cancel_requested') {
+      els.pipelineCurrentStage.textContent = `${queueLabel}: cancellation requested`;
+      els.pipelineEtaText.textContent = 'Waiting for the active process to stop';
+    } else {
+      els.pipelineCurrentStage.textContent = `${queueLabel}: starting`;
+      els.pipelineEtaText.textContent = `Estimated full run: ${formatDuration(queueItem.estimatedSeconds)}`;
+    }
+  } else if (autoRun?.active) {
     const current = currentStageId;
     if (current) {
       const detail = stageDetails[current] ?? {};
@@ -868,6 +940,213 @@ function renderJob() {
   );
 }
 
+function queueOverallProgress(item) {
+  if (!item) return { percent: 0, elapsed: 0, remaining: 0 };
+  const reports = item.reports ?? {};
+  const completed = automatedStageOrder.filter((stage) => ['pass', 'warning'].includes(reports[stage]?.status)).length;
+  let units = completed;
+  const current = item.currentStage;
+  if (current && automatedStageOrder.includes(current)) {
+    const progress = stageProgress(current, item.trainingProgress ?? null);
+    units = Math.max(units, automatedStageOrder.indexOf(current) + clamp(progress.percent / 100, 0, 0.98));
+  }
+  const percent = item.status === 'complete' ? 100 : clamp((units / automatedStageOrder.length) * 100, item.status === 'running' ? 1 : 0, 99);
+  const started = Date.parse(item.startedAt || item.stageStartedAt || '');
+  const elapsed = Number.isFinite(started) ? Math.max(0, (Date.now() - started) / 1000) : 0;
+  const remaining = Math.max(0, Number(item.estimatedSeconds || 0) - elapsed);
+  return { percent, elapsed, remaining };
+}
+
+function renderQueueMeta(container, entries) {
+  container.replaceChildren();
+  for (const [label, value] of entries) {
+    container.append(row(label, value));
+  }
+}
+
+function renderQueueItem(item) {
+  const article = document.createElement('article');
+  article.className = `queue-item queue-${queueStatusType(item.status)}`;
+  const head = document.createElement('div');
+  head.className = 'queue-item-head';
+  const title = document.createElement('strong');
+  title.textContent = queueItemLabel(item);
+  head.append(title, pill(item.status, queueStatusType(item.status)));
+
+  const meta = document.createElement('div');
+  meta.className = 'queue-item-meta';
+  meta.append(
+    row('Strategy', qualityPresetLabels[item.qualityPreset] ?? item.qualityPreset),
+    row('Scene', sceneProfileFor(item.sceneKind)?.label ?? item.sceneKind),
+    row('ETA', formatDuration(item.estimatedSeconds)),
+  );
+  if (item.currentStage) {
+    meta.append(row('Current', stageDisplayName({ id: item.currentStage })));
+  }
+  if (item.error) {
+    const error = document.createElement('div');
+    error.className = 'queue-error';
+    error.textContent = item.error;
+    meta.append(error);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'queue-actions';
+
+  if (item.status === 'queued') {
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.value = item.displayName || '';
+    nameInput.ariaLabel = 'Queue job name';
+    nameInput.addEventListener('change', () => patchQueueItem(item.id, { displayName: nameInput.value }));
+
+    const sceneSelect = document.createElement('select');
+    sceneSelect.ariaLabel = 'Queue scene profile';
+    for (const [key, profile] of Object.entries(state?.sceneProfiles ?? fallbackSceneProfiles)) {
+      const option = document.createElement('option');
+      option.value = key;
+      option.textContent = profile.label ?? key;
+      sceneSelect.append(option);
+    }
+    sceneSelect.value = item.sceneKind;
+    sceneSelect.addEventListener('change', () => patchQueueItem(item.id, { sceneKind: sceneSelect.value }));
+
+    const qualitySelect = document.createElement('select');
+    qualitySelect.ariaLabel = 'Queue generation strategy';
+    for (const key of ['splatfacto_reference', 'splatfacto_big_quality', 'quality_probe', 'splatfacto_ceiling']) {
+      const option = document.createElement('option');
+      option.value = key;
+      option.textContent = qualityPresetLabels[key] ?? key;
+      qualitySelect.append(option);
+    }
+    qualitySelect.value = item.qualityPreset;
+    qualitySelect.addEventListener('change', () => patchQueueItem(item.id, { qualityPreset: qualitySelect.value }));
+
+    const moveUp = document.createElement('button');
+    moveUp.className = 'secondary-mini-action';
+    moveUp.type = 'button';
+    moveUp.textContent = 'Up';
+    moveUp.addEventListener('click', () => moveQueueItem(item.id, 'up'));
+
+    const moveDown = document.createElement('button');
+    moveDown.className = 'secondary-mini-action';
+    moveDown.type = 'button';
+    moveDown.textContent = 'Down';
+    moveDown.addEventListener('click', () => moveQueueItem(item.id, 'down'));
+
+    const remove = document.createElement('button');
+    remove.className = 'danger-mini-action';
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => removeQueueItem(item.id));
+
+    actions.append(nameInput, sceneSelect, qualitySelect, moveUp, moveDown, remove);
+  } else if (item.status === 'running' || item.status === 'cancel_requested') {
+    const progress = queueOverallProgress(item);
+    const track = document.createElement('div');
+    track.className = 'stage-mini-track queue-track';
+    const bar = document.createElement('div');
+    bar.className = 'stage-mini-bar';
+    bar.style.width = `${Math.round(progress.percent)}%`;
+    track.append(bar);
+    meta.append(track);
+
+    const cancel = document.createElement('button');
+    cancel.className = 'danger-mini-action';
+    cancel.type = 'button';
+    cancel.textContent = item.status === 'cancel_requested' ? 'Cancelling' : 'Cancel';
+    cancel.disabled = item.status === 'cancel_requested' || queueActionBusy;
+    cancel.addEventListener('click', () => cancelQueueItem(item.id, false));
+
+    const afterStage = document.createElement('button');
+    afterStage.className = 'secondary-mini-action';
+    afterStage.type = 'button';
+    afterStage.textContent = 'After stage';
+    afterStage.disabled = item.status === 'cancel_requested' || queueActionBusy;
+    afterStage.addEventListener('click', () => cancelQueueItem(item.id, true));
+    actions.append(cancel, afterStage);
+  } else {
+    if (item.jobId && item.status === 'complete') {
+      const open = document.createElement('a');
+      open.className = 'secondary-mini-action link-action';
+      open.href = `/gallery?scene=${encodeURIComponent(item.jobId)}`;
+      open.textContent = 'Open';
+      actions.append(open);
+    }
+    const remove = document.createElement('button');
+    remove.className = 'secondary-mini-action';
+    remove.type = 'button';
+    remove.textContent = 'Clear';
+    remove.addEventListener('click', () => removeQueueItem(item.id));
+    actions.append(remove);
+  }
+
+  article.append(head, meta, actions);
+  return article;
+}
+
+function renderQueue() {
+  const items = queueState?.items ?? [];
+  const counts = queueState?.counts ?? {};
+  const running = counts.running || counts.cancel_requested || 0;
+  const queued = counts.queued || 0;
+  const complete = counts.complete || 0;
+  els.queueSummary.textContent = running || queued
+    ? `${running ? `${running} running · ` : ''}${queued} queued · ${formatDuration(items.filter((item) => item.status === 'queued').reduce((sum, item) => sum + Number(item.estimatedSeconds || 0), 0))} queued ETA`
+    : complete
+      ? `${complete} completed in history`
+      : 'No queued jobs';
+  els.queueWorkerStatus.textContent = activeQueueItem() ? 'running' : queued ? 'queued' : 'idle';
+  els.queueWorkerStatus.className = `pill ${activeQueueItem() ? 'warning' : queued ? 'neutral' : 'pass'}`;
+  els.queueList.replaceChildren();
+  if (!items.length) {
+    const empty = document.createElement('div');
+    empty.className = 'muted queue-empty';
+    empty.textContent = 'Queue is empty.';
+    els.queueList.append(empty);
+    return;
+  }
+  for (const item of items.slice(0, 16)) {
+    els.queueList.append(renderQueueItem(item));
+  }
+}
+
+function renderRenderModal() {
+  const item = activeQueueItem();
+  if (!item) {
+    els.renderModal.hidden = true;
+    els.renderModalRestoreButton.hidden = true;
+    renderModalMinimized = false;
+    return;
+  }
+  const progress = queueOverallProgress(item);
+  const current = item.currentStage;
+  const label = queueItemLabel(item);
+  els.renderModalTitle.textContent = item.status === 'cancel_requested' ? 'Cancelling render' : 'Rendering in progress';
+  els.renderModalSubtitle.textContent = label;
+  renderQueueMeta(els.renderModalMeta, [
+    ['Strategy', qualityPresetLabels[item.qualityPreset] ?? item.qualityPreset],
+    ['Scene', sceneProfileFor(item.sceneKind)?.label ?? item.sceneKind],
+    ['Job', item.jobId ?? item.id],
+    ['Elapsed', formatDuration(progress.elapsed)],
+  ]);
+  els.renderModalStage.textContent = current ? `${stageDisplayName({ id: current })}: ${stageDetails[current]?.summary ?? 'running'}` : 'Preparing render job';
+  if (current === 'splat_training' && item.trainingProgress?.status === 'running' && item.trainingProgress.iteration) {
+    els.renderModalEta.textContent = `${Number(item.trainingProgress.percent || 0).toFixed(1)}% · ${item.trainingProgress.iteration}/${item.trainingProgress.iterations} iterations · remaining ${formatDuration(item.trainingProgress.remainingSeconds ?? progress.remaining)}`;
+  } else {
+    els.renderModalEta.textContent = `Overall ${Math.round(progress.percent)}% · estimated remaining ${formatDuration(progress.remaining)}`;
+  }
+  els.renderModalProgressBar.style.width = `${Math.round(progress.percent)}%`;
+  els.renderModalNote.textContent = item.status === 'cancel_requested'
+    ? 'Cancel has been requested. The current process is being stopped or the current stage is being allowed to finish.'
+    : 'The server worker owns this render. You can leave the page open, add more jobs to the queue, or cancel this job.';
+  els.renderCancelButton.disabled = queueActionBusy || item.status === 'cancel_requested';
+  els.renderCancelAfterStageButton.disabled = queueActionBusy || item.status === 'cancel_requested';
+  els.renderModal.hidden = renderModalMinimized;
+  els.renderModalRestoreButton.hidden = !renderModalMinimized;
+  els.renderModalRestoreButton.textContent = `${current ? stageDisplayName({ id: current }) : 'Rendering'} · ${Math.round(progress.percent)}%`;
+}
+
 function renderAll() {
   els.machineLabel.textContent = state?.machineLabel ?? 'RTX workstation';
   renderCaptures();
@@ -875,6 +1154,8 @@ function renderAll() {
   renderStages();
   renderCompliance();
   renderJob();
+  renderQueue();
+  renderRenderModal();
   renderViewerMeta();
   loadActiveViewerArtifact();
 }
@@ -889,8 +1170,53 @@ async function loadState() {
   const response = await fetch('/api/state');
   if (!response.ok) throw new Error(`state ${response.status}`);
   state = await response.json();
-  activeJob = state.latestJob ?? null;
+  queueState = state.renderQueue ?? null;
+  const activeItem = activeQueueItem();
+  activeJob = activeItem?.job ?? state.latestJob ?? null;
+  latestJobProgress = activeItem
+    ? { job: activeItem.job, reports: activeItem.reports, trainingProgress: activeItem.trainingProgress }
+    : null;
   renderAll();
+}
+
+function applyQueueState(nextQueue) {
+  const previousSignature = lastQueueSignature;
+  queueState = nextQueue;
+  const activeItem = activeQueueItem();
+  activeJob = activeItem?.job ?? activeJob ?? state?.latestJob ?? null;
+  latestJobProgress = activeItem
+    ? { job: activeItem.job, reports: activeItem.reports, trainingProgress: activeItem.trainingProgress }
+    : null;
+  const nextSignature = JSON.stringify((queueState?.items ?? []).map((item) => [
+    item.id,
+    item.status,
+    item.currentStage,
+    item.jobId,
+    item.updatedAt,
+  ]));
+  lastQueueSignature = nextSignature;
+  renderQueue();
+  renderRenderModal();
+  renderStages();
+  renderJob();
+  if (previousSignature && previousSignature !== nextSignature && !activeItem && !queueHasLiveWork()) {
+    loadState().catch(() => {});
+  }
+}
+
+async function pollQueue() {
+  try {
+    const response = await fetch('/api/queue', { cache: 'no-store' });
+    if (!response.ok) return;
+    applyQueueState(await response.json());
+  } catch {
+    // Queue polling is best-effort; the server-side queue remains authoritative.
+  }
+}
+
+function startQueuePolling() {
+  if (queuePollingTimer) return;
+  queuePollingTimer = window.setInterval(pollQueue, 2000);
 }
 
 async function importVideo() {
@@ -956,6 +1282,65 @@ async function createJob(captureId = null, options = {}) {
   } finally {
     els.planJobButton.disabled = false;
   }
+}
+
+async function queueRequest(url, options = {}) {
+  queueActionBusy = true;
+  renderQueue();
+  renderRenderModal();
+  try {
+    const response = await fetch(url, {
+      headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+      ...options,
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || `queue ${response.status}`);
+    if (payload.queue) applyQueueState(payload.queue);
+    return payload;
+  } finally {
+    queueActionBusy = false;
+    renderQueue();
+    renderRenderModal();
+  }
+}
+
+async function enqueueCapture(captureId, profile, sceneKind, displayName) {
+  return queueRequest('/api/queue/items', {
+    method: 'POST',
+    body: JSON.stringify({
+      captureId,
+      qualityPreset: profile,
+      sceneKind,
+      displayName,
+    }),
+  });
+}
+
+async function patchQueueItem(itemId, patch) {
+  return queueRequest(`/api/queue/items/${encodeURIComponent(itemId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  });
+}
+
+async function moveQueueItem(itemId, direction) {
+  return queueRequest(`/api/queue/items/${encodeURIComponent(itemId)}/move`, {
+    method: 'POST',
+    body: JSON.stringify({ direction }),
+  });
+}
+
+async function removeQueueItem(itemId) {
+  return queueRequest(`/api/queue/items/${encodeURIComponent(itemId)}`, {
+    method: 'DELETE',
+  });
+}
+
+async function cancelQueueItem(itemId, afterCurrentStage = false) {
+  return queueRequest(`/api/queue/items/${encodeURIComponent(itemId)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ afterCurrentStage }),
+  });
 }
 
 async function runStage(stage, options = {}) {
@@ -1065,18 +1450,10 @@ function startAutoRunTimer() {
 
 async function generatePipeline() {
   const file = els.videoFileInput.files?.[0] ?? null;
-  if (!file || autoRun?.active) return;
+  if (!file || wizardBusy) return;
   const profile = selectedTrainingProfile();
-  autoRun = {
-    active: true,
-    trainingProfile: profile,
-    sceneKind: selectedSceneProfileKey(),
-    currentStage: null,
-    currentIndex: 0,
-    startedAt: Date.now(),
-    stageStartedAt: Date.now(),
-  };
-  startAutoRunTimer();
+  const sceneKind = selectedSceneProfileKey();
+  wizardBusy = true;
   updateWizardControls();
   setWizardStatus(`Uploading ${file.name}`, 'neutral');
   try {
@@ -1084,25 +1461,9 @@ async function generatePipeline() {
     captureSelectionTouched = true;
     await loadState();
     els.captureSelect.value = upload.capture.id;
-    setWizardStatus('Planning job', 'neutral');
-    await createJob(upload.capture.id, { silent: true });
-
-    for (let index = 0; index < automatedStageOrder.length; index += 1) {
-      const stage = automatedStageOrder[index];
-      autoRun.currentStage = stage;
-      autoRun.currentIndex = index;
-      autoRun.stageStartedAt = Date.now();
-      setWizardStatus(`${stageDisplayName({ id: stage })}: ${stageDetails[stage]?.summary ?? 'running'} ETA ${formatDuration(estimateRemainingSeconds())}`, 'neutral');
-      await runStage(stage, {
-        silent: true,
-        acceptWarning: true,
-        allowHeavy: heavyStages.has(stage),
-        trainingProfile: stage === 'splat_training' ? profile : null,
-      });
-    }
-
-    setWizardStatus('Generation complete. The scene is ready in Render mode.', 'pass');
-    setViewerMode('spark');
+    setWizardStatus('Adding render job to queue', 'neutral');
+    await enqueueCapture(upload.capture.id, profile, sceneKind, els.wizardCaptureName.value.trim());
+    setWizardStatus('Added to render queue. You can add another video while the worker runs.', 'pass');
     els.videoFileInput.value = '';
   } catch (error) {
     setWizardStatus(error.message, 'fail');
@@ -1112,9 +1473,7 @@ async function generatePipeline() {
     message.textContent = error.message;
     els.jobBox.append(message);
   } finally {
-    autoRun = null;
-    window.clearInterval(autoRunTimer);
-    autoRunTimer = null;
+    wizardBusy = false;
     updateWizardControls();
     renderStages();
   }
@@ -2036,6 +2395,22 @@ els.generatePipelineButton.addEventListener('click', generatePipeline);
 els.acceptCaptureWarning.addEventListener('change', updateImportControls);
 els.importVideoButton.addEventListener('click', importVideo);
 els.planJobButton.addEventListener('click', () => createJob());
+els.renderCancelButton.addEventListener('click', () => {
+  const item = activeQueueItem();
+  if (item) cancelQueueItem(item.id, false);
+});
+els.renderCancelAfterStageButton.addEventListener('click', () => {
+  const item = activeQueueItem();
+  if (item) cancelQueueItem(item.id, true);
+});
+els.renderModalMinimizeButton.addEventListener('click', () => {
+  renderModalMinimized = true;
+  renderRenderModal();
+});
+els.renderModalRestoreButton.addEventListener('click', () => {
+  renderModalMinimized = false;
+  renderRenderModal();
+});
 
 requestAnimationFrame(drawPreviewFrame);
 setNavigationSensitivity(defaultNavigationSensitivity * 100);
@@ -2046,6 +2421,7 @@ const bootPromise = loadState().catch((error) => {
   message.textContent = error.message;
   els.jobBox.append(message);
 });
+startQueuePolling();
 
 if (new URLSearchParams(window.location.search).has('waitForViewer')) {
   await bootPromise;

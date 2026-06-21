@@ -96,6 +96,17 @@
             </section>
           </div>
 
+          <section class="render-queue" aria-labelledby="queueTitle">
+            <div class="queue-head">
+              <div>
+                <h3 id="queueTitle">Render queue</h3>
+                <span id="queueSummary">No queued jobs</span>
+              </div>
+              <span class="pill neutral" id="queueWorkerStatus">idle</span>
+            </div>
+            <div class="queue-list" id="queueList"></div>
+          </section>
+
           <details class="collapsible" id="manualSourceControls">
             <summary>Advanced</summary>
 
@@ -252,6 +263,37 @@
         </details>
       </main>
     </div>
+
+    <div class="render-modal-backdrop" id="renderModal" hidden>
+      <section class="render-modal" role="dialog" aria-modal="true" aria-labelledby="renderModalTitle">
+        <div class="render-modal-head">
+          <div>
+            <h2 id="renderModalTitle">Rendering in progress</h2>
+            <span id="renderModalSubtitle">Preparing queue</span>
+          </div>
+          <button class="secondary-mini-action" id="renderModalMinimizeButton" type="button">Minimize</button>
+        </div>
+        <div class="render-modal-body">
+          <div class="render-modal-grid" id="renderModalMeta"></div>
+          <div class="pipeline-progress modal-progress" aria-label="Active render progress">
+            <div class="pipeline-progress-copy">
+              <span id="renderModalStage">Waiting for next stage</span>
+              <span id="renderModalEta">ETA pending</span>
+            </div>
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-bar" id="renderModalProgressBar"></div>
+            </div>
+          </div>
+          <div class="render-modal-note" id="renderModalNote"></div>
+        </div>
+        <div class="render-modal-actions">
+          <button class="danger-action" id="renderCancelButton" type="button">Cancel render</button>
+          <button class="secondary-action" id="renderCancelAfterStageButton" type="button">Cancel after stage</button>
+        </div>
+      </section>
+    </div>
+
+    <button class="render-modal-chip" id="renderModalRestoreButton" type="button" hidden>Rendering</button>
 
     <script src="/app.js" type="module"></script>
   </body>

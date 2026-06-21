@@ -11,9 +11,12 @@ import mimetypes
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -29,6 +32,7 @@ NODE_MODULES_ROOT = REPO_ROOT / "node_modules"
 CAPTURE_MANIFEST = REPO_ROOT / "data/manifests/captures.example.json"
 LOCAL_CAPTURE_MANIFEST = REPO_ROOT / "data/tmp/ui-captures.json"
 EFFECTIVE_CAPTURE_MANIFEST = REPO_ROOT / "data/tmp/ui-effective-captures.json"
+RENDER_QUEUE_PATH = REPO_ROOT / "data/tmp/render-queue.json"
 FRAMEWORK_MANIFEST = REPO_ROOT / "data/manifests/framework-evaluation.json"
 GATES_MANIFEST = REPO_ROOT / "data/manifests/pipeline-gates.json"
 JOBS_DIR = REPO_ROOT / "outputs/jobs"
@@ -37,6 +41,13 @@ RTX_EVIDENCE = REPO_ROOT / "docs/validation/phase-0-rtx-workstation-wsl-output.m
 PIPELINE_SCRIPT = REPO_ROOT / "scripts/lab-pipeline.py"
 VENV_PYTHON = REPO_ROOT / ".venv/bin/python"
 RUNNABLE_STAGES = {"framework_license", "environment", "intake", "frame_sampling", "sfm", "splat_training", "packaging", "viewer", "quality_report"}
+AUTOMATED_STAGE_ORDER = ["framework_license", "environment", "intake", "frame_sampling", "sfm", "splat_training", "packaging", "viewer", "quality_report"]
+HEAVY_STAGES = {"sfm", "splat_training", "viewer"}
+QUEUE_LOCK = threading.RLock()
+QUEUE_WAKE_EVENT = threading.Event()
+QUEUE_STOP_EVENT = threading.Event()
+QUEUE_WORKER_THREAD: threading.Thread | None = None
+ACTIVE_QUEUE_PROCESSES: dict[str, subprocess.Popen[Any]] = {}
 TRAINING_STAGE_TIMEOUTS = {
     "smoke": 30 * 60,
     "baseline": 45 * 60,
@@ -303,6 +314,628 @@ def write_json(path: Path, value: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         json.dump(value, handle, indent=2)
         handle.write("\n")
+
+
+def atomic_write_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(f"{path.suffix}.{uuid.uuid4().hex}.tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(value, handle, indent=2)
+        handle.write("\n")
+    tmp_path.replace(path)
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def load_render_queue_unlocked() -> dict[str, Any]:
+    if not RENDER_QUEUE_PATH.exists():
+        return {"schemaVersion": 1, "updatedAt": utc_now_iso(), "items": []}
+    try:
+        queue = read_json(RENDER_QUEUE_PATH)
+    except Exception:
+        queue = {"schemaVersion": 1, "updatedAt": utc_now_iso(), "items": []}
+    if not isinstance(queue.get("items"), list):
+        queue["items"] = []
+    queue["schemaVersion"] = 1
+    return queue
+
+
+def save_render_queue_unlocked(queue: dict[str, Any]) -> None:
+    queue["schemaVersion"] = 1
+    queue["updatedAt"] = utc_now_iso()
+    atomic_write_json(RENDER_QUEUE_PATH, queue)
+
+
+def load_render_queue() -> dict[str, Any]:
+    with QUEUE_LOCK:
+        return load_render_queue_unlocked()
+
+
+def save_render_queue(queue: dict[str, Any]) -> None:
+    with QUEUE_LOCK:
+        save_render_queue_unlocked(queue)
+
+
+def find_queue_item(queue: dict[str, Any], item_id: str) -> dict[str, Any]:
+    for item in queue.get("items", []):
+        if isinstance(item, dict) and item.get("id") == item_id:
+            return item
+    raise ValueError("queue item not found")
+
+
+def queue_item_estimate_seconds(quality_preset: str, scene_kind: str) -> int:
+    training_estimates = {
+        "quality_probe": 12 * 60,
+        "rtx_high_quality": 55 * 60,
+        "rtx_ultra_quality": 2 * 60 * 60,
+        "rtx_stable_quality": 3 * 60 * 60,
+        "rtx_max_quality": 5 * 60 * 60,
+        "splatfacto_reference": 60 * 60,
+        "splatfacto_big_quality": 2 * 60 * 60,
+        "splatfacto_ceiling": 3 * 60 * 60,
+    }
+    stage_estimates = {
+        "framework_license": 8,
+        "environment": 15,
+        "intake": 8,
+        "frame_sampling": 90,
+        "sfm": 12 * 60,
+        "packaging": 20,
+        "viewer": 35,
+        "quality_report": 10,
+    }
+    scene = UI_SCENE_PROFILES.get(scene_kind, UI_SCENE_PROFILES["room"])
+    multiplier = float(scene.get("estimateMultiplier", 1.0) or 1.0)
+    total = 0.0
+    for stage in AUTOMATED_STAGE_ORDER:
+        if stage == "splat_training":
+            total += training_estimates.get(quality_preset, 12 * 60) * multiplier
+        elif stage in {"frame_sampling", "sfm"}:
+            total += stage_estimates.get(stage, 30) * multiplier
+        else:
+            total += stage_estimates.get(stage, 30)
+    return int(total)
+
+
+def queue_status_counts(items: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in items:
+        status = str(item.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def queue_position(queue: dict[str, Any], item_id: str) -> int:
+    queued = [
+        item
+        for item in queue.get("items", [])
+        if isinstance(item, dict) and item.get("status") == "queued"
+    ]
+    for index, item in enumerate(queued, start=1):
+        if item.get("id") == item_id:
+            return index
+    return 0
+
+
+def capture_by_id(capture_id: str) -> dict[str, Any]:
+    captures = read_json(active_capture_manifest()).get("captures", [])
+    for capture in captures:
+        if isinstance(capture, dict) and capture.get("id") == capture_id:
+            return capture
+    raise ValueError(f"capture {capture_id!r} not found")
+
+
+def capture_source_exists(capture_id: str) -> bool:
+    pipeline = load_pipeline_module()
+    capture = capture_by_id(capture_id)
+    target = pipeline.capture_source_path(capture, REPO_ROOT)
+    return bool(target and target.exists())
+
+
+def apply_generation_options_to_capture(
+    capture: dict[str, Any],
+    *,
+    quality_preset: str,
+    scene_kind: str,
+    display_name: str | None = None,
+) -> dict[str, Any]:
+    updated = copy.deepcopy(capture)
+    quality, scene_profile, normalized_scene = apply_scene_profile(quality_preset, scene_kind)
+    sfm_controls = quality.get("sfm", {}) if isinstance(quality.get("sfm"), dict) else {}
+    if display_name:
+        updated["displayName"] = display_name
+    updated.setdefault("capture", {})
+    updated["capture"]["subject"] = scene_profile["subject"]
+    updated["capture"]["motion"] = scene_profile["motion"]
+    updated["capture"]["expectedResolution"] = updated["capture"].get("expectedResolution") or "source video"
+    updated["pipeline"] = {
+        "frameSampling": {
+            "targetFps": quality["targetFps"],
+            "maxFrames": quality["maxFrames"],
+            "sceneProfile": normalized_scene,
+        },
+        "sfm": {
+            "backend": "colmap",
+            "requiresExplicitHeavyApproval": True,
+            "sceneProfile": normalized_scene,
+            **sfm_controls,
+        },
+        "training": {
+            "backend": quality.get("trainingBackend", "gsplat"),
+            "targetWorker": "windows-rtx-5090",
+            "profile": quality["trainingProfile"],
+            "requiresExplicitHeavyApproval": True,
+        },
+        "packaging": {
+            "preferredFormats": ["ply", "viewer-manifest"],
+        },
+    }
+    updated.setdefault("ui", {})
+    updated["ui"].update(
+        {
+            "sceneKind": normalized_scene,
+            "sceneProfileLabel": scene_profile["label"],
+            "sceneProfileDescription": scene_profile["description"],
+            "qualityPreset": quality_preset,
+        }
+    )
+    return updated
+
+
+def create_job_for_queue_item(item: dict[str, Any]) -> dict[str, Any]:
+    pipeline = load_pipeline_module()
+    capture_id = str(item.get("captureId") or "")
+    source_capture = capture_by_id(capture_id)
+    capture = apply_generation_options_to_capture(
+        source_capture,
+        quality_preset=str(item.get("qualityPreset") or "quality_probe"),
+        scene_kind=str(item.get("sceneKind") or "room"),
+        display_name=str(item.get("displayName") or source_capture.get("displayName") or capture_id),
+    )
+    selection = pipeline.CaptureSelection(manifest_path=active_capture_manifest(), capture=capture)
+    job = pipeline.build_job(selection, REPO_ROOT)
+    job_id = str(job["job"]["id"])
+    job_dir = JOBS_DIR / job_id
+    if job_dir.exists():
+        job["job"]["id"] = f"{job_id}-{str(item.get('id', uuid.uuid4().hex))[:8]}"
+        job_dir = JOBS_DIR / job["job"]["id"]
+    job_path = job_dir / "job.json"
+    pipeline.write_json(job_path, job)
+    job["jobPath"] = str(job_path)
+    return job
+
+
+def create_queue_item(payload: dict[str, Any]) -> dict[str, Any]:
+    capture_id = payload.get("captureId")
+    if not isinstance(capture_id, str) or not capture_id:
+        raise ValueError("captureId is required")
+    if not capture_source_exists(capture_id):
+        raise ValueError("capture source file is missing")
+    capture = capture_by_id(capture_id)
+    quality_preset = str(payload.get("qualityPreset") or capture.get("ui", {}).get("qualityPreset") or "quality_probe")
+    if quality_preset not in UI_QUALITY_PRESETS:
+        raise ValueError("qualityPreset is not supported")
+    scene_kind = str(payload.get("sceneKind") or capture.get("ui", {}).get("sceneKind") or "room")
+    if scene_kind not in UI_SCENE_PROFILES:
+        raise ValueError("sceneKind is not supported")
+    display_name = str(payload.get("displayName") or capture.get("displayName") or capture_id).strip()
+    now = utc_now_iso()
+    item = {
+        "id": f"queue-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}",
+        "captureId": capture_id,
+        "displayName": display_name,
+        "qualityPreset": quality_preset,
+        "sceneKind": scene_kind,
+        "status": "queued",
+        "createdAt": now,
+        "updatedAt": now,
+        "estimatedSeconds": queue_item_estimate_seconds(quality_preset, scene_kind),
+        "jobPath": None,
+        "jobId": None,
+        "currentStage": None,
+        "currentStageIndex": None,
+        "stageStartedAt": None,
+        "startedAt": None,
+        "finishedAt": None,
+        "cancelRequested": False,
+        "cancelAfterCurrentStage": False,
+        "error": None,
+        "stageResults": [],
+    }
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        queue["items"].append(item)
+        save_render_queue_unlocked(queue)
+    QUEUE_WAKE_EVENT.set()
+    return item
+
+
+def update_queue_item(item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        item = find_queue_item(queue, item_id)
+        if item.get("status") != "queued":
+            raise ValueError("only queued jobs can be edited")
+        if "displayName" in payload:
+            display_name = str(payload.get("displayName") or "").strip()
+            if not display_name:
+                raise ValueError("displayName cannot be empty")
+            item["displayName"] = display_name
+        if "qualityPreset" in payload:
+            quality_preset = str(payload.get("qualityPreset") or "")
+            if quality_preset not in UI_QUALITY_PRESETS:
+                raise ValueError("qualityPreset is not supported")
+            item["qualityPreset"] = quality_preset
+        if "sceneKind" in payload:
+            scene_kind = str(payload.get("sceneKind") or "")
+            if scene_kind not in UI_SCENE_PROFILES:
+                raise ValueError("sceneKind is not supported")
+            item["sceneKind"] = scene_kind
+        item["estimatedSeconds"] = queue_item_estimate_seconds(str(item["qualityPreset"]), str(item["sceneKind"]))
+        item["updatedAt"] = utc_now_iso()
+        save_render_queue_unlocked(queue)
+        return item
+
+
+def remove_queue_item(item_id: str) -> dict[str, Any]:
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        item = find_queue_item(queue, item_id)
+        if item.get("status") in {"running", "cancel_requested"}:
+            raise ValueError("cancel the running job instead of removing it")
+        queue["items"] = [
+            existing
+            for existing in queue.get("items", [])
+            if not (isinstance(existing, dict) and existing.get("id") == item_id)
+        ]
+        save_render_queue_unlocked(queue)
+    return {"status": "removed", "itemId": item_id}
+
+
+def move_queue_item(item_id: str, direction: str) -> dict[str, Any]:
+    if direction not in {"up", "down"}:
+        raise ValueError("direction must be up or down")
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        items = [item for item in queue.get("items", []) if isinstance(item, dict)]
+        index = next((i for i, item in enumerate(items) if item.get("id") == item_id), None)
+        if index is None:
+            raise ValueError("queue item not found")
+        if items[index].get("status") != "queued":
+            raise ValueError("only queued jobs can be reordered")
+        step = -1 if direction == "up" else 1
+        swap_index = index + step
+        while 0 <= swap_index < len(items) and items[swap_index].get("status") != "queued":
+            swap_index += step
+        if not 0 <= swap_index < len(items):
+            return items[index]
+        items[index], items[swap_index] = items[swap_index], items[index]
+        queue["items"] = items
+        save_render_queue_unlocked(queue)
+        return items[swap_index]
+
+
+def mark_queue_item_cancel_requested(item_id: str, after_current_stage: bool = False) -> dict[str, Any]:
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        item = find_queue_item(queue, item_id)
+        if item.get("status") == "queued":
+            item["status"] = "cancelled"
+            item["finishedAt"] = utc_now_iso()
+        elif item.get("status") in {"running", "cancel_requested"}:
+            item["status"] = "cancel_requested"
+            item["cancelRequested"] = True
+            item["cancelAfterCurrentStage"] = after_current_stage
+        else:
+            raise ValueError("only queued or running jobs can be cancelled")
+        item["updatedAt"] = utc_now_iso()
+        save_render_queue_unlocked(queue)
+
+    process = ACTIVE_QUEUE_PROCESSES.get(item_id)
+    if process is not None and not after_current_stage and process.poll() is None:
+        terminate_process_group(process)
+    QUEUE_WAKE_EVENT.set()
+    return item
+
+
+def terminate_process_group(process: subprocess.Popen[Any]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except Exception:
+        process.terminate()
+
+
+def kill_process_group(process: subprocess.Popen[Any]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except Exception:
+        process.kill()
+
+
+def queue_item_job_payload(item: dict[str, Any]) -> dict[str, Any] | None:
+    raw_path = item.get("jobPath")
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.exists():
+        return None
+    try:
+        progress = job_progress(path)
+        return progress["job"]
+    except Exception:
+        return None
+
+
+def queue_item_progress_payload(item: dict[str, Any]) -> dict[str, Any] | None:
+    raw_path = item.get("jobPath")
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.exists():
+        return None
+    try:
+        return job_progress(path)
+    except Exception:
+        return None
+
+
+def public_queue_item(item: dict[str, Any], queue: dict[str, Any]) -> dict[str, Any]:
+    payload = copy.deepcopy(item)
+    payload["position"] = queue_position(queue, str(item.get("id") or ""))
+    progress = queue_item_progress_payload(item)
+    if progress:
+        payload["job"] = progress.get("job")
+        payload["reports"] = progress.get("reports")
+        payload["trainingProgress"] = progress.get("trainingProgress")
+    return payload
+
+
+def render_queue_state() -> dict[str, Any]:
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        items = [item for item in queue.get("items", []) if isinstance(item, dict)]
+        public_items = [public_queue_item(item, queue) for item in items]
+    active = next((item for item in public_items if item.get("status") in {"running", "cancel_requested"}), None)
+    queued = [item for item in public_items if item.get("status") == "queued"]
+    return {
+        "schemaVersion": 1,
+        "updatedAt": queue.get("updatedAt"),
+        "items": public_items,
+        "active": active,
+        "queuedCount": len(queued),
+        "counts": queue_status_counts(items),
+        "worker": {
+            "running": bool(QUEUE_WORKER_THREAD and QUEUE_WORKER_THREAD.is_alive()),
+            "concurrency": 1,
+        },
+    }
+
+
+def next_queued_item() -> dict[str, Any] | None:
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        if any(
+            isinstance(item, dict) and item.get("status") in {"running", "cancel_requested"}
+            for item in queue.get("items", [])
+        ):
+            return None
+        for item in queue.get("items", []):
+            if isinstance(item, dict) and item.get("status") == "queued":
+                return copy.deepcopy(item)
+    return None
+
+
+def update_queue_item_fields(item_id: str, **fields: Any) -> dict[str, Any]:
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        item = find_queue_item(queue, item_id)
+        item.update(fields)
+        item["updatedAt"] = utc_now_iso()
+        save_render_queue_unlocked(queue)
+        return copy.deepcopy(item)
+
+
+def queue_item_cancel_requested(item_id: str) -> dict[str, Any] | None:
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        try:
+            item = find_queue_item(queue, item_id)
+        except ValueError:
+            return None
+        if item.get("status") in {"cancel_requested", "cancelled"} or item.get("cancelRequested"):
+            return copy.deepcopy(item)
+        return None
+
+
+def run_queue_stage(item: dict[str, Any], job_path: Path, stage: str) -> dict[str, Any]:
+    item_id = str(item["id"])
+    training_profile = str(item.get("qualityPreset") or "")
+    command = [pipeline_python(), str(PIPELINE_SCRIPT), "run-stage", stage, "--job", str(job_path), "--accept-warning"]
+    if stage in HEAVY_STAGES:
+        command.append("--allow-heavy")
+    if stage == "splat_training" and training_profile:
+        command.extend(["--training-profile", training_profile])
+    log_path = job_path.parent / "logs" / f"queue-{stage}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timeout_seconds = stage_timeout(stage, training_profile if stage == "splat_training" else None)
+    started = time.monotonic()
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        log_handle.write(f"queue_item={item_id}\nstage={stage}\ncommand={' '.join(command)}\n\n")
+        log_handle.flush()
+        process = subprocess.Popen(
+            command,
+            cwd=REPO_ROOT,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        ACTIVE_QUEUE_PROCESSES[item_id] = process
+        try:
+            while True:
+                return_code = process.poll()
+                cancel_item = queue_item_cancel_requested(item_id)
+                if cancel_item and not cancel_item.get("cancelAfterCurrentStage") and return_code is None:
+                    terminate_process_group(process)
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        kill_process_group(process)
+                        process.wait(timeout=10)
+                    return_code = process.returncode
+                    break
+                if return_code is not None:
+                    break
+                if time.monotonic() - started > timeout_seconds:
+                    terminate_process_group(process)
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        kill_process_group(process)
+                        process.wait(timeout=10)
+                    return_code = process.returncode
+                    break
+                time.sleep(1)
+        finally:
+            ACTIVE_QUEUE_PROCESSES.pop(item_id, None)
+
+    report_path = job_path.parent / "reports" / f"{stage}.json"
+    report = safe_read_report(report_path)
+    return {
+        "stage": stage,
+        "returnCode": process.returncode,
+        "elapsedSeconds": round(time.monotonic() - started, 3),
+        "logPath": str(log_path),
+        "reportSummary": summarize_stage_report(report),
+    }
+
+
+def run_queue_item(item: dict[str, Any]) -> None:
+    item_id = str(item["id"])
+    now = utc_now_iso()
+    try:
+        job = create_job_for_queue_item(item)
+        job_path = Path(job["jobPath"])
+        update_queue_item_fields(
+            item_id,
+            status="running",
+            startedAt=now,
+            jobPath=str(job_path),
+            jobId=job["job"]["id"],
+            error=None,
+            stageResults=[],
+        )
+    except Exception as exc:  # noqa: BLE001 - persist setup failures for the UI
+        update_queue_item_fields(
+            item_id,
+            status="failed",
+            finishedAt=utc_now_iso(),
+            error=str(exc),
+        )
+        return
+
+    stage_results: list[dict[str, Any]] = []
+    for index, stage in enumerate(AUTOMATED_STAGE_ORDER):
+        cancel_item = queue_item_cancel_requested(item_id)
+        if cancel_item and cancel_item.get("cancelAfterCurrentStage") is not True:
+            update_queue_item_fields(item_id, status="cancelled", finishedAt=utc_now_iso(), currentStage=None)
+            return
+        update_queue_item_fields(
+            item_id,
+            status="cancel_requested" if cancel_item else "running",
+            currentStage=stage,
+            currentStageIndex=index,
+            stageStartedAt=utc_now_iso(),
+        )
+        result = run_queue_stage(item, job_path, stage)
+        stage_results.append(result)
+        update_queue_item_fields(item_id, stageResults=stage_results)
+
+        cancel_item = queue_item_cancel_requested(item_id)
+        if cancel_item:
+            update_queue_item_fields(item_id, status="cancelled", finishedAt=utc_now_iso(), currentStage=None)
+            return
+
+        summary_status = result.get("reportSummary", {}).get("status") if isinstance(result.get("reportSummary"), dict) else None
+        if result.get("returnCode") not in {0, None}:
+            update_queue_item_fields(
+                item_id,
+                status="failed",
+                finishedAt=utc_now_iso(),
+                currentStage=None,
+                error=f"{stage} failed; see {result.get('logPath')}",
+            )
+            return
+        if summary_status not in {"pass", "warning", "setup_gap"}:
+            update_queue_item_fields(
+                item_id,
+                status="failed",
+                finishedAt=utc_now_iso(),
+                currentStage=None,
+                error=f"{stage} returned {summary_status or 'unknown status'}",
+            )
+            return
+
+    update_queue_item_fields(
+        item_id,
+        status="complete",
+        finishedAt=utc_now_iso(),
+        currentStage=None,
+        currentStageIndex=None,
+        stageStartedAt=None,
+    )
+
+
+def recover_interrupted_queue_items() -> None:
+    with QUEUE_LOCK:
+        queue = load_render_queue_unlocked()
+        changed = False
+        for item in queue.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            if item.get("status") in {"running", "cancel_requested"}:
+                item["status"] = "failed"
+                item["finishedAt"] = utc_now_iso()
+                item["error"] = "UI server restarted while this job was running"
+                item["currentStage"] = None
+                item["stageStartedAt"] = None
+                changed = True
+        if changed:
+            save_render_queue_unlocked(queue)
+
+
+def queue_worker_loop() -> None:
+    recover_interrupted_queue_items()
+    while not QUEUE_STOP_EVENT.is_set():
+        item = next_queued_item()
+        if item is None:
+            QUEUE_WAKE_EVENT.wait(timeout=2)
+            QUEUE_WAKE_EVENT.clear()
+            continue
+        run_queue_item(item)
+
+
+def start_queue_worker() -> None:
+    global QUEUE_WORKER_THREAD
+    if QUEUE_WORKER_THREAD is not None and QUEUE_WORKER_THREAD.is_alive():
+        return
+    QUEUE_STOP_EVENT.clear()
+    QUEUE_WORKER_THREAD = threading.Thread(target=queue_worker_loop, name="gsl-render-queue", daemon=True)
+    QUEUE_WORKER_THREAD.start()
+
+
+def stop_queue_worker() -> None:
+    QUEUE_STOP_EVENT.set()
+    QUEUE_WAKE_EVENT.set()
+    for process in list(ACTIVE_QUEUE_PROCESSES.values()):
+        if process.poll() is None:
+            terminate_process_group(process)
 
 
 def load_local_capture_manifest() -> dict[str, Any]:
@@ -811,6 +1444,7 @@ def build_state() -> dict[str, Any]:
         "gates": gates,
         "latestJob": latest_job(),
         "viewerArtifact": latest_viewer_artifact(),
+        "renderQueue": render_queue_state(),
         "qualityPresets": UI_QUALITY_PRESETS,
         "sceneProfiles": UI_SCENE_PROFILES,
         "validation": {
@@ -1101,6 +1735,12 @@ class LabUiHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
                 self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
             return
+        if route == "/api/queue":
+            try:
+                self.send_json(render_queue_state())
+            except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
+                self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
         if route == "/api/gallery":
             try:
                 self.send_json({"items": gallery_jobs()})
@@ -1133,7 +1773,14 @@ class LabUiHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
         route = parsed.path
-        if route not in {"/api/jobs", "/api/jobs/run-stage", "/api/captures/import-video", "/api/captures/create-upload"}:
+        queue_item_action = re.fullmatch(r"/api/queue/items/([^/]+)/(move|cancel)", route)
+        if route not in {
+            "/api/jobs",
+            "/api/jobs/run-stage",
+            "/api/captures/import-video",
+            "/api/captures/create-upload",
+            "/api/queue/items",
+        } and queue_item_action is None:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
 
@@ -1183,6 +1830,26 @@ class LabUiHandler(BaseHTTPRequestHandler):
                 return
 
             payload = json.loads(self.rfile.read(length) or b"{}")
+            if route == "/api/queue/items":
+                item = create_queue_item(payload)
+                self.send_json({"item": item, "queue": render_queue_state()}, HTTPStatus.CREATED)
+                return
+
+            if queue_item_action is not None:
+                item_id = queue_item_action.group(1)
+                action = queue_item_action.group(2)
+                if action == "move":
+                    item = move_queue_item(item_id, str(payload.get("direction") or ""))
+                    self.send_json({"item": item, "queue": render_queue_state()})
+                    return
+                if action == "cancel":
+                    item = mark_queue_item_cancel_requested(
+                        item_id,
+                        after_current_stage=bool(payload.get("afterCurrentStage", False)),
+                    )
+                    self.send_json({"item": item, "queue": render_queue_state()})
+                    return
+
             if route == "/api/jobs":
                 capture_id = payload.get("captureId")
                 if not isinstance(capture_id, str) or not capture_id:
@@ -1220,8 +1887,34 @@ class LabUiHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
             self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
+    def do_PATCH(self) -> None:
+        route = self.path.split("?", 1)[0]
+        match = re.fullmatch(r"/api/queue/items/([^/]+)", route)
+        if match is None:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            item = update_queue_item(match.group(1), payload)
+            self.send_json({"item": item, "queue": render_queue_state()})
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
+            self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
     def do_DELETE(self) -> None:
         route = self.path.split("?", 1)[0]
+        queue_match = re.fullmatch(r"/api/queue/items/([^/]+)", route)
+        if queue_match is not None:
+            try:
+                result = remove_queue_item(queue_match.group(1))
+                self.send_json({"result": result, "queue": render_queue_state()})
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            except Exception as exc:  # noqa: BLE001 - user-facing local server boundary
+                self.send_json({"error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
         if not route.startswith("/api/gallery/jobs/"):
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -1251,12 +1944,14 @@ def main() -> int:
 
     server = ThreadingHTTPServer((args.host, args.port), LabUiHandler)
     url = f"http://{args.host}:{server.server_port}"
+    start_queue_worker()
     print(f"lab_ui_url={url}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        stop_queue_worker()
         server.server_close()
     return 0
 

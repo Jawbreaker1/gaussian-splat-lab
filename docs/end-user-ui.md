@@ -1,8 +1,8 @@
 # End-User Interface
 
-Verified: 2026-06-20
+Verified: 2026-06-21
 
-The first user interface is a local lab console. Its primary path is now a guided scene capture wizard: choose a video, name the scene, select a capture profile and generation strategy, then let the UI upload, plan and run the pipeline stages in order. Manual capture selection, import and per-stage run controls remain available for debugging.
+The first user interface is a local lab console. Its primary path is now a guided scene capture wizard: choose a video, name the scene, select a capture profile and generation strategy, then add the work to the local render queue. The queue worker uploads, plans and runs the pipeline stages in order. Manual capture selection, import and per-stage run controls remain available for debugging.
 
 As of 2026-06-20, the UI can show packaged splat artifacts from both the repo-local gsplat path and Nerfstudio Splatfacto. The central scene is a Spark + Three.js Gaussian Splat viewer loaded from local npm packages, with Walk and Orbit navigation modes, pan, orbit, zoom, reset, reference-camera step controls and export controls for the active PLY plus viewer manifest. Walk mode supports keyboard movement and mouse-look inside the splat scene; double-clicking the canvas can enter pointer-lock look mode in browsers that allow it. Packaging exports camera poses into the same coordinate space as the packaged viewer artifact, so the first render starts from a real training/review camera instead of a generic object-fit view. For Splatfacto, packaging keeps the original PLY as the export/download artifact and can create a viewer-optimized PLY that removes extreme floaters before browser loading. The older PLY WebGL point renderer remains available as `Debug` mode because it is useful for diagnosing malformed exports, sparse geometry and scale problems. The visual quality reference remains the render/target pair and multi-view render-review sheet written by the training stage.
 
@@ -16,7 +16,9 @@ The UI owns:
 
 - capture selection from tracked manifests
 - local user capture creation from direct video upload
-- automatic job planning and stage-by-stage generation
+- automatic job planning and queued stage-by-stage generation
+- editable queued jobs, including reorder, edit, cancel and remove actions
+- active-render feedback through a modal with current stage, elapsed time, ETA and cancel controls
 - capture profile selection that changes frame sampling and COLMAP matching defaults
 - quality profile selection for the training stage
 - generation progress and estimated remaining time
@@ -73,15 +75,15 @@ Default local URL:
 http://127.0.0.1:8765
 ```
 
-Automatic video generation:
+Queued video generation:
 
 1. Enter a scene name.
 2. Choose a capture profile and generation strategy.
 3. Choose a local video file.
 4. Confirm that you have rights to process the video.
-5. Press `Generate Scene`.
+5. Press `Add to Queue`.
 
-The server creates a local user capture under ignored `data/tmp` manifest state, stores the uploaded video under ignored `data/videos/uploads`, records provenance, creates a job and runs the pipeline through packaging/viewer validation. The progress panel shows the current stage and an estimated remaining time while each blocking stage runs.
+The server creates a local user capture under ignored `data/tmp` manifest state, stores the uploaded video under ignored `data/videos/uploads`, records provenance and places the job in `data/tmp/render-queue.json`. The queue worker runs one job at a time through packaging/viewer validation. While a job is running, the progress panel and rendering modal show the current stage, elapsed time and estimated remaining time. Queued jobs can be reordered, edited or removed before they start; running jobs can be cancelled immediately or after the current stage finishes.
 
 Manual video import:
 
