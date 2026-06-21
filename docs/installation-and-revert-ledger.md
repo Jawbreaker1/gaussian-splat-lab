@@ -27,6 +27,8 @@ Generated install logs can live under ignored `logs/`, but curated decisions and
 
 No system packages, drivers or CUDA Toolkit files were installed by Codex in this update.
 
+2026-06-21 update: a side-by-side CUDA COLMAP build path was prepared but not installed. The current Ubuntu `/usr/bin/colmap` CPU fallback remains untouched. The planned sidecar paths are ignored repo-local directories under `outputs/build/colmap-cuda/` and `outputs/tools/colmap-cuda/`.
+
 ## Entry Template
 
 ```text
@@ -44,6 +46,90 @@ Revert plan:
 Result:
 Notes:
 ```
+
+## Entry: 2026-06-21 CUDA COLMAP sidecar plan
+
+Date: 2026-06-21
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Prepare a CUDA-capable COLMAP candidate for faster SfM feature extraction/matching without replacing the known-good Ubuntu CPU COLMAP fallback.
+Dependency: COLMAP source build, default `COLMAP_REF=4.0.4`, CUDA Toolkit at `/usr/local/cuda-12.8`.
+Commercial decision: COLMAP is `accepted` / `allowed_with_notice` in `framework-evaluation.json`; exact build dependencies and notices still need to be reviewed before production packaging.
+Command prepared:
+
+```bash
+./scripts/build-colmap-cuda-sidecar.sh
+```
+
+Planned system package command, not yet run by Codex:
+
+```bash
+sudo apt-get install -y \
+  cmake \
+  ninja-build \
+  libboost-program-options-dev \
+  libboost-graph-dev \
+  libboost-system-dev \
+  libeigen3-dev \
+  libopenimageio-dev \
+  openimageio-tools \
+  libmetis-dev \
+  libgoogle-glog-dev \
+  libgtest-dev \
+  libgmock-dev \
+  libsqlite3-dev \
+  libglew-dev \
+  libceres-dev \
+  libsuitesparse-dev \
+  libcurl4-openssl-dev \
+  libssl-dev \
+  libgl-dev \
+  libglx-dev \
+  libopengl-dev
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: if run, apt installs build prerequisites; the build script clones COLMAP source under ignored `outputs/build/colmap-cuda/` and installs the candidate binary under ignored `outputs/tools/colmap-cuda/`.
+Validation:
+
+```bash
+python3 scripts/validate-colmap-binary.py --binary /usr/bin/colmap
+python3 scripts/validate-colmap-binary.py --binary "$(pwd)/outputs/tools/colmap-cuda/bin/colmap"
+python3 scripts/validate-colmap-binary.py --binary "$(pwd)/outputs/tools/colmap-cuda/bin/colmap" --allow-gpu --qt-offscreen
+```
+
+Revert plan:
+
+Review apt history before removing packages; keep anything that predates this entry or is used by another project.
+
+```bash
+unset GSL_COLMAP_BIN
+rm -rf outputs/build/colmap-cuda outputs/tools/colmap-cuda
+sudo apt-get remove \
+  cmake \
+  ninja-build \
+  libboost-program-options-dev \
+  libboost-graph-dev \
+  libboost-system-dev \
+  libeigen3-dev \
+  libopenimageio-dev \
+  openimageio-tools \
+  libmetis-dev \
+  libgoogle-glog-dev \
+  libgtest-dev \
+  libgmock-dev \
+  libsqlite3-dev \
+  libglew-dev \
+  libceres-dev \
+  libsuitesparse-dev \
+  libcurl4-openssl-dev \
+  libgl-dev \
+  libglx-dev \
+  libopengl-dev
+```
+
+Result: prepared only. `apt-get -s install ...` reported `148` new packages, `0` upgraded, `0` removed, and `27` not upgraded. No system packages were installed by this entry.
+Notes: Current inventory before installation found `git`, `g++`, `build-essential`, `libssl-dev` and `/usr/local/cuda-12.8/bin/nvcc` present; `cmake` and `ninja` missing from PATH. Docker is not installed.
 
 ## Revert Guidance
 

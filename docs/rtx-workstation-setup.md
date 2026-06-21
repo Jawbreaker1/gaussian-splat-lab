@@ -126,6 +126,41 @@ Viable upgrade paths:
 
 Official COLMAP documentation notes that default Linux distribution packages do not come with CUDA support and require a manual source build for CUDA. It also documents CUDA/Docker options and GPU feature extraction/matching controls.
 
+### 2026-06-21 CUDA COLMAP Sidecar Plan
+
+Chosen path: build COLMAP from source in WSL into a repo-local sidecar prefix, not over the Ubuntu package.
+
+Target binary:
+
+```text
+outputs/tools/colmap-cuda/bin/colmap
+```
+
+Build script:
+
+```bash
+./scripts/build-colmap-cuda-sidecar.sh
+```
+
+Current prerequisite inventory:
+
+- present: `build-essential`, `git`, `g++`, `libssl-dev`, `/usr/local/cuda-12.8/bin/nvcc`
+- missing from PATH before any install: `cmake`, `ninja`
+- Docker not installed, so the Docker CUDA path is not the short-term route
+- no system packages were installed by this inventory check
+
+The script defaults to COLMAP `4.0.4`, `CUDA_ENABLED=ON`, `GUI_ENABLED=OFF`, `OPENGL_ENABLED=OFF`, `CGAL_ENABLED=OFF`, and `CMAKE_CUDA_ARCHITECTURES=native`. It builds under `outputs/build/colmap-cuda/` and installs under `outputs/tools/colmap-cuda/`, both ignored by git.
+
+Expected validation sequence:
+
+```bash
+python3 scripts/validate-colmap-binary.py --binary /usr/bin/colmap
+python3 scripts/validate-colmap-binary.py --binary "$(pwd)/outputs/tools/colmap-cuda/bin/colmap"
+python3 scripts/validate-colmap-binary.py --binary "$(pwd)/outputs/tools/colmap-cuda/bin/colmap" --allow-gpu --qt-offscreen
+```
+
+Only after the GPU validation passes should `GSL_COLMAP_BIN` point at the sidecar for UI or pipeline runs.
+
 ## FFmpeg / ffprobe
 
 FFmpeg and ffprobe are installed on PATH:

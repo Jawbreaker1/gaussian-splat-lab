@@ -174,19 +174,61 @@ Heavy SfM/training validation should be launched deliberately from the UI or wit
 
 Do not replace `/usr/bin/colmap`. The apt package is the fallback that keeps the pipeline recoverable.
 
-If we build or unpack a CUDA-capable COLMAP later, place it in a separate path, for example:
+The repo contains a sidecar build script for a CUDA-capable, headless COLMAP CLI:
 
-```text
-/opt/colmap-cuda/bin/colmap
+```bash
+./scripts/build-colmap-cuda-sidecar.sh
 ```
 
-or another clearly documented external-tools directory. Then test it explicitly:
+By default it clones COLMAP `4.0.4`, builds under ignored `outputs/build/colmap-cuda/`, and installs into ignored `outputs/tools/colmap-cuda/`. Override knobs:
+
+```bash
+COLMAP_REF=4.0.4
+GSL_COLMAP_BUILD_ROOT="$(pwd)/outputs/build/colmap-cuda"
+GSL_COLMAP_PREFIX="$(pwd)/outputs/tools/colmap-cuda"
+CUDA_HOME=/usr/local/cuda-12.8
+COLMAP_CUDA_ARCHITECTURES=native
+GSL_COLMAP_BUILD_JOBS="$(nproc)"
+```
+
+The script does not install system packages. Install the current headless build prerequisites first:
+
+```bash
+sudo apt-get install -y \
+  cmake \
+  ninja-build \
+  libboost-program-options-dev \
+  libboost-graph-dev \
+  libboost-system-dev \
+  libeigen3-dev \
+  libopenimageio-dev \
+  openimageio-tools \
+  libmetis-dev \
+  libgoogle-glog-dev \
+  libgtest-dev \
+  libgmock-dev \
+  libsqlite3-dev \
+  libglew-dev \
+  libceres-dev \
+  libsuitesparse-dev \
+  libcurl4-openssl-dev \
+  libssl-dev \
+  libgl-dev \
+  libglx-dev \
+  libopengl-dev
+```
+
+This is intentionally smaller than COLMAP's full GUI-oriented Ubuntu dependency list because the sidecar build uses `GUI_ENABLED=OFF`, `OPENGL_ENABLED=OFF` and `CGAL_ENABLED=OFF`. If CMake asks for extra packages, record them in `docs/installation-and-revert-ledger.md` before installing them.
+
+The build can take tens of minutes or more and will keep many CPU cores busy. It is compilation, not Gaussian Splat training.
+
+After the build, test both the fallback and the sidecar explicitly:
 
 ```bash
 python3 scripts/validate-colmap-binary.py --binary /usr/bin/colmap
 
 python3 scripts/validate-colmap-binary.py \
-  --binary /opt/colmap-cuda/bin/colmap \
+  --binary "$(pwd)/outputs/tools/colmap-cuda/bin/colmap" \
   --allow-gpu \
   --qt-offscreen
 ```
@@ -196,14 +238,14 @@ The first command confirms that the CPU fallback still works. The second command
 Run the pipeline with that binary only when you choose to:
 
 ```bash
-GSL_COLMAP_BIN=/opt/colmap-cuda/bin/colmap \
+GSL_COLMAP_BIN="$(pwd)/outputs/tools/colmap-cuda/bin/colmap" \
   python3 scripts/lab-ui-server.py --host 127.0.0.1 --port 8769
 ```
 
 or for a one-off CLI stage:
 
 ```bash
-GSL_COLMAP_BIN=/opt/colmap-cuda/bin/colmap \
+GSL_COLMAP_BIN="$(pwd)/outputs/tools/colmap-cuda/bin/colmap" \
   .venv/bin/python scripts/lab-pipeline.py run-stage sfm \
     --job outputs/jobs/<job-id>/job.json \
     --accept-warning \
@@ -216,7 +258,13 @@ Revert is simply unsetting the variable:
 unset GSL_COLMAP_BIN
 ```
 
-If the CUDA build was installed outside the repo, remove that separate directory according to the install note for that build. Do not remove `/usr/bin/colmap` unless you intentionally want to remove the CPU fallback.
+Remove the sidecar build artifacts if you want the repo-local disk space back:
+
+```bash
+rm -rf outputs/build/colmap-cuda outputs/tools/colmap-cuda
+```
+
+Do not remove `/usr/bin/colmap` unless you intentionally want to remove the CPU fallback.
 
 ## 10. Start The Local UI
 

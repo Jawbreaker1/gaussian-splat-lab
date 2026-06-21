@@ -316,11 +316,16 @@ Validate the current COLMAP fallback or a side-by-side CUDA candidate:
 ```bash
 python3 scripts/validate-colmap-binary.py --binary /usr/bin/colmap
 
+# Optional, after the sidecar build prerequisites in INSTALL.md are installed:
+./scripts/build-colmap-cuda-sidecar.sh
+
 python3 scripts/validate-colmap-binary.py \
-  --binary /opt/colmap-cuda/bin/colmap \
+  --binary "$(pwd)/outputs/tools/colmap-cuda/bin/colmap" \
   --allow-gpu \
   --qt-offscreen
 ```
+
+Only set `GSL_COLMAP_BIN` after that sidecar validation passes. The default remains `/usr/bin/colmap`, which is the known-good CPU fallback.
 
 List captures:
 

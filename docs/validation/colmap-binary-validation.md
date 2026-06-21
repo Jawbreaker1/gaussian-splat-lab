@@ -39,7 +39,7 @@ Any future CUDA COLMAP build must be installed side-by-side and validated before
 
 ```bash
 python3 scripts/validate-colmap-binary.py \
-  --binary /opt/colmap-cuda/bin/colmap \
+  --binary "$(pwd)/outputs/tools/colmap-cuda/bin/colmap" \
   --allow-gpu \
   --qt-offscreen
 ```
@@ -47,7 +47,17 @@ python3 scripts/validate-colmap-binary.py \
 Only after that passes should the UI or CLI be started with:
 
 ```bash
-GSL_COLMAP_BIN=/opt/colmap-cuda/bin/colmap
+GSL_COLMAP_BIN="$(pwd)/outputs/tools/colmap-cuda/bin/colmap"
 ```
 
 Do not replace `/usr/bin/colmap`; it is the rollback path.
+
+## Sidecar Build Script
+
+The repo-local build helper is:
+
+```bash
+./scripts/build-colmap-cuda-sidecar.sh
+```
+
+It builds under `outputs/build/colmap-cuda/` and installs under `outputs/tools/colmap-cuda/`. Both paths are ignored by git and can be removed without touching the CPU fallback.
