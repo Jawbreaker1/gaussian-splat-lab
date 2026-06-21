@@ -88,6 +88,41 @@ Notes:
 - The installed Ubuntu package reports `without CUDA`. This is acceptable for the first golden-path SfM validation, but performance may be CPU-bound.
 - If we later choose another COLMAP path, such as CUDA-enabled source build, local extracted binary, Docker, or Python bindings, record it in `framework-evaluation.json` and the installation ledger before installing.
 
+### 2026-06-21 COLMAP GPU/CUDA Check
+
+The RTX 5090 is visible from WSL outside the Codex sandbox:
+
+```text
+NVIDIA GeForce RTX 5090, driver 610.47, 32607 MiB VRAM
+```
+
+The installed `/usr/bin/colmap` is still the Ubuntu package:
+
+```text
+COLMAP 3.9.1 -- Structure-from-Motion and Multi-View Stereo
+Commit Unknown on Unknown without CUDA
+```
+
+Runtime test result:
+
+- `--SiftExtraction.use_gpu 0` succeeds on a tiny local image set.
+- `--SiftExtraction.use_gpu 1` aborts in headless WSL while trying to create a Qt/OpenGL context.
+- `QT_QPA_PLATFORM=offscreen` avoids the X display error but still fails at OpenGL context creation.
+
+Pipeline status:
+
+- `scripts/lab-pipeline.py` already supports `pipeline.sfm.useGpu`.
+- All GUI presets keep `useGpu: False` for now because the active COLMAP binary cannot run the GPU path reliably.
+- Do not expose a user-facing COLMAP GPU toggle until a CUDA/headless-capable COLMAP binary has passed a small SfM smoke test.
+
+Viable upgrade paths:
+
+1. Build COLMAP from source in WSL with CUDA support and install it into a controlled prefix such as `/opt/colmap-cuda` or a repo-documented external tools directory.
+2. Use COLMAP's CUDA Docker image if Docker + NVIDIA container runtime is available and path mapping is acceptable.
+3. Use a Windows CUDA-capable COLMAP binary and add explicit WSL-to-Windows path translation in the pipeline.
+
+Official COLMAP documentation notes that default Linux distribution packages do not come with CUDA support and require a manual source build for CUDA. It also documents CUDA/Docker options and GPU feature extraction/matching controls.
+
 ## FFmpeg / ffprobe
 
 FFmpeg and ffprobe are installed on PATH:
