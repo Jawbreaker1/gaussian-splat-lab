@@ -568,7 +568,7 @@ function updateWizardStrategyEstimate() {
 
   const description = document.createElement('small');
   const planText = plan
-    ? `${plan.targetFps} fps sampling, max ${plan.maxFrames} frames, COLMAP overlap ${plan.sequentialOverlap}, ${plan.guidedMatching ? 'guided matching on' : 'guided matching off'}.`
+    ? `${plan.targetFps} fps sampling, max ${plan.maxFrames} frames spread across long clips, COLMAP overlap ${plan.sequentialOverlap}, ${plan.guidedMatching ? 'guided matching on' : 'guided matching off'}.`
     : '';
   description.textContent = [scene.description, planText, detail.training, detail.purpose].filter(Boolean).join(' ');
 

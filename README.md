@@ -83,7 +83,7 @@ The workflow is boring on purpose: one step writes evidence, the next step reads
 | 1 | Framework and license review | Decide which tools are allowed and which are blocked for commercial use. | `framework_license.json` | Flags blocked, conditional and review-required dependencies. |
 | 2 | Workstation check | Verify the local RTX workstation, CUDA/PyTorch visibility, COLMAP, FFmpeg and GPU baseline. | `environment.json` | Confirms RTX 5090 visibility and warns if GPU is already busy. |
 | 3 | Video intake | Confirm the selected source exists and that capture quality/source rights are acceptable for the current purpose. | `intake.json` | Blocks missing files and records source/license warnings. |
-| 4 | Frame sampling | Extract frames deterministically from video. | `frames/`, frame manifest, contact sheet | Verifies frame count, hashes and extraction metadata. |
+| 4 | Frame sampling | Extract frames deterministically from video, spreading capped frame budgets across the full clip. | `frames/`, frame manifest, contact sheet | Verifies frame count, hashes, video coverage and extraction metadata. |
 | 5 | SfM camera solve | Run COLMAP feature extraction, matching and mapping. | sparse COLMAP model | Verifies registered images, sparse points and model analyzer output. |
 | 6 | Splat training | Train Gaussian Splats on the RTX GPU. `Best quality` uses Nerfstudio Splatfacto; debug/stress profiles use the repo-local `gsplat` trainer. | checkpoint, PLY, sample render, render-review sheet | Verifies CUDA, training completion, exported PLY and render/target review metrics. |
 | 7 | Packaging | Build the browser viewer manifest around the active splat artifact. Splatfacto exports keep the original PLY for download and add a viewer-optimized PLY for browser navigation when needed. | `viewer-manifest.json` | Verifies PLY hash, size, header, viewer artifact and reference camera views. |
@@ -139,6 +139,8 @@ The wizard's `Capture profile` selector is not decorative. It changes the captur
 ## Capture Diagnostics And SfM Rescue
 
 Frame sampling now records a lightweight capture-quality check. It looks for common SfM trouble signs such as excessive frame-to-frame motion, low contrast, exposure risk and blur. These diagnostics do not stop the pipeline by themselves; they explain why a later camera solve may struggle.
+
+When a video is longer than the selected frame budget, sampling lowers the effective extraction FPS so the selected frames still span the whole clip. This matters for room captures where one wall or floor area may only appear near the end of the video.
 
 The SfM stage runs the configured COLMAP profile first. If too few frames register, it automatically retries with more robust matching:
 

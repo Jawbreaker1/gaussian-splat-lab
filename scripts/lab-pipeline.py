@@ -1813,6 +1813,45 @@ def format_fps(value: float) -> str:
     return f"{value:.6f}".rstrip("0").rstrip(".")
 
 
+def frame_sampling_plan(target_fps: float, max_frames: int, duration_seconds: Any) -> dict[str, Any]:
+    try:
+        duration = float(duration_seconds)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= 0:
+        return {
+            "strategy": "fixed_fps",
+            "targetFps": target_fps,
+            "effectiveFps": target_fps,
+            "maxFrames": max_frames,
+            "durationSeconds": None,
+            "cappedByMaxFrames": False,
+        }
+
+    requested_frame_count = duration * target_fps
+    if requested_frame_count <= max_frames:
+        return {
+            "strategy": "fixed_fps",
+            "targetFps": target_fps,
+            "effectiveFps": target_fps,
+            "maxFrames": max_frames,
+            "durationSeconds": duration,
+            "cappedByMaxFrames": False,
+            "expectedUncappedFrameCount": int(math.ceil(requested_frame_count)),
+        }
+
+    effective_fps = max(0.001, max_frames / duration)
+    return {
+        "strategy": "full_duration_even",
+        "targetFps": target_fps,
+        "effectiveFps": effective_fps,
+        "maxFrames": max_frames,
+        "durationSeconds": duration,
+        "cappedByMaxFrames": True,
+        "expectedUncappedFrameCount": int(math.ceil(requested_frame_count)),
+    }
+
+
 def frame_run_directory(job_path: Path) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return job_path.parent / "frames" / stamp
@@ -1824,22 +1863,34 @@ def build_frame_manifest(
     frame_dir: Path,
     contact_sheet_path: Path,
     target_fps: float,
+    effective_fps: float,
     max_frames: int,
+    sampling_strategy: str,
+    contact_sheet_stride: int,
 ) -> dict[str, Any]:
     frames = sorted(frame_dir.glob("frame_*.jpg"))
     frame_entries = []
+    metadata = intake_report.get("metadata", {}) if isinstance(intake_report.get("metadata"), dict) else {}
+    duration_seconds = metadata.get("durationSeconds")
+    try:
+        duration_value = float(duration_seconds)
+    except (TypeError, ValueError):
+        duration_value = 0.0
     for index, frame_path in enumerate(frames):
+        timestamp_seconds = index / effective_fps if effective_fps > 0 else index / target_fps
+        if duration_value > 0:
+            timestamp_seconds = min(timestamp_seconds, duration_value)
         frame_entries.append(
             {
                 "index": index,
                 "path": str(frame_path),
-                "timestampSeconds": round(index / target_fps, 6),
+                "timestampSeconds": round(timestamp_seconds, 6),
                 "sizeBytes": frame_path.stat().st_size,
                 "sha256": file_sha256(frame_path),
             }
         )
 
-    metadata = intake_report.get("metadata", {}) if isinstance(intake_report.get("metadata"), dict) else {}
+    coverage_end = frame_entries[-1]["timestampSeconds"] if frame_entries else 0
     return {
         "schemaVersion": 1,
         "stage": {
@@ -1856,8 +1907,15 @@ def build_frame_manifest(
         },
         "sampling": {
             "targetFps": target_fps,
+            "effectiveFps": round(effective_fps, 6),
             "maxFrames": max_frames,
             "actualFrameCount": len(frame_entries),
+            "strategy": sampling_strategy,
+            "cappedByMaxFrames": sampling_strategy == "full_duration_even",
+            "coverageStartSeconds": frame_entries[0]["timestampSeconds"] if frame_entries else None,
+            "coverageEndSeconds": coverage_end,
+            "sourceDurationSeconds": duration_seconds,
+            "contactSheetStride": contact_sheet_stride,
         },
         "frameDirectory": str(frame_dir),
         "contactSheetPath": str(contact_sheet_path),
@@ -2017,6 +2075,33 @@ def validate_frame_manifest(frame_manifest: dict[str, Any]) -> tuple[str, list[d
         }
     )
 
+    sampling = frame_manifest.get("sampling", {}) if isinstance(frame_manifest.get("sampling"), dict) else {}
+    duration = sampling.get("sourceDurationSeconds")
+    coverage_end = sampling.get("coverageEndSeconds")
+    try:
+        duration_value = float(duration)
+        coverage_end_value = float(coverage_end)
+    except (TypeError, ValueError):
+        duration_value = 0.0
+        coverage_end_value = 0.0
+    if duration_value > 0 and coverage_end_value > 0:
+        coverage_ratio = min(1.0, coverage_end_value / duration_value)
+        checks.append(
+            {
+                "id": "video_coverage",
+                "status": "pass" if coverage_ratio >= 0.92 else "warning",
+                "summary": (
+                    "sampled frames span the source video"
+                    if coverage_ratio >= 0.92
+                    else f"sampled frames cover only {coverage_ratio:.1%} of the source video"
+                ),
+                "coverageRatio": round(coverage_ratio, 4),
+                "coverageEndSeconds": round(coverage_end_value, 3),
+                "sourceDurationSeconds": round(duration_value, 3),
+                "strategy": sampling.get("strategy"),
+            }
+        )
+
     contact_sheet = Path(str(frame_manifest.get("contactSheetPath", "")))
     checks.append(
         {
@@ -2129,10 +2214,14 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
         )
         return base
 
+    metadata = intake_report.get("metadata", {}) if isinstance(intake_report.get("metadata"), dict) else {}
+    sampling_plan = frame_sampling_plan(target_fps, max_frames, metadata.get("durationSeconds"))
+    effective_fps = float(sampling_plan["effectiveFps"])
+
     frame_dir = frame_run_directory(job_path)
     frame_dir.mkdir(parents=True, exist_ok=True)
     output_pattern = frame_dir / "frame_%06d.jpg"
-    fps_filter = f"fps={format_fps(target_fps)}"
+    fps_filter = f"fps={format_fps(effective_fps)}"
     extract = run_command(
         [
             "ffmpeg",
@@ -2170,6 +2259,9 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
         )
         return base
 
+    extracted_frames = sorted(frame_dir.glob("frame_*.jpg"))
+    contact_sheet_stride = max(1, math.ceil(len(extracted_frames) / 25)) if extracted_frames else 1
+    contact_sheet_filter = f"select='not(mod(n\\,{contact_sheet_stride}))',scale=160:-1,tile=5x5"
     contact_sheet_path = frame_dir / "contact_sheet.jpg"
     contact_sheet = run_command(
         [
@@ -2183,7 +2275,7 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
             "-i",
             str(frame_dir / "frame_*.jpg"),
             "-vf",
-            "scale=160:-1,tile=5x5",
+            contact_sheet_filter,
             "-frames:v",
             "1",
             str(contact_sheet_path),
@@ -2192,7 +2284,18 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
     )
     base["commands"]["contactSheet"] = contact_sheet
 
-    frame_manifest = build_frame_manifest(job_path, intake_report, frame_dir, contact_sheet_path, target_fps, max_frames)
+    frame_manifest = build_frame_manifest(
+        job_path,
+        intake_report,
+        frame_dir,
+        contact_sheet_path,
+        target_fps,
+        effective_fps,
+        max_frames,
+        str(sampling_plan["strategy"]),
+        contact_sheet_stride,
+    )
+    frame_manifest["sampling"]["expectedUncappedFrameCount"] = sampling_plan.get("expectedUncappedFrameCount")
     status, checks = validate_frame_manifest(frame_manifest)
     frame_manifest["stage"]["status"] = status
     frame_manifest_path = frame_dir / "frame_manifest.json"
@@ -2207,7 +2310,11 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
         {
             "id": "ffmpeg_extract",
             "status": "pass",
-            "summary": "frames extracted",
+            "summary": (
+                "frames extracted across full video"
+                if frame_manifest["sampling"].get("strategy") == "full_duration_even"
+                else "frames extracted"
+            ),
         }
     )
     base["checks"].extend(checks)
