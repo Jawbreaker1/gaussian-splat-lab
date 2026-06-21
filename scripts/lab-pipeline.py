@@ -4024,12 +4024,10 @@ PLY_PROPERTY_FORMATS = {
 }
 
 VIEWER_FILTER_PROFILE = {
-    "name": "clean_medium",
-    "minOpacity": 0.06,
-    "scalePercentile": 0.985,
-    "boundsLowPercentile": 0.01,
-    "boundsHighPercentile": 0.99,
-    "boundsPaddingRatio": 0.05,
+    "name": "balanced_no_crop",
+    "minOpacity": 0.03,
+    "scalePercentile": 0.995,
+    "coordinateCrop": False,
 }
 
 
@@ -4185,17 +4183,18 @@ def build_viewer_filtered_ply(source: Path, target: Path) -> dict[str, Any]:
         initial = records
 
     bounds: dict[str, tuple[float, float]] = {}
-    for axis in ("x", "y", "z"):
-        values = [item[axis] for item in initial]
-        low = percentile(values, float(VIEWER_FILTER_PROFILE["boundsLowPercentile"]))
-        high = percentile(values, float(VIEWER_FILTER_PROFILE["boundsHighPercentile"]))
-        padding = max((high - low) * float(VIEWER_FILTER_PROFILE["boundsPaddingRatio"]), 1.0e-6)
-        bounds[axis] = (low - padding, high + padding)
+    if VIEWER_FILTER_PROFILE.get("coordinateCrop"):
+        for axis in ("x", "y", "z"):
+            values = [item[axis] for item in initial]
+            low = percentile(values, float(VIEWER_FILTER_PROFILE["boundsLowPercentile"]))
+            high = percentile(values, float(VIEWER_FILTER_PROFILE["boundsHighPercentile"]))
+            padding = max((high - low) * float(VIEWER_FILTER_PROFILE["boundsPaddingRatio"]), 1.0e-6)
+            bounds[axis] = (low - padding, high + padding)
 
     kept_indices = [
         int(item["index"])
         for item in initial
-        if all(bounds[axis][0] <= item[axis] <= bounds[axis][1] for axis in ("x", "y", "z"))
+        if not bounds or all(bounds[axis][0] <= item[axis] <= bounds[axis][1] for axis in ("x", "y", "z"))
     ]
     if len(kept_indices) < max(1000, int(vertex_count * 0.35)):
         kept_indices = [int(item["index"]) for item in records]
