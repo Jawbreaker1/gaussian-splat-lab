@@ -4023,6 +4023,15 @@ PLY_PROPERTY_FORMATS = {
     "float64": "d",
 }
 
+VIEWER_FILTER_PROFILE = {
+    "name": "clean_medium",
+    "minOpacity": 0.06,
+    "scalePercentile": 0.985,
+    "boundsLowPercentile": 0.01,
+    "boundsHighPercentile": 0.99,
+    "boundsPaddingRatio": 0.05,
+}
+
 
 def sigmoid(value: float) -> float:
     if value >= 0:
@@ -4166,11 +4175,11 @@ def build_viewer_filtered_ply(source: Path, target: Path) -> dict[str, Any]:
         )
         scale_values.append(average_scale)
 
-    max_scale = percentile(scale_values, 0.995) if has_scale else float("inf")
+    max_scale = percentile(scale_values, float(VIEWER_FILTER_PROFILE["scalePercentile"])) if has_scale else float("inf")
     initial = [
         item
         for item in records
-        if item["opacity"] >= 0.02 and item["averageScale"] <= max_scale
+        if item["opacity"] >= float(VIEWER_FILTER_PROFILE["minOpacity"]) and item["averageScale"] <= max_scale
     ]
     if len(initial) < max(1000, int(vertex_count * 0.4)):
         initial = records
@@ -4178,9 +4187,9 @@ def build_viewer_filtered_ply(source: Path, target: Path) -> dict[str, Any]:
     bounds: dict[str, tuple[float, float]] = {}
     for axis in ("x", "y", "z"):
         values = [item[axis] for item in initial]
-        low = percentile(values, 0.005)
-        high = percentile(values, 0.995)
-        padding = max((high - low) * 0.08, 1.0e-6)
+        low = percentile(values, float(VIEWER_FILTER_PROFILE["boundsLowPercentile"]))
+        high = percentile(values, float(VIEWER_FILTER_PROFILE["boundsHighPercentile"]))
+        padding = max((high - low) * float(VIEWER_FILTER_PROFILE["boundsPaddingRatio"]), 1.0e-6)
         bounds[axis] = (low - padding, high + padding)
 
     kept_indices = [
@@ -4211,6 +4220,7 @@ def build_viewer_filtered_ply(source: Path, target: Path) -> dict[str, Any]:
         "vertexCount": len(kept_indices),
         "removedVertexCount": vertex_count - len(kept_indices),
         "keptRatio": round(len(kept_indices) / max(vertex_count, 1), 6),
+        "filterProfile": dict(VIEWER_FILTER_PROFILE),
         "maxAverageScale": max_scale if math.isfinite(max_scale) else None,
         "bounds": {axis: [round(pair[0], 6), round(pair[1], 6)] for axis, pair in bounds.items()},
     }
