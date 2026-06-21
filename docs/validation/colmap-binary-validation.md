@@ -1,0 +1,53 @@
+# COLMAP Binary Validation
+
+Verified: 2026-06-21
+
+Purpose: keep the working CPU COLMAP install as a known-good fallback while preparing for a side-by-side CUDA COLMAP build.
+
+## CPU Fallback
+
+Command:
+
+```bash
+python3 scripts/validate-colmap-binary.py --binary /usr/bin/colmap --json-out /tmp/gsl-colmap-cpu-validation.json
+```
+
+Result: pass.
+
+Checks:
+
+- `colmap --help`: pass
+- CPU SIFT feature extraction on synthetic PNG frames: pass
+- CPU SIFT exhaustive matching on the same synthetic frame set: pass
+
+Resolved binary:
+
+```text
+/usr/bin/colmap
+```
+
+Version summary:
+
+```text
+COLMAP 3.9.1 -- Structure-from-Motion and Multi-View Stereo
+(Commit Unknown on Unknown without CUDA)
+```
+
+## CUDA Candidate Rule
+
+Any future CUDA COLMAP build must be installed side-by-side and validated before use:
+
+```bash
+python3 scripts/validate-colmap-binary.py \
+  --binary /opt/colmap-cuda/bin/colmap \
+  --allow-gpu \
+  --qt-offscreen
+```
+
+Only after that passes should the UI or CLI be started with:
+
+```bash
+GSL_COLMAP_BIN=/opt/colmap-cuda/bin/colmap
+```
+
+Do not replace `/usr/bin/colmap`; it is the rollback path.

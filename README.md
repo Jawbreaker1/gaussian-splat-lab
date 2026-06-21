@@ -311,6 +311,17 @@ Basic checks:
 npm run check:js
 ```
 
+Validate the current COLMAP fallback or a side-by-side CUDA candidate:
+
+```bash
+python3 scripts/validate-colmap-binary.py --binary /usr/bin/colmap
+
+python3 scripts/validate-colmap-binary.py \
+  --binary /opt/colmap-cuda/bin/colmap \
+  --allow-gpu \
+  --qt-offscreen
+```
+
 List captures:
 
 ```bash

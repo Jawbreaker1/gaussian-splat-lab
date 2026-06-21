@@ -114,6 +114,7 @@ Pipeline status:
 - `scripts/lab-pipeline.py` already supports `pipeline.sfm.useGpu`.
 - The pipeline resolves COLMAP through `GSL_COLMAP_BIN` when set; otherwise it uses `colmap` from `PATH`.
 - Keep `/usr/bin/colmap` installed as the CPU fallback. A CUDA COLMAP should be side-by-side, not a replacement.
+- `scripts/validate-colmap-binary.py` validates a candidate COLMAP binary with synthetic images before it is used in the UI/pipeline.
 - All GUI presets keep `useGpu: False` for now because the active COLMAP binary cannot run the GPU path reliably.
 - Do not expose a user-facing COLMAP GPU toggle until a CUDA/headless-capable COLMAP binary has passed a small SfM smoke test.
 

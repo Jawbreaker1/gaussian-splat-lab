@@ -183,9 +183,15 @@ If we build or unpack a CUDA-capable COLMAP later, place it in a separate path, 
 or another clearly documented external-tools directory. Then test it explicitly:
 
 ```bash
-GSL_COLMAP_BIN=/opt/colmap-cuda/bin/colmap \
-  python3 -c "import os, subprocess; print(subprocess.run([os.environ['GSL_COLMAP_BIN'], '--help'], text=True, capture_output=True).stdout[:300])"
+python3 scripts/validate-colmap-binary.py --binary /usr/bin/colmap
+
+python3 scripts/validate-colmap-binary.py \
+  --binary /opt/colmap-cuda/bin/colmap \
+  --allow-gpu \
+  --qt-offscreen
 ```
+
+The first command confirms that the CPU fallback still works. The second command is the smoke test a CUDA candidate must pass before we point the UI or pipeline at it.
 
 Run the pipeline with that binary only when you choose to:
 
