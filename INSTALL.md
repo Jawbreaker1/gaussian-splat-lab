@@ -51,6 +51,7 @@ npm --version
 Notes:
 
 - The Ubuntu COLMAP package currently reports `without CUDA`; in this lab it is accepted as a CPU SfM tool.
+- Keep the Ubuntu COLMAP package installed as the known-good CPU fallback even if a CUDA build is added later.
 - The Ubuntu FFmpeg build may include GPL flags. Use it as a local system tool only until redistribution is reviewed.
 
 ## 3. CUDA Toolkit Boundary
@@ -169,7 +170,49 @@ Validate that the pipeline can see the workstation tools:
 
 Heavy SfM/training validation should be launched deliberately from the UI or with `--allow-heavy`.
 
-## 9. Start The Local UI
+## 9. Optional Side-By-Side CUDA COLMAP
+
+Do not replace `/usr/bin/colmap`. The apt package is the fallback that keeps the pipeline recoverable.
+
+If we build or unpack a CUDA-capable COLMAP later, place it in a separate path, for example:
+
+```text
+/opt/colmap-cuda/bin/colmap
+```
+
+or another clearly documented external-tools directory. Then test it explicitly:
+
+```bash
+GSL_COLMAP_BIN=/opt/colmap-cuda/bin/colmap \
+  python3 -c "import os, subprocess; print(subprocess.run([os.environ['GSL_COLMAP_BIN'], '--help'], text=True, capture_output=True).stdout[:300])"
+```
+
+Run the pipeline with that binary only when you choose to:
+
+```bash
+GSL_COLMAP_BIN=/opt/colmap-cuda/bin/colmap \
+  python3 scripts/lab-ui-server.py --host 127.0.0.1 --port 8769
+```
+
+or for a one-off CLI stage:
+
+```bash
+GSL_COLMAP_BIN=/opt/colmap-cuda/bin/colmap \
+  .venv/bin/python scripts/lab-pipeline.py run-stage sfm \
+    --job outputs/jobs/<job-id>/job.json \
+    --accept-warning \
+    --allow-heavy
+```
+
+Revert is simply unsetting the variable:
+
+```bash
+unset GSL_COLMAP_BIN
+```
+
+If the CUDA build was installed outside the repo, remove that separate directory according to the install note for that build. Do not remove `/usr/bin/colmap` unless you intentionally want to remove the CPU fallback.
+
+## 10. Start The Local UI
 
 Local-only:
 
@@ -197,7 +240,7 @@ powershell.exe -ExecutionPolicy Bypass -File "\\wsl.localhost\Ubuntu-24.04\home\
 
 The script prints the LAN URL. Use the actual LAN address from that output on the Mac.
 
-## 10. Revert / Cleanup
+## 11. Revert / Cleanup
 
 Remove repo-local environments:
 

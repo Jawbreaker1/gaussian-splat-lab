@@ -480,12 +480,23 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def external_tool_binary(name: str, env_var: str, env: dict[str, str] | None = None) -> str:
+    source = env if env is not None else os.environ
+    override = str(source.get(env_var) or "").strip()
+    return override or name
+
+
+def colmap_command(*args: str, env: dict[str, str] | None = None) -> list[str]:
+    return [external_tool_binary("colmap", "GSL_COLMAP_BIN", env), *args]
+
+
 def run_command(command: list[str], timeout_seconds: int = 20, env: dict[str, str] | None = None) -> dict[str, Any]:
     executable = shutil.which(command[0], path=env.get("PATH") if env else None)
     if executable is None:
         return {
             "name": command[0],
             "command": command,
+            "executable": None,
             "status": "setup_gap",
             "exitCode": None,
             "stdout": "",
@@ -506,6 +517,7 @@ def run_command(command: list[str], timeout_seconds: int = 20, env: dict[str, st
         return {
             "name": command[0],
             "command": command,
+            "executable": executable,
             "status": "fail",
             "exitCode": None,
             "stdout": exc.stdout or "",
@@ -515,6 +527,7 @@ def run_command(command: list[str], timeout_seconds: int = 20, env: dict[str, st
     return {
         "name": command[0],
         "command": command,
+        "executable": executable,
         "status": "pass" if result.returncode == 0 else "fail",
         "exitCode": result.returncode,
         "stdout": result.stdout.strip(),
@@ -1515,7 +1528,7 @@ def build_environment_report(job_path: Path) -> dict[str, Any]:
     if nvidia_query["status"] == "fail":
         nvidia_query = run_command(["nvidia-smi"])
 
-    colmap = run_command(["colmap", "--help"], timeout_seconds=10)
+    colmap = run_command(colmap_command("--help"), timeout_seconds=10)
     ffmpeg = run_command(["ffmpeg", "-version"], timeout_seconds=10)
     ffprobe = run_command(["ffprobe", "-version"], timeout_seconds=10)
     torch_cuda = check_torch_cuda()
@@ -2385,8 +2398,7 @@ def build_splatfacto_training_report(
     colmap_text_dir.mkdir(parents=True, exist_ok=True)
     model_converter = run_command(
         [
-            "colmap",
-            "model_converter",
+            *colmap_command("model_converter", env=trainer_env),
             "--input_path",
             str(sparse_model_path),
             "--output_path",
@@ -2905,8 +2917,7 @@ def run_colmap_sfm_attempt(
     commands: dict[str, Any] = {}
     commands["featureExtractor"] = run_command(
         [
-            "colmap",
-            "feature_extractor",
+            *colmap_command("feature_extractor"),
             "--database_path",
             str(database_path),
             "--image_path",
@@ -2947,8 +2958,7 @@ def run_colmap_sfm_attempt(
         }
 
     matcher_command = [
-        "colmap",
-        "exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher",
+        *colmap_command("exhaustive_matcher" if matcher_kind == "exhaustive" else "sequential_matcher"),
         "--database_path",
         str(database_path),
         "--SiftMatching.use_gpu",
@@ -3002,8 +3012,7 @@ def run_colmap_sfm_attempt(
 
     commands["mapper"] = run_command(
         [
-            "colmap",
-            "mapper",
+            *colmap_command("mapper"),
             "--database_path",
             str(database_path),
             "--image_path",
@@ -3038,7 +3047,7 @@ def run_colmap_sfm_attempt(
     model_dirs = sorted(path for path in sparse_dir.iterdir() if path.is_dir())
     sparse_models: list[dict[str, Any]] = []
     for model_path in model_dirs:
-        analyzer_result = run_command(["colmap", "model_analyzer", "--path", str(model_path)], timeout_seconds=300)
+        analyzer_result = run_command(colmap_command("model_analyzer", "--path", str(model_path)), timeout_seconds=300)
         commands[f"modelAnalyzer_{model_path.name}"] = analyzer_result
         analyzer_metrics = None
         if analyzer_result["status"] == "pass":
@@ -3192,7 +3201,7 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         )
         return base
 
-    colmap = run_command(["colmap", "--help"], timeout_seconds=10)
+    colmap = run_command(colmap_command("--help"), timeout_seconds=10)
     if colmap["status"] != "pass":
         base["stage"]["status"] = colmap["status"]
         base["checks"].append(
@@ -3280,10 +3289,12 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
     }
     base["colmap"] = {
         "versionSummary": command_summary(colmap, max_lines=3),
+        "binary": colmap.get("executable"),
+        "binaryOverrideEnv": os.environ.get("GSL_COLMAP_BIN"),
         "matcher": selected_attempt.get("profile", {}).get("matcherKind") if selected_attempt else None,
         "usesGpu": bool(selected_attempt.get("profile", {}).get("useGpu")) if selected_attempt else False,
         "resourceControls": selected_attempt.get("profile", {}) if selected_attempt else {},
-        "note": "Ubuntu COLMAP package reports without CUDA; SfM defaults to controlled CPU SIFT extraction and matching unless useGpu is explicitly enabled.",
+        "note": "SfM uses the resolved COLMAP binary. The default remains the apt CPU COLMAP on PATH; set GSL_COLMAP_BIN to test a side-by-side CUDA build without replacing /usr/bin/colmap.",
     }
     if attempts:
         attempt_summaries = [
