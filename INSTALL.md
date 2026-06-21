@@ -201,6 +201,7 @@ sudo apt-get install -y \
   libboost-graph-dev \
   libboost-system-dev \
   libeigen3-dev \
+  libopencv-dev \
   libopenimageio-dev \
   openimageio-tools \
   libmetis-dev \
@@ -213,6 +214,7 @@ sudo apt-get install -y \
   libsuitesparse-dev \
   libcurl4-openssl-dev \
   libssl-dev \
+  libcurand-dev-12-8 \
   libgl-dev \
   libglx-dev \
   libopengl-dev

@@ -71,6 +71,7 @@ sudo apt-get install -y \
   libboost-graph-dev \
   libboost-system-dev \
   libeigen3-dev \
+  libopencv-dev \
   libopenimageio-dev \
   openimageio-tools \
   libmetis-dev \
@@ -83,6 +84,7 @@ sudo apt-get install -y \
   libsuitesparse-dev \
   libcurl4-openssl-dev \
   libssl-dev \
+  libcurand-dev-12-8 \
   libgl-dev \
   libglx-dev \
   libopengl-dev
@@ -112,6 +114,7 @@ sudo apt-get remove \
   libboost-graph-dev \
   libboost-system-dev \
   libeigen3-dev \
+  libopencv-dev \
   libopenimageio-dev \
   openimageio-tools \
   libmetis-dev \
@@ -124,12 +127,13 @@ sudo apt-get remove \
   libsuitesparse-dev \
   libcurl4-openssl-dev \
   libgl-dev \
+  libcurand-dev-12-8 \
   libglx-dev \
   libopengl-dev
 ```
 
-Result: prepared only. `apt-get -s install ...` reported `148` new packages, `0` upgraded, `0` removed, and `27` not upgraded. No system packages were installed by this entry.
-Notes: Current inventory before installation found `git`, `g++`, `build-essential`, `libssl-dev` and `/usr/local/cuda-12.8/bin/nvcc` present; `cmake` and `ninja` missing from PATH. Docker is not installed.
+Result: prepared only by Codex. `apt-get -s install ...` reported `148` new packages, `0` upgraded, `0` removed, and `27` not upgraded before the initial manual install. After that manual install, the first CMake attempt reached CUDA configuration and detected the Blackwell/sm_100 PTX workaround, then failed because OpenImageIO referenced missing `/usr/include/opencv4` and COLMAP CUDA targets could not find `CUDA::curand`. A follow-up dry-run for `libopencv-dev libcurand-dev-12-8` reported `95` new packages, `0` upgraded, `0` removed, and `27` not upgraded. Codex could not run the follow-up install because `sudo` requires an interactive TTY/password.
+Notes: Current inventory before installation found `git`, `g++`, `build-essential`, `libssl-dev` and `/usr/local/cuda-12.8/bin/nvcc` present; `cmake` and `ninja` missing from PATH. Docker is not installed. `libcurand-dev-12-8` depends on `libcurand-12-8` and does not depend on NVIDIA driver packages.
 
 ## Revert Guidance
 

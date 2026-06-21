@@ -29,6 +29,18 @@ if [[ ! -x "${cuda_home}/bin/nvcc" ]]; then
   missing+=("${cuda_home}/bin/nvcc")
 fi
 
+if [[ ! -d "/usr/include/opencv4" ]]; then
+  missing+=("libopencv-dev:/usr/include/opencv4")
+fi
+
+if [[ ! -f "${cuda_home}/include/curand.h" ]]; then
+  missing+=("libcurand-dev-12-8:${cuda_home}/include/curand.h")
+fi
+
+if [[ ! -e "${cuda_home}/lib64/libcurand.so" ]]; then
+  missing+=("libcurand-dev-12-8:${cuda_home}/lib64/libcurand.so")
+fi
+
 if (( ${#missing[@]} > 0 )); then
   printf 'missing_build_tools=%s\n' "${missing[*]}" >&2
   printf 'Install the documented sidecar build dependencies before running this script.\n' >&2

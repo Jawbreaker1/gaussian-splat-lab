@@ -44,6 +44,7 @@ sudo apt-get install -y \
   libboost-graph-dev \
   libboost-system-dev \
   libeigen3-dev \
+  libopencv-dev \
   libopenimageio-dev \
   openimageio-tools \
   libmetis-dev \
@@ -56,12 +57,20 @@ sudo apt-get install -y \
   libsuitesparse-dev \
   libcurl4-openssl-dev \
   libssl-dev \
+  libcurand-dev-12-8 \
   libgl-dev \
   libglx-dev \
   libopengl-dev
 ```
 
 A dry-run on 2026-06-21 reported `148` new packages, `0` upgraded, `0` removed, and `27` not upgraded. No packages were installed by that dry-run.
+
+First CMake attempt after the initial prerequisite install found two missing pieces:
+
+- `libopencv-dev`: OpenImageIO's CMake target referenced `/usr/include/opencv4`.
+- `libcurand-dev-12-8`: COLMAP CUDA targets require `CUDA::curand`.
+
+The documented package list now includes both.
 
 If CMake asks for additional dependencies, add a new ledger note before installing them.
 
