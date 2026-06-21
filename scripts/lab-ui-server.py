@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib.util
 import json
 import mimetypes
@@ -193,6 +194,86 @@ UI_QUALITY_PRESETS = {
         },
     },
 }
+UI_SCENE_PROFILES = {
+    "room": {
+        "label": "Interior room",
+        "description": "Room-scale capture. Keeps the balanced frame budget but asks COLMAP for stronger sequential overlap on lighter profiles.",
+        "subject": "self-captured indoor room from uploaded video",
+        "motion": "slow walking loop with clear parallax through the room",
+        "targetFpsMultiplier": 1.0,
+        "maxFramesMultiplier": 1.0,
+        "estimateMultiplier": 1.0,
+        "sfm": {
+            "sequentialOverlap": 24,
+            "featureMaxImageSize": 3200,
+            "featureMaxNumFeatures": 8192,
+        },
+    },
+    "outdoor": {
+        "label": "Outdoor environment",
+        "description": "Larger scene capture. Samples more frames and uses a wider COLMAP matching window because paths and distances usually vary more.",
+        "subject": "self-captured outdoor environment from uploaded video",
+        "motion": "slow walking arc/loop with clear parallax through the environment",
+        "targetFpsMultiplier": 1.2,
+        "maxFramesMultiplier": 1.3,
+        "maximumMaxFrames": 560,
+        "estimateMultiplier": 1.3,
+        "sfm": {
+            "sequentialOverlap": 32,
+            "featureMaxImageSize": 3840,
+            "featureMaxNumFeatures": 12288,
+            "guidedMatching": True,
+        },
+    },
+    "object": {
+        "label": "Object orbit",
+        "description": "Object-centric scan. Uses a smaller frame budget and guided matching for a deliberate orbit around one subject.",
+        "subject": "self-captured object/area from uploaded video",
+        "motion": "slow orbit with clear parallax around the subject",
+        "targetFpsMultiplier": 0.8,
+        "maxFramesMultiplier": 0.75,
+        "minimumMaxFrames": 160,
+        "estimateMultiplier": 0.85,
+        "sfm": {
+            "sequentialOverlap": 16,
+            "featureMaxImageSize": 3000,
+            "featureMaxNumFeatures": 6144,
+            "guidedMatching": True,
+        },
+    },
+}
+
+
+def apply_scene_profile(quality_key: str, scene_kind: str) -> tuple[dict[str, Any], dict[str, Any], str]:
+    normalized_scene = scene_kind if scene_kind in UI_SCENE_PROFILES else "room"
+    quality = copy.deepcopy(UI_QUALITY_PRESETS.get(quality_key, UI_QUALITY_PRESETS["quality_probe"]))
+    scene = UI_SCENE_PROFILES[normalized_scene]
+
+    target_fps = float(quality["targetFps"]) * float(scene.get("targetFpsMultiplier", 1.0))
+    max_frames = int(round(int(quality["maxFrames"]) * float(scene.get("maxFramesMultiplier", 1.0))))
+    minimum_max_frames = scene.get("minimumMaxFrames")
+    maximum_max_frames = scene.get("maximumMaxFrames")
+    if isinstance(minimum_max_frames, int):
+        max_frames = max(max_frames, minimum_max_frames)
+    if isinstance(maximum_max_frames, int):
+        max_frames = min(max_frames, maximum_max_frames)
+    quality["targetFps"] = round(target_fps, 2)
+    quality["maxFrames"] = max_frames
+
+    sfm_controls = quality.get("sfm", {}) if isinstance(quality.get("sfm"), dict) else {}
+    scene_sfm = scene.get("sfm", {}) if isinstance(scene.get("sfm"), dict) else {}
+    for key, value in scene_sfm.items():
+        if (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            and isinstance(sfm_controls.get(key), int)
+            and not isinstance(sfm_controls.get(key), bool)
+        ):
+            sfm_controls[key] = max(int(sfm_controls[key]), value) if normalized_scene != "object" else value
+        else:
+            sfm_controls[key] = value
+    quality["sfm"] = sfm_controls
+    return quality, scene, normalized_scene
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -281,21 +362,11 @@ def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None)
     display_name = (query.get("displayName", [""])[0] or Path(upload_name or "").stem or "Video capture").strip()
     scene_kind = (query.get("sceneKind", ["room"])[0] or "room").strip()
     quality_key = query.get("qualityPreset", ["quality_probe"])[0]
-    quality = UI_QUALITY_PRESETS.get(quality_key, UI_QUALITY_PRESETS["quality_probe"])
+    quality, scene_profile, scene_kind = apply_scene_profile(quality_key, scene_kind)
     sfm_controls = quality.get("sfm", {}) if isinstance(quality.get("sfm"), dict) else {}
     now = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     capture_id = f"capture-{slugify(display_name)}-{now}"
     target_path = f"data/videos/uploads/{capture_id}{video_extension(upload_name)}"
-    subject = {
-        "room": "self-captured indoor room from uploaded video",
-        "outdoor": "self-captured outdoor environment from uploaded video",
-        "object": "self-captured object/area from uploaded video",
-    }.get(scene_kind, "self-captured environment from uploaded video")
-    motion = {
-        "room": "slow walking loop with clear parallax through the room",
-        "outdoor": "slow walking arc/loop with clear parallax through the environment",
-        "object": "slow orbit with clear parallax around the subject",
-    }.get(scene_kind, "slow capture movement with clear parallax")
     return {
         "id": capture_id,
         "displayName": display_name,
@@ -307,8 +378,8 @@ def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None)
             "licenseNotes": "Uploaded through the local UI as user-confirmed self-captured media. Review scene content before commercial use.",
         },
         "capture": {
-            "subject": subject,
-            "motion": motion,
+            "subject": scene_profile["subject"],
+            "motion": scene_profile["motion"],
             "expectedDurationSeconds": None,
             "expectedResolution": "source video",
         },
@@ -316,10 +387,12 @@ def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None)
             "frameSampling": {
                 "targetFps": quality["targetFps"],
                 "maxFrames": quality["maxFrames"],
+                "sceneProfile": scene_kind,
             },
             "sfm": {
                 "backend": "colmap",
                 "requiresExplicitHeavyApproval": True,
+                "sceneProfile": scene_kind,
                 **sfm_controls,
             },
             "training": {
@@ -335,6 +408,8 @@ def build_uploaded_capture(query: dict[str, list[str]], upload_name: str | None)
         "status": "self-captured-ui-upload",
         "ui": {
             "sceneKind": scene_kind,
+            "sceneProfileLabel": scene_profile["label"],
+            "sceneProfileDescription": scene_profile["description"],
             "qualityPreset": quality_key,
             "uploadedFileName": upload_name,
             "createdAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -723,6 +798,7 @@ def build_state() -> dict[str, Any]:
         "latestJob": latest_job(),
         "viewerArtifact": latest_viewer_artifact(),
         "qualityPresets": UI_QUALITY_PRESETS,
+        "sceneProfiles": UI_SCENE_PROFILES,
         "validation": {
             "architecture": run_validator("validate-architecture-contracts.sh"),
             "phase1": run_validator("validate-phase-1-contracts.sh"),

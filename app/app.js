@@ -167,6 +167,29 @@ const qualityPresetLabels = {
   splatfacto_big_quality: 'Best quality',
   splatfacto_ceiling: 'Ceiling test',
 };
+const fallbackSceneProfiles = {
+  room: {
+    label: 'Interior room',
+    description: 'Balanced room-scale capture with stronger sequential matching on lighter profiles.',
+    targetFpsMultiplier: 1,
+    maxFramesMultiplier: 1,
+    estimateMultiplier: 1,
+  },
+  outdoor: {
+    label: 'Outdoor environment',
+    description: 'Larger environment capture with more frames and a wider COLMAP matching window.',
+    targetFpsMultiplier: 1.2,
+    maxFramesMultiplier: 1.3,
+    estimateMultiplier: 1.3,
+  },
+  object: {
+    label: 'Object orbit',
+    description: 'Object-centric orbit with a smaller frame budget and guided matching.',
+    targetFpsMultiplier: 0.8,
+    maxFramesMultiplier: 0.75,
+    estimateMultiplier: 0.85,
+  },
+};
 const generationStrategyDetails = {
   splatfacto_reference: {
     purpose: 'Full 3DGS scene with balanced runtime.',
@@ -298,6 +321,46 @@ function selectedTrainingProfile() {
   return els.wizardQualityPreset?.value || 'splatfacto_reference';
 }
 
+function selectedSceneProfileKey() {
+  return els.wizardSceneKind?.value || 'room';
+}
+
+function sceneProfileFor(sceneKey = selectedSceneProfileKey()) {
+  return state?.sceneProfiles?.[sceneKey] ?? fallbackSceneProfiles[sceneKey] ?? fallbackSceneProfiles.room;
+}
+
+function qualityPresetFor(profile = selectedTrainingProfile()) {
+  return state?.qualityPresets?.[profile] ?? null;
+}
+
+function effectiveCapturePlan(profile = selectedTrainingProfile(), sceneKey = selectedSceneProfileKey()) {
+  const quality = qualityPresetFor(profile);
+  const scene = sceneProfileFor(sceneKey);
+  if (!quality || !scene) return null;
+  const fps = Number(quality.targetFps) * Number(scene.targetFpsMultiplier ?? 1);
+  const rawMaxFrames = Math.round(Number(quality.maxFrames) * Number(scene.maxFramesMultiplier ?? 1));
+  const minFrames = Number.isFinite(Number(scene.minimumMaxFrames)) ? Number(scene.minimumMaxFrames) : null;
+  const maxFramesCap = Number.isFinite(Number(scene.maximumMaxFrames)) ? Number(scene.maximumMaxFrames) : null;
+  let maxFrames = rawMaxFrames;
+  if (minFrames !== null) maxFrames = Math.max(maxFrames, minFrames);
+  if (maxFramesCap !== null) maxFrames = Math.min(maxFrames, maxFramesCap);
+  const sfm = { ...(quality.sfm ?? {}) };
+  for (const [key, value] of Object.entries(scene.sfm ?? {})) {
+    if (Number.isInteger(value) && Number.isInteger(sfm[key])) {
+      sfm[key] = sceneKey === 'object' ? value : Math.max(sfm[key], value);
+    } else {
+      sfm[key] = value;
+    }
+  }
+  return {
+    targetFps: Math.round(fps * 100) / 100,
+    maxFrames,
+    sequentialOverlap: sfm.sequentialOverlap,
+    featureMaxNumFeatures: sfm.featureMaxNumFeatures,
+    guidedMatching: Boolean(sfm.guidedMatching),
+  };
+}
+
 function formatDuration(seconds) {
   const value = Math.max(0, Math.round(Number(seconds) || 0));
   if (value < 60) return '<1 min';
@@ -308,13 +371,21 @@ function formatDuration(seconds) {
   return rest ? `${hours}h ${rest}m` : `${hours}h`;
 }
 
-function stageEstimateSeconds(stage, profile = selectedTrainingProfile()) {
-  if (stage === 'splat_training') return trainingProfileEstimates[profile] ?? trainingProfileEstimates.quality_probe;
-  return defaultStageEstimates[stage] ?? 30;
+function sceneEstimateMultiplier(sceneKey = selectedSceneProfileKey()) {
+  return Number(sceneProfileFor(sceneKey)?.estimateMultiplier) || 1;
 }
 
-function totalEstimateSeconds(profile = selectedTrainingProfile()) {
-  return automatedStageOrder.reduce((total, stage) => total + stageEstimateSeconds(stage, profile), 0);
+function stageEstimateSeconds(stage, profile = selectedTrainingProfile(), sceneKey = selectedSceneProfileKey()) {
+  const sceneWeightedStages = new Set(['frame_sampling', 'sfm', 'splat_training']);
+  const multiplier = sceneWeightedStages.has(stage) ? sceneEstimateMultiplier(sceneKey) : 1;
+  const baseEstimate = stage === 'splat_training'
+    ? trainingProfileEstimates[profile] ?? trainingProfileEstimates.quality_probe
+    : defaultStageEstimates[stage] ?? 30;
+  return baseEstimate * multiplier;
+}
+
+function totalEstimateSeconds(profile = selectedTrainingProfile(), sceneKey = selectedSceneProfileKey()) {
+  return automatedStageOrder.reduce((total, stage) => total + stageEstimateSeconds(stage, profile, sceneKey), 0);
 }
 
 function activeTrainingProfile() {
@@ -405,13 +476,14 @@ function summarizeInlineReport(report) {
 }
 
 function estimateRemainingSeconds() {
-  if (!autoRun?.active) return totalEstimateSeconds(selectedTrainingProfile());
+  if (!autoRun?.active) return totalEstimateSeconds(selectedTrainingProfile(), selectedSceneProfileKey());
   const profile = autoRun.trainingProfile;
+  const sceneKey = autoRun.sceneKind || selectedSceneProfileKey();
   const currentIndex = Math.max(0, autoRun.currentIndex ?? 0);
   let remaining = 0;
   for (let index = currentIndex; index < automatedStageOrder.length; index += 1) {
     const stage = automatedStageOrder[index];
-    const estimate = stageEstimateSeconds(stage, profile);
+    const estimate = stageEstimateSeconds(stage, profile, sceneKey);
     if (index === currentIndex && autoRun.stageStartedAt) {
       const elapsed = (Date.now() - autoRun.stageStartedAt) / 1000;
       remaining += Math.max(15, estimate - elapsed);
@@ -430,18 +502,24 @@ function setWizardStatus(text, type = 'neutral') {
 function updateWizardStrategyEstimate() {
   if (!els.wizardStrategyEstimate) return;
   const profile = selectedTrainingProfile();
+  const sceneKey = selectedSceneProfileKey();
+  const scene = sceneProfileFor(sceneKey);
   const label = qualityPresetLabels[profile] ?? profile;
   const detail = generationStrategyDetails[profile] ?? {};
-  const estimate = formatDuration(totalEstimateSeconds(profile));
+  const plan = effectiveCapturePlan(profile, sceneKey);
+  const estimate = formatDuration(totalEstimateSeconds(profile, sceneKey));
 
   const kicker = document.createElement('span');
-  kicker.textContent = 'Estimated full run';
+  kicker.textContent = `${scene.label} profile`;
 
   const value = document.createElement('strong');
   value.textContent = `${estimate} · ${label}`;
 
   const description = document.createElement('small');
-  description.textContent = [detail.training, detail.purpose].filter(Boolean).join('. ');
+  const planText = plan
+    ? `${plan.targetFps} fps sampling, max ${plan.maxFrames} frames, COLMAP overlap ${plan.sequentialOverlap}, ${plan.guidedMatching ? 'guided matching on' : 'guided matching off'}.`
+    : '';
+  description.textContent = [scene.description, planText, detail.training, detail.purpose].filter(Boolean).join(' ');
 
   els.wizardStrategyEstimate.replaceChildren(kicker, value, description);
 }
@@ -463,8 +541,9 @@ function updateWizardControls() {
       setWizardStatus('Name the scene before generation.');
     } else {
       const profile = selectedTrainingProfile();
+      const scene = sceneProfileFor(selectedSceneProfileKey());
       const label = qualityPresetLabels[profile] ?? profile;
-      setWizardStatus(`Ready to generate with ${label}. Estimated full run ${formatDuration(totalEstimateSeconds(profile))}.`);
+      setWizardStatus(`Ready to generate ${scene.label} with ${label}. Estimated full run ${formatDuration(totalEstimateSeconds(profile, selectedSceneProfileKey()))}.`);
     }
   }
   updateImportControls();
@@ -991,6 +1070,7 @@ async function generatePipeline() {
   autoRun = {
     active: true,
     trainingProfile: profile,
+    sceneKind: selectedSceneProfileKey(),
     currentStage: null,
     currentIndex: 0,
     startedAt: Date.now(),

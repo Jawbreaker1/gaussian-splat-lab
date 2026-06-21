@@ -74,6 +74,7 @@ Generated output should live under ignored paths such as `outputs/`, `data/video
 
 Use these documents as the source of truth:
 
+- `INSTALL.md`: workstation setup order, required software, validation and rollback
 - `docs/mvp-pipeline.md`: end-to-end MVP shape
 - `docs/stable-pipeline-build-plan.md`: immediate build sequence for the golden path
 - `docs/framework-evaluation.md`: framework and license decisions

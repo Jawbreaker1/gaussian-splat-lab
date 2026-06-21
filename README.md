@@ -64,6 +64,7 @@ Gaussian Splat Lab can now:
 - extract frames with FFmpeg
 - solve camera poses with COLMAP SfM
 - train Gaussian Splats locally with PyTorch/CUDA, either through the repo-local mini `gsplat` trainer or Nerfstudio Splatfacto
+- apply capture profiles that change frame sampling and COLMAP matching defaults for rooms, outdoor environments and object orbits
 - run multiple quality profiles from quick probes to Splatfacto best-quality runs and heavy RTX ceiling tests
 - package a binary PLY splat plus viewer manifest
 - render the result in a browser with a real Gaussian Splat renderer
@@ -123,6 +124,18 @@ Repo-local `gsplat` debug and stress profiles:
 
 Current quality-ceiling results are tracked in [docs/quality-ceiling-results.md](docs/quality-ceiling-results.md). For the local Hugging Face sample video, Splatfacto produced a much cleaner eval render than simply pushing the mini-trainer to more splats. Bigger files are not automatically better: the 1.6M mini-trainer artifact is larger than the 247k Splatfacto artifact, but the Splatfacto eval render is visibly sharper and scores better on Nerfstudio metrics. The normal upload wizard now exposes `Best quality` for Splatfacto; the larger mini-trainer ceiling and stress profiles should be run deliberately from the lab/CLI when the GPU is at known-stable clocks.
 
+## Capture Profiles
+
+The wizard's `Capture profile` selector is not decorative. It changes the capture manifest before the job is planned, so downstream stages read different frame sampling and COLMAP settings.
+
+| Wizard choice | What changes | Why |
+| --- | --- | --- |
+| `Interior room` | Balanced frame count, with stronger sequential overlap on lighter profiles. | Room captures often fail because nearby frames do not overlap enough once the path turns or crosses the room. |
+| `Outdoor environment` | Higher frame budget, wider COLMAP overlap, more features and guided matching. | Outdoor paths usually cover larger distances and need more camera/feature evidence to stay registered. |
+| `Object orbit` | Smaller frame budget, object-orbit matching defaults and guided matching. | Object scans should be a deliberate orbit around one subject rather than a large environment walk-through. |
+
+`Generation strategy` is separate. It controls the trainer and quality level, while `Capture profile` controls how the video is sampled and matched before training begins.
+
 ## Capture Diagnostics And SfM Rescue
 
 Frame sampling now records a lightweight capture-quality check. It looks for common SfM trouble signs such as excessive frame-to-frame motion, low contrast, exposure risk and blur. These diagnostics do not stop the pipeline by themselves; they explain why a later camera solve may struggle.
@@ -175,7 +188,7 @@ The script prints the LAN URL to open from another device, for example `http://1
 The UI is a local lab console with:
 
 - a guided scene capture wizard for direct video upload
-- scene type and quality profile selection
+- capture profile and quality strategy selection
 - automatic upload, job planning and stage-by-stage generation
 - progress text, elapsed time and ETA for the full generation run
 - per-step cards that explain what is happening, what the step produces and which internal checks are running
@@ -371,6 +384,7 @@ Mac:
 
 ## Documentation Map
 
+- [INSTALL.md](INSTALL.md): setup order, required software, validation and rollback
 - [docs/mvp-pipeline.md](docs/mvp-pipeline.md): MVP workflow contract
 - [docs/stable-pipeline-build-plan.md](docs/stable-pipeline-build-plan.md): stable workflow build plan
 - [docs/pipeline-gates.md](docs/pipeline-gates.md): checks between pipeline steps

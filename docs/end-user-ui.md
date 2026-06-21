@@ -2,7 +2,7 @@
 
 Verified: 2026-06-20
 
-The first user interface is a local lab console. Its primary path is now a guided scene capture wizard: choose a video, name the scene, select scene type and quality, then let the UI upload, plan and run the pipeline stages in order. Manual capture selection, import and per-stage run controls remain available for debugging.
+The first user interface is a local lab console. Its primary path is now a guided scene capture wizard: choose a video, name the scene, select a capture profile and generation strategy, then let the UI upload, plan and run the pipeline stages in order. Manual capture selection, import and per-stage run controls remain available for debugging.
 
 As of 2026-06-20, the UI can show packaged splat artifacts from both the repo-local gsplat path and Nerfstudio Splatfacto. The central scene is a Spark + Three.js Gaussian Splat viewer loaded from local npm packages, with Walk and Orbit navigation modes, pan, orbit, zoom, reset, reference-camera step controls and export controls for the active PLY plus viewer manifest. Walk mode supports keyboard movement and mouse-look inside the splat scene; double-clicking the canvas can enter pointer-lock look mode in browsers that allow it. Packaging exports camera poses into the same coordinate space as the packaged viewer artifact, so the first render starts from a real training/review camera instead of a generic object-fit view. For Splatfacto, packaging keeps the original PLY as the export/download artifact and can create a viewer-optimized PLY that removes extreme floaters before browser loading. The older PLY WebGL point renderer remains available as `Debug` mode because it is useful for diagnosing malformed exports, sparse geometry and scale problems. The visual quality reference remains the render/target pair and multi-view render-review sheet written by the training stage.
 
@@ -17,6 +17,7 @@ The UI owns:
 - capture selection from tracked manifests
 - local user capture creation from direct video upload
 - automatic job planning and stage-by-stage generation
+- capture profile selection that changes frame sampling and COLMAP matching defaults
 - quality profile selection for the training stage
 - generation progress and estimated remaining time
 - local video import with the same provenance-aware path/hash report as the CLI
@@ -75,7 +76,7 @@ http://127.0.0.1:8765
 Automatic video generation:
 
 1. Enter a scene name.
-2. Choose scene type and quality.
+2. Choose a capture profile and generation strategy.
 3. Choose a local video file.
 4. Confirm that you have rights to process the video.
 5. Press `Generate Scene`.
