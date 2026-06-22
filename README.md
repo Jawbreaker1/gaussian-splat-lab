@@ -61,7 +61,7 @@ Gaussian Splat Lab can now:
 
 - track known captures in manifests
 - import local videos into controlled capture paths
-- extract frames with FFmpeg
+- extract and score video keyframes with FFmpeg/Pillow
 - solve camera poses with COLMAP SfM
 - train Gaussian Splats locally with PyTorch/CUDA, either through the repo-local mini `gsplat` trainer or Nerfstudio Splatfacto
 - apply capture profiles that change frame sampling and COLMAP matching defaults for rooms, outdoor environments and object orbits
@@ -83,7 +83,7 @@ The workflow is boring on purpose: one step writes evidence, the next step reads
 | 1 | Framework and license review | Decide which tools are allowed and which are blocked for commercial use. | `framework_license.json` | Flags blocked, conditional and review-required dependencies. |
 | 2 | Workstation check | Verify the local RTX workstation, CUDA/PyTorch visibility, COLMAP, FFmpeg and GPU baseline. | `environment.json` | Confirms RTX 5090 visibility and warns if GPU is already busy. |
 | 3 | Video intake | Confirm the selected source exists and that capture quality/source rights are acceptable for the current purpose. | `intake.json` | Blocks missing files and records source/license warnings. |
-| 4 | Frame sampling | Extract frames deterministically from video, spreading capped frame budgets across the full clip. | `frames/`, frame manifest, contact sheet | Verifies frame count, hashes, video coverage and extraction metadata. |
+| 4 | Frame sampling | Extract candidate frames across the full clip, score them for sharpness, contrast, exposure and texture, then keep the best keyframes per time segment. | `frames/`, candidate frames, frame manifest, contact sheet | Verifies frame count, hashes, video coverage, selected keyframes and capture-quality metadata. |
 | 5 | SfM camera solve | Run COLMAP feature extraction, matching and mapping. | sparse COLMAP model | Verifies registered images, sparse points and model analyzer output. |
 | 6 | Splat training | Train Gaussian Splats on the RTX GPU. `Best quality` uses Nerfstudio Splatfacto; debug/stress profiles use the repo-local `gsplat` trainer. | checkpoint, PLY, sample render, render-review sheet | Verifies CUDA, training completion, exported PLY and render/target review metrics. |
 | 7 | Packaging | Build the browser viewer manifest around the active splat artifact. Splatfacto exports keep the original PLY for download and add a viewer-optimized PLY for browser navigation when needed. | `viewer-manifest.json` | Verifies PLY hash, size, header, viewer artifact and reference camera views. |
@@ -138,9 +138,13 @@ The wizard's `Capture profile` selector is not decorative. It changes the captur
 
 ## Capture Diagnostics And SfM Rescue
 
-Frame sampling now records a lightweight capture-quality check. It looks for common SfM trouble signs such as excessive frame-to-frame motion, low contrast, exposure risk and blur. These diagnostics do not stop the pipeline by themselves; they explain why a later camera solve may struggle.
+Frame sampling now does more than take every Nth frame. It first extracts a larger candidate set across the full clip, scores candidates for sharpness, contrast, exposure, clipping and texture, then keeps the best keyframes per time segment. The report records how many candidates were considered, how many were kept and whether selected frames still contain risky bright/textureless areas.
 
-When a video is longer than the selected frame budget, sampling lowers the effective extraction FPS so the selected frames still span the whole clip. This matters for room captures where one wall or floor area may only appear near the end of the video.
+Blank white walls are a known weak spot for photogrammetry and Gaussian splats. The pipeline does not simply throw those frames away, because that would remove the wall from the scene. Instead it prefers frames where the wall is sharp and appears with useful anchors such as floor trim, corners, posters, furniture or nearby textured objects. If many selected frames are still mostly bright and textureless, frame sampling emits a warning before the heavy COLMAP/training stages.
+
+Run CLI stages through `.venv/bin/python`, as shown below, so the Pillow-based keyframe scoring dependency is available. The GUI server already uses the venv when it launches pipeline stages.
+
+When a video is longer than the selected frame budget, candidate extraction still spans the whole clip. This matters for room captures where one wall or floor area may only appear near the end of the video.
 
 The SfM stage runs the configured COLMAP profile first. If too few frames register, it automatically retries with more robust matching:
 
@@ -197,7 +201,7 @@ The UI is a local lab console with:
 - progress text, elapsed time and ETA for the full generation run
 - per-step cards that explain what is happening, what the step produces and which internal checks are running
 - live training progress from Nerfstudio logs when available, including iteration count and remaining time
-- capture quality diagnostics during frame sampling: blur, contrast, exposure and large frame-to-frame motion
+- keyframe diagnostics during frame sampling: blur, contrast, exposure, large frame-to-frame motion and bright textureless wall risk
 - automatic COLMAP retry profiles during SfM when too few frames register
 - source/capture selection
 - local video import controls

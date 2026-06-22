@@ -1852,6 +1852,238 @@ def frame_sampling_plan(target_fps: float, max_frames: int, duration_seconds: An
     }
 
 
+def planned_frame_count(target_fps: float, max_frames: int, duration_seconds: Any) -> int:
+    try:
+        duration = float(duration_seconds)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= 0:
+        return max_frames
+    return max(1, min(max_frames, int(math.ceil(duration * target_fps))))
+
+
+def candidate_sampling_plan(target_fps: float, max_frames: int, duration_seconds: Any) -> dict[str, Any]:
+    target_count = planned_frame_count(target_fps, max_frames, duration_seconds)
+    try:
+        duration = float(duration_seconds)
+    except (TypeError, ValueError):
+        duration = 0.0
+    requested_candidates = min(max_frames * 3, max(target_count, target_count * 3))
+    if duration > 0:
+        candidate_fps = min(10.0, max(0.001, requested_candidates / duration))
+        requested_candidates = max(target_count, int(math.ceil(duration * candidate_fps)))
+    else:
+        candidate_fps = target_fps
+    return {
+        "strategy": "quality_keyframes",
+        "candidateFps": candidate_fps,
+        "candidateMaxFrames": max(1, requested_candidates),
+        "targetFrameCount": target_count,
+    }
+
+
+def clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def frame_quality_score(metrics: dict[str, Any]) -> float:
+    sharpness = float(metrics.get("sharpness") or 0.0)
+    contrast = float(metrics.get("contrast") or 0.0)
+    luma = float(metrics.get("luma") or 0.0)
+    clipped_dark = float(metrics.get("clippedDarkFraction") or 0.0)
+    clipped_bright = float(metrics.get("clippedBrightFraction") or 0.0)
+
+    sharpness_score = clamp01((sharpness - 5.0) / 24.0)
+    contrast_score = clamp01((contrast - 12.0) / 48.0)
+    exposure_score = 1.0 - clamp01((abs(luma - 128.0) - 68.0) / 70.0)
+    clipping_score = 1.0 - clamp01((clipped_dark + clipped_bright) * 4.0)
+    texture_penalty = 0.18 if metrics.get("texturelessRisk") else 0.0
+    white_wall_penalty = 0.16 if metrics.get("whiteWallRisk") else 0.0
+    score = (
+        0.38 * sharpness_score
+        + 0.30 * contrast_score
+        + 0.20 * exposure_score
+        + 0.12 * clipping_score
+        - texture_penalty
+        - white_wall_penalty
+    )
+    return round(clamp01(score), 6)
+
+
+def analyze_candidate_frames(
+    candidate_frames: list[Path],
+    candidate_fps: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    try:
+        from PIL import Image, ImageChops, ImageFilter, ImageStat  # type: ignore[import-not-found]
+    except Exception as exc:  # noqa: BLE001 - optional local diagnostic dependency
+        candidates = [
+            {
+                "sourcePath": str(path),
+                "sourceIndex": index,
+                "timestampSeconds": round((index - 1) / candidate_fps, 6) if candidate_fps > 0 else index - 1,
+                "score": 0.5,
+            }
+            for index, path in enumerate(candidate_frames, start=1)
+        ]
+        return candidates, {
+            "status": "warning",
+            "summary": "quality keyframe scoring skipped because Pillow is unavailable",
+            "error": str(exc),
+        }
+
+    candidates: list[dict[str, Any]] = []
+    previous_gray = None
+    for index, path in enumerate(candidate_frames, start=1):
+        entry: dict[str, Any] = {
+            "sourcePath": str(path),
+            "sourceIndex": index,
+            "timestampSeconds": round((index - 1) / candidate_fps, 6) if candidate_fps > 0 else index - 1,
+        }
+        try:
+            with Image.open(path) as image:
+                gray = image.convert("L")
+                gray.thumbnail((320, 320), Image.Resampling.BILINEAR)
+                stat = ImageStat.Stat(gray)
+                luma = float(stat.mean[0])
+                contrast = float(stat.stddev[0])
+                edge_stat = ImageStat.Stat(gray.filter(ImageFilter.FIND_EDGES))
+                sharpness = float(edge_stat.stddev[0])
+                histogram = gray.histogram()
+                pixel_count = max(1, sum(histogram))
+                clipped_dark = sum(histogram[:8]) / pixel_count
+                clipped_bright = sum(histogram[248:]) / pixel_count
+                delta = None
+                if previous_gray is not None and previous_gray.size == gray.size:
+                    delta = float(ImageStat.Stat(ImageChops.difference(previous_gray, gray)).mean[0])
+                previous_gray = gray.copy()
+        except Exception as exc:  # noqa: BLE001 - keep one bad frame from killing the run
+            entry.update(
+                {
+                    "status": "warning",
+                    "error": str(exc),
+                    "luma": None,
+                    "contrast": None,
+                    "sharpness": None,
+                    "interFrameDelta": None,
+                    "score": 0.0,
+                }
+            )
+            candidates.append(entry)
+            continue
+
+        textureless = contrast < 18.0 and sharpness < 8.0
+        white_wall = luma > 185.0 and contrast < 24.0 and sharpness < 9.5
+        entry.update(
+            {
+                "status": "pass",
+                "luma": round(luma, 3),
+                "contrast": round(contrast, 3),
+                "sharpness": round(sharpness, 3),
+                "clippedDarkFraction": round(clipped_dark, 5),
+                "clippedBrightFraction": round(clipped_bright, 5),
+                "interFrameDelta": round(delta, 3) if delta is not None else None,
+                "texturelessRisk": textureless,
+                "whiteWallRisk": white_wall,
+            }
+        )
+        entry["score"] = frame_quality_score(entry)
+        candidates.append(entry)
+
+    readable = [item for item in candidates if item.get("status") == "pass"]
+    if not readable:
+        return candidates, {"status": "fail", "summary": "no candidate frames could be scored"}
+
+    def fraction(predicate: Any) -> float:
+        return sum(1 for item in readable if predicate(item)) / max(1, len(readable))
+
+    score_values = [float(item.get("score") or 0.0) for item in readable]
+    report = {
+        "status": "pass",
+        "summary": "candidate frames scored for keyframe selection",
+        "candidateFrameCount": len(candidates),
+        "scoredFrameCount": len(readable),
+        "scoreMedian": round(float(statistics.median(score_values)), 4),
+        "lowScoreCandidateFraction": round(fraction(lambda item: float(item.get("score") or 0.0) < 0.35), 4),
+        "texturelessCandidateFraction": round(fraction(lambda item: bool(item.get("texturelessRisk"))), 4),
+        "whiteWallCandidateFraction": round(fraction(lambda item: bool(item.get("whiteWallRisk"))), 4),
+    }
+    return candidates, report
+
+
+def select_keyframes_from_candidates(
+    candidates: list[dict[str, Any]],
+    target_count: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not candidates:
+        return [], {"status": "fail", "summary": "no candidate frames were extracted"}
+
+    target = max(1, min(target_count, len(candidates)))
+    selected: list[dict[str, Any]] = []
+    for bucket_index in range(target):
+        start = math.floor(bucket_index * len(candidates) / target)
+        end = math.floor((bucket_index + 1) * len(candidates) / target)
+        bucket = candidates[start:max(start + 1, end)]
+        best = max(bucket, key=lambda item: float(item.get("score") or 0.0))
+        selected.append(dict(best))
+
+    selected.sort(key=lambda item: int(item.get("sourceIndex") or 0))
+    deduped: list[dict[str, Any]] = []
+    last_source_index: int | None = None
+    for item in selected:
+        source_index = int(item.get("sourceIndex") or 0)
+        if last_source_index is not None and source_index == last_source_index:
+            continue
+        deduped.append(item)
+        last_source_index = source_index
+
+    readable = [item for item in candidates if item.get("status") == "pass"]
+    selected_readable = [item for item in deduped if item.get("status") == "pass"]
+    def selected_fraction(key: str) -> float:
+        return sum(1 for item in selected_readable if bool(item.get(key))) / max(1, len(selected_readable))
+
+    report = {
+        "status": "pass",
+        "summary": f"selected {len(deduped)} quality keyframes from {len(candidates)} candidates",
+        "strategy": "quality_keyframes_temporal_buckets",
+        "candidateFrameCount": len(candidates),
+        "selectedFrameCount": len(deduped),
+        "targetFrameCount": target_count,
+        "droppedCandidateCount": max(0, len(candidates) - len(deduped)),
+        "selectedScoreMedian": round(float(statistics.median([float(item.get("score") or 0.0) for item in selected_readable])), 4)
+        if selected_readable
+        else None,
+        "selectedTexturelessFraction": round(selected_fraction("texturelessRisk"), 4),
+        "selectedWhiteWallRiskFraction": round(selected_fraction("whiteWallRisk"), 4),
+        "scoredCandidateCount": len(readable),
+    }
+    if report["selectedWhiteWallRiskFraction"] > 0.18:
+        report["status"] = "warning"
+        report["summary"] += "; many selected frames still contain low-texture bright wall regions"
+        report["recommendation"] = "film bright blank walls with slower movement and include edges, floor trim, posters or nearby textured objects in the same view"
+    elif report["selectedTexturelessFraction"] > 0.25:
+        report["status"] = "warning"
+        report["summary"] += "; many selected frames are low texture"
+        report["recommendation"] = "add more parallax and keep textured objects or wall/floor edges visible around blank surfaces"
+    return deduped, report
+
+
+def materialize_selected_frames(selected: list[dict[str, Any]], frame_dir: Path) -> list[dict[str, Any]]:
+    materialized: list[dict[str, Any]] = []
+    for output_index, item in enumerate(selected, start=1):
+        source_path = Path(str(item.get("sourcePath") or ""))
+        output_path = frame_dir / f"frame_{output_index:06d}.jpg"
+        shutil.copy2(source_path, output_path)
+        materialized.append(
+            {
+                **item,
+                "index": output_index - 1,
+                "path": str(output_path),
+            }
+        )
+    return materialized
+
+
 def frame_run_directory(job_path: Path) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return job_path.parent / "frames" / stamp
@@ -1867,6 +2099,7 @@ def build_frame_manifest(
     max_frames: int,
     sampling_strategy: str,
     contact_sheet_stride: int,
+    selected_frames: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     frames = sorted(frame_dir.glob("frame_*.jpg"))
     frame_entries = []
@@ -1876,10 +2109,32 @@ def build_frame_manifest(
         duration_value = float(duration_seconds)
     except (TypeError, ValueError):
         duration_value = 0.0
-    for index, frame_path in enumerate(frames):
-        timestamp_seconds = index / effective_fps if effective_fps > 0 else index / target_fps
-        if duration_value > 0:
-            timestamp_seconds = min(timestamp_seconds, duration_value)
+    if selected_frames is not None:
+        iterable_frames = [(index, Path(str(frame.get("path"))), frame) for index, frame in enumerate(selected_frames)]
+    else:
+        iterable_frames = [(index, frame_path, {}) for index, frame_path in enumerate(frames)]
+
+    for index, frame_path, selected_frame in iterable_frames:
+        timestamp_seconds = selected_frame.get("timestampSeconds")
+        if not isinstance(timestamp_seconds, (int, float)):
+            timestamp_seconds = index / effective_fps if effective_fps > 0 else index / target_fps
+            if duration_value > 0:
+                timestamp_seconds = min(timestamp_seconds, duration_value)
+        quality = {
+            key: selected_frame.get(key)
+            for key in (
+                "score",
+                "luma",
+                "contrast",
+                "sharpness",
+                "clippedDarkFraction",
+                "clippedBrightFraction",
+                "interFrameDelta",
+                "texturelessRisk",
+                "whiteWallRisk",
+            )
+            if key in selected_frame
+        }
         frame_entries.append(
             {
                 "index": index,
@@ -1887,6 +2142,17 @@ def build_frame_manifest(
                 "timestampSeconds": round(timestamp_seconds, 6),
                 "sizeBytes": frame_path.stat().st_size,
                 "sha256": file_sha256(frame_path),
+                **(
+                    {
+                        "selection": {
+                            "sourceIndex": selected_frame.get("sourceIndex"),
+                            "sourcePath": selected_frame.get("sourcePath"),
+                            "quality": quality,
+                        }
+                    }
+                    if selected_frame
+                    else {}
+                ),
             }
         )
 
@@ -2112,6 +2378,28 @@ def validate_frame_manifest(frame_manifest: dict[str, Any]) -> tuple[str, list[d
         }
     )
 
+    candidate_quality = frame_manifest.get("candidateQuality")
+    if isinstance(candidate_quality, dict):
+        checks.append(
+            {
+                "id": "candidate_quality",
+                "status": candidate_quality.get("status", "warning"),
+                "summary": candidate_quality.get("summary", "candidate frame quality scored"),
+                **{key: value for key, value in candidate_quality.items() if key not in {"status", "summary"}},
+            }
+        )
+
+    keyframe_selection = frame_manifest.get("keyframeSelection")
+    if isinstance(keyframe_selection, dict):
+        checks.append(
+            {
+                "id": "keyframe_selection",
+                "status": keyframe_selection.get("status", "warning"),
+                "summary": keyframe_selection.get("summary", "quality keyframes selected"),
+                **{key: value for key, value in keyframe_selection.items() if key not in {"status", "summary"}},
+            }
+        )
+
     quality = analyze_capture_frame_quality(frames)
     frame_manifest["captureQuality"] = quality
     checks.append(
@@ -2216,12 +2504,18 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
 
     metadata = intake_report.get("metadata", {}) if isinstance(intake_report.get("metadata"), dict) else {}
     sampling_plan = frame_sampling_plan(target_fps, max_frames, metadata.get("durationSeconds"))
+    selection_plan = candidate_sampling_plan(target_fps, max_frames, metadata.get("durationSeconds"))
     effective_fps = float(sampling_plan["effectiveFps"])
+    candidate_fps = float(selection_plan["candidateFps"])
+    candidate_max_frames = int(selection_plan["candidateMaxFrames"])
+    target_frame_count = int(selection_plan["targetFrameCount"])
 
     frame_dir = frame_run_directory(job_path)
     frame_dir.mkdir(parents=True, exist_ok=True)
-    output_pattern = frame_dir / "frame_%06d.jpg"
-    fps_filter = f"fps={format_fps(effective_fps)}"
+    candidate_dir = frame_dir / "candidates"
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+    output_pattern = candidate_dir / "candidate_%06d.jpg"
+    fps_filter = f"fps={format_fps(candidate_fps)}"
     extract = run_command(
         [
             "ffmpeg",
@@ -2234,7 +2528,7 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
             "-vf",
             fps_filter,
             "-frames:v",
-            str(max_frames),
+            str(candidate_max_frames),
             "-q:v",
             "2",
             str(output_pattern),
@@ -2259,6 +2553,10 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
         )
         return base
 
+    candidate_frames = sorted(candidate_dir.glob("candidate_*.jpg"))
+    candidates, candidate_quality_report = analyze_candidate_frames(candidate_frames, candidate_fps)
+    selected_candidates, selection_report = select_keyframes_from_candidates(candidates, target_frame_count)
+    selected_frames = materialize_selected_frames(selected_candidates, frame_dir)
     extracted_frames = sorted(frame_dir.glob("frame_*.jpg"))
     contact_sheet_stride = max(1, math.ceil(len(extracted_frames) / 25)) if extracted_frames else 1
     contact_sheet_filter = f"select='not(mod(n\\,{contact_sheet_stride}))',scale=160:-1,tile=5x5"
@@ -2292,10 +2590,21 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
         target_fps,
         effective_fps,
         max_frames,
-        str(sampling_plan["strategy"]),
+        str(selection_plan["strategy"]),
         contact_sheet_stride,
+        selected_frames=selected_frames,
     )
     frame_manifest["sampling"]["expectedUncappedFrameCount"] = sampling_plan.get("expectedUncappedFrameCount")
+    frame_manifest["sampling"]["sourceStrategy"] = sampling_plan.get("strategy")
+    frame_manifest["sampling"]["candidateFps"] = round(candidate_fps, 6)
+    frame_manifest["sampling"]["candidateMaxFrames"] = candidate_max_frames
+    frame_manifest["sampling"]["candidateFrameCount"] = len(candidate_frames)
+    frame_manifest["sampling"]["targetFrameCount"] = target_frame_count
+    frame_manifest["sampling"]["selectionStrategy"] = selection_report.get("strategy")
+    frame_manifest["sampling"]["cappedByMaxFrames"] = bool(sampling_plan.get("cappedByMaxFrames"))
+    frame_manifest["candidateFrameDirectory"] = str(candidate_dir)
+    frame_manifest["candidateQuality"] = candidate_quality_report
+    frame_manifest["keyframeSelection"] = selection_report
     status, checks = validate_frame_manifest(frame_manifest)
     frame_manifest["stage"]["status"] = status
     frame_manifest_path = frame_dir / "frame_manifest.json"
@@ -2311,9 +2620,9 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
             "id": "ffmpeg_extract",
             "status": "pass",
             "summary": (
-                "frames extracted across full video"
-                if frame_manifest["sampling"].get("strategy") == "full_duration_even"
-                else "frames extracted"
+                "quality keyframes selected across full video"
+                if frame_manifest["sampling"].get("sourceStrategy") == "full_duration_even"
+                else "quality keyframes selected"
             ),
         }
     )
