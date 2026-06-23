@@ -33,6 +33,38 @@ Two small SfM checks were run after the new keyframe selection. This is still no
 | `capture-wizard-api-e2e-hf-room` | `36/36` registered, `13,014` sparse points, reprojection `0.702852` | `37/37` registered, `13,097` sparse points, reprojection `0.697693` | Already-good clip remained stable and improved slightly. |
 | `capture-elliots-rum1` | `21/89` registered, `2,511` sparse points, reprojection `0.835439` | `44/89` registered, `8,322` sparse points, reprojection `1.088691` | Registration and point count improved, but still failed the `70%` registration threshold. More frames registered with a higher mean reprojection error, so this is not a solved capture. |
 
+## 3DGS Render Spot Check
+
+Two real 3DGS training runs were also checked after the keyframe selector. These are not final quality ceilings. They are sanity checks that the pipeline can go from scored video frames to SfM, training, export, render review and viewer packaging.
+
+| Clip | Trainer | Images | Result | Render review |
+| --- | --- | ---: | --- | --- |
+| `capture-wizard-api-e2e-hf-room` | `quality_probe` / `gsplat`, `2,500` iterations | 37 | `120,000` gaussians, render review passed | MAE `9.0864`, RMSE `13.0668`, preview score `6.9539` |
+| `capture-cuda-colmap-smoke-video` | `splatfacto_preview` / Nerfstudio, `1,000` iterations | 148 | `111,911` gaussians, render review passed | PSNR `22.7771`, SSIM `0.7911`, LPIPS `0.2826`, 19 eval images |
+
+Contact sheets:
+
+- `/home/engwall/projects/gaussian-splat-lab/outputs/jobs/capture-wizard-api-e2e-hf-room-20260619T093341Z-20260619T093341Z/splats/20260623T083719Z/render_review/contact_sheet.png`
+- `/home/engwall/projects/gaussian-splat-lab/outputs/jobs/capture-cuda-colmap-smoke-video-20260621T114646Z-20260621T114746Z/splats/20260623T084705Z/render_review/contact_sheet.png`
+
+The larger `capture-cuda-colmap-smoke-video` run is the better signal here: frame sampling selected 148 frames from 444 candidates, CUDA COLMAP registered `148/148` frames, and the Splatfacto preview produced a coherent render review. The small E2E room clip stayed valid, but the new keyframes did not improve every final-render metric. That is useful caution: better frame scores help the pipeline, but the final render still depends on trainer choice, scene coverage, camera motion and surface texture.
+
+One operational note: GPU COLMAP must be run from an environment that can see CUDA. In the local sandbox, the CUDA sidecar can fail or fall back. Manual validation should set `GSL_COLMAP_BIN=/home/engwall/projects/gaussian-splat-lab/outputs/tools/colmap-cuda/bin/colmap` and run outside the sandbox when validating GPU behavior.
+
+## Optional AI Review
+
+The simplest AI layer should be an advisory visual review, not a replacement for the deterministic checks. The pipeline already generates the right inputs: selected-frame contact sheets, render/target/diff contact sheets, SfM metrics and trainer metrics.
+
+A first version can ask a vision model for strict JSON:
+
+- `status`: `pass`, `warning` or `fail`
+- `riskFlags`: blur, textureless surfaces, exposure issues, coverage gaps, floaters, smeared geometry, missing walls/floors
+- `recommendedAction`: continue, capture again, add more coverage, lower frame budget, raise training profile or inspect manually
+- `confidence`: low, medium or high
+- `evidenceCells`: which contact-sheet cells triggered the judgment
+
+For privacy and commercial use, this should be opt-in if it sends images to a cloud model. Private room captures should not leave the machine by default. A local vision model can be added later, but the first useful version can be a small post-run reviewer that writes `reports/ai_review.json` and displays it as a second opinion in the UI.
+
 ## Current Read
 
 The change is promising but not magic. It improves the image set and can materially improve COLMAP registration on a weak clip, while preserving behavior on a clean clip. It does not fix captures that lack enough stable overlap, texture or parallax.
