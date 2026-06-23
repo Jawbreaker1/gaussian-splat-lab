@@ -1461,6 +1461,17 @@ select {
   min-width: 84px;
 }
 
+.artifact-variant-switch {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 12px;
+  overflow-x: auto;
+}
+
+.artifact-variant-switch[hidden] {
+  display: none;
+}
+
 .viewer-sensitivity-control {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

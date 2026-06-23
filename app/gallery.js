@@ -13,6 +13,7 @@ const els = {
   canvas: document.querySelector('#gallerySparkCanvas'),
   overlay: document.querySelector('#gallerySparkOverlay'),
   sceneMeta: document.querySelector('#gallerySceneMeta'),
+  variantSwitch: document.querySelector('#galleryVariantSwitch'),
   guidedButton: document.querySelector('#galleryGuidedButton'),
   safeButton: document.querySelector('#gallerySafeButton'),
   freeButton: document.querySelector('#galleryFreeButton'),
@@ -44,6 +45,7 @@ let viewerModulePromise = null;
 let navigationMode = 'walk';
 let guardrailMode = 'safe';
 let guidedPathPlaying = false;
+let selectedVariantId = 'viewer_default';
 let navigationSensitivity = 0.55;
 let searchTerm = '';
 let sortMode = 'newest';
@@ -182,6 +184,54 @@ function setDownload(link, url, fileName) {
   link.setAttribute('aria-disabled', 'false');
 }
 
+function artifactSplatCount(artifact = {}) {
+  return artifact?.ply?.vertexCount ?? artifact?.splatCount ?? null;
+}
+
+function artifactVariantOptions(manifest = {}, item = {}) {
+  const manifestVariants = Array.isArray(manifest.artifactVariants) ? manifest.artifactVariants : [];
+  if (manifestVariants.length) {
+    return manifestVariants.filter((variant) => variant?.url || variant?.repoRelativePath || variant?.path);
+  }
+  const artifact = manifest.artifact ?? {};
+  if (!artifact.url && !item.artifactUrl) return [];
+  return [
+    {
+      id: 'viewer_default',
+      label: 'Viewer default',
+      url: artifact.url ?? item.artifactUrl,
+      sizeBytes: artifact.sizeBytes ?? item.artifact?.sizeBytes,
+      ply: artifact.ply ?? { vertexCount: item.artifact?.splatCount },
+    },
+  ];
+}
+
+function variantFileName(item = {}, variant = {}) {
+  const base = item.artifactFileName || `${item.id || 'scene'}.ply`;
+  if (!variant?.id || variant.id === 'viewer_default') return base;
+  const safeId = String(variant.id).replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
+  return base.replace(/\.ply$/i, `.${safeId}.ply`);
+}
+
+function renderVariantSwitch(variants = [], activeId = selectedVariantId) {
+  els.variantSwitch.replaceChildren();
+  els.variantSwitch.hidden = variants.length <= 1;
+  for (const variant of variants) {
+    const button = document.createElement('button');
+    button.className = 'nav-mode-button';
+    button.type = 'button';
+    button.textContent = variant.label ?? variant.id ?? 'Variant';
+    button.dataset.variantId = variant.id ?? 'viewer_default';
+    const active = button.dataset.variantId === activeId;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+    button.addEventListener('click', () => {
+      loadSelectedVariant(button.dataset.variantId).catch(showError);
+    });
+    els.variantSwitch.append(button);
+  }
+}
+
 function renderReviewPanel(item, manifest = {}) {
   const preview = manifest.preview ?? item?.preview ?? {};
   const reviewUrl = preview.renderReviewUrl;
@@ -199,20 +249,21 @@ function renderReviewPanel(item, manifest = {}) {
   els.reviewPanel.hidden = false;
 }
 
-function renderSceneMeta(item, manifest = {}) {
+function renderSceneMeta(item, manifest = {}, variant = null) {
   els.sceneMeta.replaceChildren();
   if (!item) {
     els.sceneMeta.append(metaRow('Scene', 'No scene selected'));
     renderReviewPanel(null);
     return;
   }
-  const artifact = item.artifact ?? {};
+  const artifact = variant ?? item.artifact ?? {};
   const technical = item.technical ?? {};
-  els.sceneMeta.append(
+  const rows = [
     metaRow('Capture', item.captureId),
+    metaRow('Variant', variant?.label ?? 'Viewer default'),
     metaRow('Profile', technical.profile),
     metaRow('Trainer', technical.backend ?? technical.method),
-    metaRow('Splats', formatCount(artifact.splatCount)),
+    metaRow('Splats', formatCount(artifactSplatCount(artifact))),
     metaRow('Size', formatBytes(artifact.sizeBytes)),
     metaRow('Iterations', formatCount(technical.iterations)),
     metaRow('Images', formatCount(technical.imagesUsed)),
@@ -220,7 +271,8 @@ function renderSceneMeta(item, manifest = {}) {
     metaRow('Quality', compactQualityLabel(technical)),
     metaRow('Device', technical.device),
     metaRow('Updated', formatDate(item.updatedAt ?? item.createdAt)),
-  );
+  ];
+  els.sceneMeta.append(...rows);
   renderReviewPanel(item, manifest);
 }
 
@@ -232,6 +284,9 @@ function resetScenePanel(message = 'Choose a scene from the gallery') {
   setDownload(els.downloadSplatLink, null);
   setDownload(els.downloadManifestLink, null);
   els.deleteSceneButton.disabled = true;
+  selectedVariantId = 'viewer_default';
+  els.variantSwitch.replaceChildren();
+  els.variantSwitch.hidden = true;
   els.overlay.hidden = false;
   els.overlay.textContent = message;
   renderSceneMeta(null);
@@ -361,10 +416,31 @@ async function loadGallery() {
   renderGallery();
 }
 
+async function loadSelectedVariant(variantId = selectedVariantId) {
+  if (!selectedDetail) return;
+  const manifest = selectedDetail.manifest ?? {};
+  const item = selectedDetail.item ?? items.find((candidate) => candidate.id === selectedId);
+  const variants = artifactVariantOptions(manifest, item);
+  const variant = variants.find((candidate) => candidate.id === variantId) ?? variants[0];
+  if (!variant?.url) throw new Error('selected artifact variant has no splat URL');
+  selectedVariantId = variant.id ?? 'viewer_default';
+  renderVariantSwitch(variants, selectedVariantId);
+  setSceneStatus(`loading ${variant.label ?? 'variant'}`, 'neutral');
+  setDownload(els.downloadSplatLink, variant.url, variantFileName(item, variant));
+  renderSceneMeta(item, manifest, variant);
+  const viewer = await ensureController();
+  const result = await viewer.load({
+    url: variant.url,
+    cameraViews: Array.isArray(manifest.cameraViews) ? manifest.cameraViews : [],
+  });
+  setSceneStatus(result?.status === 'pass' || result?.status === 'cached' ? 'ready' : result?.status ?? 'loaded', 'pass');
+}
+
 async function selectScene(jobId, updateUrl = true) {
   const item = items.find((candidate) => candidate.id === jobId);
   if (!item) return;
   selectedId = jobId;
+  selectedVariantId = 'viewer_default';
   renderGallery();
   els.sceneTitle.textContent = item.name;
   setSceneStatus('loading', 'neutral');
@@ -381,17 +457,15 @@ async function selectScene(jobId, updateUrl = true) {
   if (!response.ok) throw new Error(payload.error || `scene ${response.status}`);
   selectedDetail = payload;
   const manifest = payload.manifest ?? {};
-  const artifactUrl = manifest.artifact?.url;
-  if (!artifactUrl) throw new Error('selected scene has no splat artifact');
-  setDownload(els.downloadSplatLink, manifest.export?.primaryAssetUrl ?? artifactUrl, item.artifactFileName);
+  const variants = artifactVariantOptions(manifest, payload.item ?? item);
+  if (!variants.length) throw new Error('selected scene has no splat artifact');
+  selectedVariantId = variants.some((variant) => variant.id === 'viewer_default')
+    ? 'viewer_default'
+    : variants[0].id;
+  renderVariantSwitch(variants, selectedVariantId);
+  setDownload(els.downloadSplatLink, variants[0].url, variantFileName(item, variants[0]));
   setDownload(els.downloadManifestLink, item.viewerManifestUrl, item.manifestFileName);
-  renderSceneMeta(payload.item ?? item, manifest);
-  const viewer = await ensureController();
-  const result = await viewer.load({
-    url: artifactUrl,
-    cameraViews: Array.isArray(manifest.cameraViews) ? manifest.cameraViews : [],
-  });
-  setSceneStatus(result?.status === 'pass' || result?.status === 'cached' ? 'ready' : result?.status ?? 'loaded', 'pass');
+  await loadSelectedVariant(selectedVariantId);
 }
 
 async function deleteScene(jobId = selectedId) {

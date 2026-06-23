@@ -1117,8 +1117,12 @@ def attach_artifact_urls(viewer_manifest: dict[str, Any]) -> dict[str, Any]:
     artifact = manifest.get("artifact") if isinstance(manifest.get("artifact"), dict) else {}
     preview = manifest.get("preview") if isinstance(manifest.get("preview"), dict) else {}
     export = manifest.get("export") if isinstance(manifest.get("export"), dict) else {}
+    variants = manifest.get("artifactVariants") if isinstance(manifest.get("artifactVariants"), list) else []
     if isinstance(artifact, dict):
         artifact["url"] = artifact_url(artifact.get("repoRelativePath"))
+    for variant in variants:
+        if isinstance(variant, dict):
+            variant["url"] = artifact_url(variant.get("repoRelativePath"))
     if isinstance(preview, dict):
         preview["sampleRenderUrl"] = artifact_url(preview.get("sampleRenderRepoRelativePath"))
         preview["sampleTargetUrl"] = artifact_url(preview.get("sampleTargetRepoRelativePath"))

@@ -245,11 +245,29 @@ The primary export today is a viewer environment bundle:
 
 - binary little-endian Gaussian Splat PLY
 - optional viewer-optimized PLY for browser rendering
+- optional non-destructive cleanup variants for visual comparison
 - viewer manifest
 - reference camera views
 - preview and render-review images
 
 This is not a triangle mesh or GLB export yet. The current goal is high-quality Gaussian Splat viewing and handoff. Mesh conversion or GLB packaging can be added later as a separate export stage if product needs require it.
+
+## Splat Post Processing
+
+Some trained scenes contain floaters: splats with weak support, extreme scale, odd anisotropy or positions far outside the useful scene volume. The repo now has a deliberately conservative post-process experiment for that case. It never edits the source PLY. It writes sibling files such as `*.clean-balanced.ply`, records a JSON report, and adds those files to `artifactVariants` in the viewer manifest so the gallery can switch between `Viewer default`, `Original export` and each cleaned variant.
+
+Run it on a packaged scene:
+
+```bash
+python3 scripts/splat-postprocess.py \
+  --manifest outputs/jobs/<job-id>/viewer/viewer-manifest.json \
+  --profile conservative \
+  --profile balanced \
+  --profile aggressive \
+  --update-manifest
+```
+
+The profiles are meant for comparison, not blind replacement. `conservative` removes only obvious outliers, `balanced` is the first useful cleanup candidate, and `aggressive` is a stress test that can remove real detail. Keep the raw/default artifact as the reference and judge cleanup by moving through the same camera angles in the gallery.
 
 ## Cleanup
 
