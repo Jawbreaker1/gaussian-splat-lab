@@ -1342,11 +1342,13 @@ def gallery_job_summary(job_path: Path, capture_names: dict[str, str] | None = N
         or preview.get("renderReviewUrl")
         or preview.get("sampleTargetUrl")
     )
+    updated_at = manifest.get("generatedAt") or job_meta.get("updatedAt") or job_meta.get("createdAt")
     return {
         "id": job_id,
         "name": names.get(capture_id, capture_id or job_id),
         "captureId": capture_id,
         "createdAt": job_meta.get("createdAt"),
+        "updatedAt": updated_at,
         "status": job_meta.get("status") or "unknown",
         "sceneUrl": f"/gallery?scene={quote(job_id)}",
         "jobPath": str(job_path),
@@ -1403,6 +1405,7 @@ def gallery_jobs() -> list[dict[str, Any]]:
         item = gallery_job_summary(job_path, capture_names)
         if item:
             items.append(item)
+    items.sort(key=lambda item: str(item.get("updatedAt") or item.get("createdAt") or ""), reverse=True)
     return items
 
 

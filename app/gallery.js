@@ -24,6 +24,7 @@ const els = {
   resetButton: document.querySelector('#galleryResetButton'),
   zoomOutButton: document.querySelector('#galleryZoomOutButton'),
   zoomInButton: document.querySelector('#galleryZoomInButton'),
+  maximizeButton: document.querySelector('#galleryMaximizeButton'),
   cameraPrevButton: document.querySelector('#galleryCameraPrevButton'),
   cameraNextButton: document.querySelector('#galleryCameraNextButton'),
   reviewPanel: document.querySelector('#galleryReviewPanel'),
@@ -40,6 +41,7 @@ let navigationMode = 'walk';
 let navigationSensitivity = 0.55;
 let searchTerm = '';
 let sortMode = 'newest';
+let sceneMaximized = false;
 
 function formatBytes(bytes) {
   const value = Number(bytes);
@@ -122,6 +124,11 @@ function qualitySortValue(item) {
   return -Infinity;
 }
 
+function newestSortValue(item) {
+  const timestamp = new Date(item?.updatedAt ?? item?.createdAt ?? 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function searchableText(item) {
   return [
     item.name,
@@ -152,7 +159,7 @@ function filteredItems() {
     if (sortMode === 'splats') {
       return Number(right.artifact?.splatCount ?? -1) - Number(left.artifact?.splatCount ?? -1);
     }
-    return new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime();
+    return newestSortValue(right) - newestSortValue(left);
   });
   return result;
 }
@@ -206,7 +213,7 @@ function renderSceneMeta(item, manifest = {}) {
     metaRow('Reference views', formatCount(technical.cameraViews ?? manifest.cameraViews?.length)),
     metaRow('Quality', compactQualityLabel(technical)),
     metaRow('Device', technical.device),
-    metaRow('Created', formatDate(item.createdAt)),
+    metaRow('Updated', formatDate(item.updatedAt ?? item.createdAt)),
   );
   renderReviewPanel(item, manifest);
 }
@@ -414,6 +421,18 @@ function setSensitivity(value) {
   controller?.setNavigationSensitivity(navigationSensitivity);
 }
 
+function setSceneMaximized(value) {
+  sceneMaximized = Boolean(value);
+  document.body.classList.toggle('gallery-scene-maximized', sceneMaximized);
+  els.maximizeButton.textContent = sceneMaximized ? '×' : '⛶';
+  els.maximizeButton.title = sceneMaximized ? 'Exit full view' : 'Maximize scene';
+  els.maximizeButton.setAttribute('aria-label', sceneMaximized ? 'Exit full view' : 'Maximize scene');
+  els.maximizeButton.setAttribute('aria-pressed', String(sceneMaximized));
+  if (sceneMaximized) {
+    els.canvas.focus({ preventScroll: true });
+  }
+}
+
 function attachControls() {
   els.refreshButton.addEventListener('click', () => loadGallery().catch(showError));
   els.searchInput.addEventListener('input', (event) => {
@@ -435,8 +454,12 @@ function attachControls() {
   els.resetButton.addEventListener('click', () => controller?.reset());
   els.zoomOutButton.addEventListener('click', () => controller?.zoom(0.86));
   els.zoomInButton.addEventListener('click', () => controller?.zoom(1.16));
+  els.maximizeButton.addEventListener('click', () => setSceneMaximized(!sceneMaximized));
   els.cameraPrevButton.addEventListener('click', () => controller?.previousCameraView());
   els.cameraNextButton.addEventListener('click', () => controller?.nextCameraView());
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && sceneMaximized) setSceneMaximized(false);
+  });
 }
 
 function showError(error) {
