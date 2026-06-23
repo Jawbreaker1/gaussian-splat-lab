@@ -1898,14 +1898,14 @@ def frame_quality_score(metrics: dict[str, Any]) -> float:
     exposure_score = 1.0 - clamp01((abs(luma - 128.0) - 68.0) / 70.0)
     clipping_score = 1.0 - clamp01((clipped_dark + clipped_bright) * 4.0)
     texture_penalty = 0.18 if metrics.get("texturelessRisk") else 0.0
-    white_wall_penalty = 0.16 if metrics.get("whiteWallRisk") else 0.0
+    bright_low_texture_penalty = 0.16 if metrics.get("lowTextureBrightSurfaceRisk") else 0.0
     score = (
         0.38 * sharpness_score
         + 0.30 * contrast_score
         + 0.20 * exposure_score
         + 0.12 * clipping_score
         - texture_penalty
-        - white_wall_penalty
+        - bright_low_texture_penalty
     )
     return round(clamp01(score), 6)
 
@@ -1973,7 +1973,7 @@ def analyze_candidate_frames(
             continue
 
         textureless = contrast < 18.0 and sharpness < 8.0
-        white_wall = luma > 185.0 and contrast < 24.0 and sharpness < 9.5
+        bright_low_texture_surface = luma > 185.0 and contrast < 24.0 and sharpness < 9.5
         entry.update(
             {
                 "status": "pass",
@@ -1984,7 +1984,7 @@ def analyze_candidate_frames(
                 "clippedBrightFraction": round(clipped_bright, 5),
                 "interFrameDelta": round(delta, 3) if delta is not None else None,
                 "texturelessRisk": textureless,
-                "whiteWallRisk": white_wall,
+                "lowTextureBrightSurfaceRisk": bright_low_texture_surface,
             }
         )
         entry["score"] = frame_quality_score(entry)
@@ -2006,9 +2006,40 @@ def analyze_candidate_frames(
         "scoreMedian": round(float(statistics.median(score_values)), 4),
         "lowScoreCandidateFraction": round(fraction(lambda item: float(item.get("score") or 0.0) < 0.35), 4),
         "texturelessCandidateFraction": round(fraction(lambda item: bool(item.get("texturelessRisk"))), 4),
-        "whiteWallCandidateFraction": round(fraction(lambda item: bool(item.get("whiteWallRisk"))), 4),
+        "brightLowTextureCandidateFraction": round(
+            fraction(lambda item: bool(item.get("lowTextureBrightSurfaceRisk"))),
+            4,
+        ),
     }
     return candidates, report
+
+
+def keyframe_metric_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
+    readable = [item for item in items if item.get("status") == "pass"]
+    if not readable:
+        return {
+            "frameCount": len(items),
+            "scoredFrameCount": 0,
+            "scoreMedian": None,
+            "lowScoreFraction": None,
+            "texturelessFraction": None,
+            "brightLowTextureFraction": None,
+        }
+
+    def fraction(predicate: Any) -> float:
+        return sum(1 for item in readable if predicate(item)) / max(1, len(readable))
+
+    return {
+        "frameCount": len(items),
+        "scoredFrameCount": len(readable),
+        "scoreMedian": round(float(statistics.median([float(item.get("score") or 0.0) for item in readable])), 4),
+        "lowScoreFraction": round(fraction(lambda item: float(item.get("score") or 0.0) < 0.35), 4),
+        "texturelessFraction": round(fraction(lambda item: bool(item.get("texturelessRisk"))), 4),
+        "brightLowTextureFraction": round(
+            fraction(lambda item: bool(item.get("lowTextureBrightSurfaceRisk"))),
+            4,
+        ),
+    }
 
 
 def select_keyframes_from_candidates(
@@ -2020,12 +2051,15 @@ def select_keyframes_from_candidates(
 
     target = max(1, min(target_count, len(candidates)))
     selected: list[dict[str, Any]] = []
+    temporal_baseline: list[dict[str, Any]] = []
     for bucket_index in range(target):
         start = math.floor(bucket_index * len(candidates) / target)
         end = math.floor((bucket_index + 1) * len(candidates) / target)
         bucket = candidates[start:max(start + 1, end)]
         best = max(bucket, key=lambda item: float(item.get("score") or 0.0))
+        middle = bucket[len(bucket) // 2]
         selected.append(dict(best))
+        temporal_baseline.append(dict(middle))
 
     selected.sort(key=lambda item: int(item.get("sourceIndex") or 0))
     deduped: list[dict[str, Any]] = []
@@ -2038,9 +2072,15 @@ def select_keyframes_from_candidates(
         last_source_index = source_index
 
     readable = [item for item in candidates if item.get("status") == "pass"]
-    selected_readable = [item for item in deduped if item.get("status") == "pass"]
-    def selected_fraction(key: str) -> float:
-        return sum(1 for item in selected_readable if bool(item.get(key))) / max(1, len(selected_readable))
+    selected_summary = keyframe_metric_summary(deduped)
+    baseline_summary = keyframe_metric_summary(temporal_baseline)
+    selected_score = selected_summary.get("scoreMedian")
+    baseline_score = baseline_summary.get("scoreMedian")
+    score_delta = (
+        round(float(selected_score) - float(baseline_score), 4)
+        if isinstance(selected_score, (int, float)) and isinstance(baseline_score, (int, float))
+        else None
+    )
 
     report = {
         "status": "pass",
@@ -2050,21 +2090,24 @@ def select_keyframes_from_candidates(
         "selectedFrameCount": len(deduped),
         "targetFrameCount": target_count,
         "droppedCandidateCount": max(0, len(candidates) - len(deduped)),
-        "selectedScoreMedian": round(float(statistics.median([float(item.get("score") or 0.0) for item in selected_readable])), 4)
-        if selected_readable
-        else None,
-        "selectedTexturelessFraction": round(selected_fraction("texturelessRisk"), 4),
-        "selectedWhiteWallRiskFraction": round(selected_fraction("whiteWallRisk"), 4),
         "scoredCandidateCount": len(readable),
+        "selectedQuality": selected_summary,
+        "temporalBaselineQuality": baseline_summary,
+        "qualityComparison": {
+            "scoreMedianDelta": score_delta,
+            "baseline": "middle candidate from each temporal bucket",
+        },
     }
-    if report["selectedWhiteWallRiskFraction"] > 0.18:
+    selected_bright_low_texture = selected_summary.get("brightLowTextureFraction")
+    selected_textureless = selected_summary.get("texturelessFraction")
+    if isinstance(selected_bright_low_texture, (int, float)) and selected_bright_low_texture > 0.18:
         report["status"] = "warning"
-        report["summary"] += "; many selected frames still contain low-texture bright wall regions"
-        report["recommendation"] = "film bright blank walls with slower movement and include edges, floor trim, posters or nearby textured objects in the same view"
-    elif report["selectedTexturelessFraction"] > 0.25:
+        report["summary"] += "; many selected frames still contain bright low-texture regions"
+        report["recommendation"] = "film large plain bright surfaces with slower movement and keep edges, corners, surface detail or nearby objects in view"
+    elif isinstance(selected_textureless, (int, float)) and selected_textureless > 0.25:
         report["status"] = "warning"
         report["summary"] += "; many selected frames are low texture"
-        report["recommendation"] = "add more parallax and keep textured objects or wall/floor edges visible around blank surfaces"
+        report["recommendation"] = "add more parallax and keep edges, surface detail or nearby objects visible around plain surfaces"
     return deduped, report
 
 
@@ -2131,7 +2174,7 @@ def build_frame_manifest(
                 "clippedBrightFraction",
                 "interFrameDelta",
                 "texturelessRisk",
-                "whiteWallRisk",
+                "lowTextureBrightSurfaceRisk",
             )
             if key in selected_frame
         }

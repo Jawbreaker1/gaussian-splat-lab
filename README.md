@@ -138,9 +138,9 @@ The wizard's `Capture profile` selector is not decorative. It changes the captur
 
 ## Capture Diagnostics And SfM Rescue
 
-Frame sampling now does more than take every Nth frame. It first extracts a larger candidate set across the full clip, scores candidates for sharpness, contrast, exposure, clipping and texture, then keeps the best keyframes per time segment. The report records how many candidates were considered, how many were kept and whether selected frames still contain risky bright/textureless areas.
+Frame sampling now does more than take every Nth frame. It first extracts a larger candidate set across the full clip, scores candidates for sharpness, contrast, exposure, clipping and texture, then keeps the best keyframes per time segment. The report records how many candidates were considered, how many were kept and whether selected frames improve over a plain temporal baseline.
 
-Blank white walls are a known weak spot for photogrammetry and Gaussian splats. The pipeline does not simply throw those frames away, because that would remove the wall from the scene. Instead it prefers frames where the wall is sharp and appears with useful anchors such as floor trim, corners, posters, furniture or nearby textured objects. If many selected frames are still mostly bright and textureless, frame sampling emits a warning before the heavy COLMAP/training stages.
+Large plain surfaces are a known weak spot for photogrammetry and Gaussian splats. That can be a bright wall, ceiling, floor, sky, snow, glass glare or any other area with little stable texture. The pipeline does not simply throw those frames away, because that would remove part of the scene. Instead it prefers frames where the surface is sharp and appears with useful anchors such as edges, corners, surface detail, lighting variation or nearby objects. If many selected frames are still bright and low-texture, frame sampling emits a warning before the heavy COLMAP/training stages.
 
 Run CLI stages through `.venv/bin/python`, as shown below, so the Pillow-based keyframe scoring dependency is available. The GUI server already uses the venv when it launches pipeline stages.
 
@@ -201,7 +201,7 @@ The UI is a local lab console with:
 - progress text, elapsed time and ETA for the full generation run
 - per-step cards that explain what is happening, what the step produces and which internal checks are running
 - live training progress from Nerfstudio logs when available, including iteration count and remaining time
-- keyframe diagnostics during frame sampling: blur, contrast, exposure, large frame-to-frame motion and bright textureless wall risk
+- keyframe diagnostics during frame sampling: blur, contrast, exposure, large frame-to-frame motion and bright low-texture surface risk
 - automatic COLMAP retry profiles during SfM when too few frames register
 - source/capture selection
 - local video import controls
@@ -421,6 +421,7 @@ Mac:
 - [docs/pipeline-gates.md](docs/pipeline-gates.md): checks between pipeline steps
 - [docs/end-user-ui.md](docs/end-user-ui.md): UI behavior and responsibilities
 - [docs/quality-ceiling-results.md](docs/quality-ceiling-results.md): current quality-ceiling measurements
+- [docs/validation/keyframe-selection-lab.md](docs/validation/keyframe-selection-lab.md): quality-keyframe selection validation notes
 - [docs/rtx-workstation-setup.md](docs/rtx-workstation-setup.md): workstation setup notes
 - [docs/psu-replacement-test-runbook.md](docs/psu-replacement-test-runbook.md): heavy-test runbook
 - [AGENTS.md](AGENTS.md): working instructions for coding agents in this repo
