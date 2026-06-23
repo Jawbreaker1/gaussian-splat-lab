@@ -36,6 +36,21 @@
             <h2 id="galleryTitle">Gallery</h2>
             <button class="secondary-mini-action" id="refreshGalleryButton" type="button">Refresh</button>
           </div>
+          <div class="gallery-toolbar" aria-label="Gallery filtering">
+            <label class="gallery-search" for="gallerySearchInput">
+              <span>Search scenes</span>
+              <input id="gallerySearchInput" type="search" autocomplete="off" placeholder="Name, profile, capture..." />
+            </label>
+            <label class="gallery-sort" for="gallerySortSelect">
+              <span>Sort</span>
+              <select id="gallerySortSelect">
+                <option value="newest">Newest</option>
+                <option value="name">Name</option>
+                <option value="quality">Quality</option>
+                <option value="splats">Splats</option>
+              </select>
+            </label>
+          </div>
           <div class="gallery-status muted" id="galleryStatus">Loading environments</div>
           <div class="gallery-grid" id="galleryGrid"></div>
           <div class="gallery-empty muted" id="galleryEmpty" hidden>No packaged 3DGS environments yet.</div>

@@ -3,6 +3,8 @@ const els = {
   empty: document.querySelector('#galleryEmpty'),
   status: document.querySelector('#galleryStatus'),
   refreshButton: document.querySelector('#refreshGalleryButton'),
+  searchInput: document.querySelector('#gallerySearchInput'),
+  sortSelect: document.querySelector('#gallerySortSelect'),
   sceneTitle: document.querySelector('#sceneTitle'),
   sceneStatusPill: document.querySelector('#sceneStatusPill'),
   downloadSplatLink: document.querySelector('#downloadSplatLink'),
@@ -36,6 +38,8 @@ let controller = null;
 let viewerModulePromise = null;
 let navigationMode = 'walk';
 let navigationSensitivity = 0.55;
+let searchTerm = '';
+let sortMode = 'newest';
 
 function formatBytes(bytes) {
   const value = Number(bytes);
@@ -107,6 +111,50 @@ function compactQualityLabel(technical = {}) {
   if (technical.meanMae != null) return `MAE ${formatMetric(technical.meanMae, 1)}`;
   if (technical.previewScore != null) return `Score ${formatMetric(technical.previewScore, 1)}`;
   return '-';
+}
+
+function qualitySortValue(item) {
+  const technical = item?.technical ?? {};
+  if (technical.ssim != null) return Number(technical.ssim);
+  if (technical.psnr != null) return Number(technical.psnr) / 100;
+  if (technical.meanMae != null) return -Number(technical.meanMae) / 100;
+  if (technical.previewScore != null) return -Number(technical.previewScore) / 100;
+  return -Infinity;
+}
+
+function searchableText(item) {
+  return [
+    item.name,
+    item.captureId,
+    item.id,
+    item.status,
+    item.technical?.profile,
+    item.technical?.backend,
+    item.technical?.method,
+  ].filter(Boolean).join(' ').toLowerCase();
+}
+
+function filteredItems() {
+  const term = searchTerm.trim().toLowerCase();
+  const result = term
+    ? items.filter((item) => searchableText(item).includes(term))
+    : [...items];
+  result.sort((left, right) => {
+    if (sortMode === 'name') {
+      return String(left.name ?? '').localeCompare(String(right.name ?? ''), undefined, { sensitivity: 'base' });
+    }
+    if (sortMode === 'quality') {
+      const leftQuality = qualitySortValue(left);
+      const rightQuality = qualitySortValue(right);
+      if (rightQuality === leftQuality) return 0;
+      return rightQuality - leftQuality;
+    }
+    if (sortMode === 'splats') {
+      return Number(right.artifact?.splatCount ?? -1) - Number(left.artifact?.splatCount ?? -1);
+    }
+    return new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime();
+  });
+  return result;
 }
 
 function setDownload(link, url, fileName) {
@@ -228,9 +276,8 @@ function renderCard(item) {
   const meta = document.createElement('div');
   meta.className = 'gallery-card-meta';
   meta.append(
-    metaRow('Splats', formatCount(item.artifact?.splatCount)),
-    metaRow('Size', formatBytes(item.artifact?.sizeBytes)),
     metaRow('Profile', item.technical?.profile ?? '-'),
+    metaRow('Splats', formatCount(item.artifact?.splatCount)),
     metaRow('Images', formatCount(item.technical?.imagesUsed)),
     metaRow('Quality', compactQualityLabel(item.technical)),
   );
@@ -265,11 +312,29 @@ function renderCard(item) {
 }
 
 function renderGallery() {
-  els.grid.replaceChildren(...items.map(renderCard));
-  els.empty.hidden = items.length > 0;
-  els.status.textContent = `${items.length} packaged environment${items.length === 1 ? '' : 's'}`;
+  const visibleItems = filteredItems();
+  els.grid.replaceChildren(...visibleItems.map(renderCard));
+  els.empty.hidden = visibleItems.length > 0;
+  els.empty.textContent = items.length ? 'No scenes match the current filter.' : 'No packaged 3DGS environments yet.';
+  const total = `${items.length} packaged environment${items.length === 1 ? '' : 's'}`;
+  els.status.textContent = visibleItems.length === items.length
+    ? total
+    : `${visibleItems.length} of ${total}`;
   for (const card of els.grid.querySelectorAll('.gallery-card')) {
     card.classList.toggle('active', card.dataset.jobId === selectedId);
+  }
+  const activeCard = selectedId ? els.grid.querySelector(`.gallery-card[data-job-id="${CSS.escape(selectedId)}"]`) : null;
+  if (activeCard) {
+    const padding = 8;
+    const cardTop = activeCard.offsetTop;
+    const cardBottom = cardTop + activeCard.offsetHeight;
+    const viewportTop = els.grid.scrollTop;
+    const viewportBottom = viewportTop + els.grid.clientHeight;
+    if (cardTop < viewportTop) {
+      els.grid.scrollTop = Math.max(0, cardTop - padding);
+    } else if (cardBottom > viewportBottom) {
+      els.grid.scrollTop = cardBottom - els.grid.clientHeight + padding;
+    }
   }
 }
 
@@ -351,6 +416,14 @@ function setSensitivity(value) {
 
 function attachControls() {
   els.refreshButton.addEventListener('click', () => loadGallery().catch(showError));
+  els.searchInput.addEventListener('input', (event) => {
+    searchTerm = event.target.value;
+    renderGallery();
+  });
+  els.sortSelect.addEventListener('change', (event) => {
+    sortMode = event.target.value;
+    renderGallery();
+  });
   els.deleteSceneButton.addEventListener('click', () => deleteScene().catch(showError));
   els.walkButton.addEventListener('click', () => setNavigationMode('walk'));
   els.orbitButton.addEventListener('click', () => setNavigationMode('orbit'));
