@@ -1309,6 +1309,40 @@ select {
   height: 100%;
 }
 
+.gallery-review-panel {
+  min-width: 0;
+}
+
+.gallery-review-panel summary {
+  padding: 10px 12px;
+}
+
+.gallery-review-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.gallery-review-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.gallery-review-frame {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-deep);
+}
+
+.gallery-review-frame img {
+  width: 100%;
+  max-width: 100%;
+  display: block;
+}
+
 .gallery-scene-meta {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }

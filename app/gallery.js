@@ -24,6 +24,9 @@ const els = {
   zoomInButton: document.querySelector('#galleryZoomInButton'),
   cameraPrevButton: document.querySelector('#galleryCameraPrevButton'),
   cameraNextButton: document.querySelector('#galleryCameraNextButton'),
+  reviewPanel: document.querySelector('#galleryReviewPanel'),
+  reviewMetrics: document.querySelector('#galleryReviewMetrics'),
+  reviewImage: document.querySelector('#galleryReviewImage'),
 };
 
 let items = [];
@@ -50,6 +53,11 @@ function formatBytes(bytes) {
 function formatCount(value) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat().format(number) : '-';
+}
+
+function formatMetric(value, digits = 2) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(digits) : '-';
 }
 
 function formatDate(value) {
@@ -82,6 +90,25 @@ function metaRow(label, value) {
   return row;
 }
 
+function reviewMetricRows(technical = {}) {
+  const rows = [];
+  if (technical.psnr != null) rows.push(['PSNR', formatMetric(technical.psnr, 2)]);
+  if (technical.ssim != null) rows.push(['SSIM', formatMetric(technical.ssim, 3)]);
+  if (technical.lpips != null) rows.push(['LPIPS', formatMetric(technical.lpips, 3)]);
+  if (technical.meanMae != null) rows.push(['MAE', formatMetric(technical.meanMae, 2)]);
+  if (technical.meanRmse != null) rows.push(['RMSE', formatMetric(technical.meanRmse, 2)]);
+  if (technical.previewScore != null) rows.push(['Preview score', formatMetric(technical.previewScore, 2)]);
+  if (technical.evalImageCount != null) rows.push(['Eval views', formatCount(technical.evalImageCount)]);
+  return rows;
+}
+
+function compactQualityLabel(technical = {}) {
+  if (technical.ssim != null) return `SSIM ${formatMetric(technical.ssim, 3)}`;
+  if (technical.meanMae != null) return `MAE ${formatMetric(technical.meanMae, 1)}`;
+  if (technical.previewScore != null) return `Score ${formatMetric(technical.previewScore, 1)}`;
+  return '-';
+}
+
 function setDownload(link, url, fileName) {
   if (!url) {
     link.removeAttribute('href');
@@ -94,10 +121,28 @@ function setDownload(link, url, fileName) {
   link.setAttribute('aria-disabled', 'false');
 }
 
+function renderReviewPanel(item, manifest = {}) {
+  const preview = manifest.preview ?? item?.preview ?? {};
+  const reviewUrl = preview.renderReviewUrl;
+  const technical = item?.technical ?? {};
+  els.reviewMetrics.replaceChildren();
+  for (const [label, value] of reviewMetricRows(technical)) {
+    els.reviewMetrics.append(metaRow(label, value));
+  }
+  if (!reviewUrl) {
+    els.reviewPanel.hidden = true;
+    els.reviewImage.removeAttribute('src');
+    return;
+  }
+  els.reviewImage.src = reviewUrl;
+  els.reviewPanel.hidden = false;
+}
+
 function renderSceneMeta(item, manifest = {}) {
   els.sceneMeta.replaceChildren();
   if (!item) {
     els.sceneMeta.append(metaRow('Scene', 'No scene selected'));
+    renderReviewPanel(null);
     return;
   }
   const artifact = item.artifact ?? {};
@@ -105,15 +150,17 @@ function renderSceneMeta(item, manifest = {}) {
   els.sceneMeta.append(
     metaRow('Capture', item.captureId),
     metaRow('Profile', technical.profile),
+    metaRow('Trainer', technical.backend ?? technical.method),
     metaRow('Splats', formatCount(artifact.splatCount)),
     metaRow('Size', formatBytes(artifact.sizeBytes)),
     metaRow('Iterations', formatCount(technical.iterations)),
     metaRow('Images', formatCount(technical.imagesUsed)),
     metaRow('Reference views', formatCount(technical.cameraViews ?? manifest.cameraViews?.length)),
-    metaRow('Review MAE', technical.meanMae ?? '-'),
+    metaRow('Quality', compactQualityLabel(technical)),
     metaRow('Device', technical.device),
     metaRow('Created', formatDate(item.createdAt)),
   );
+  renderReviewPanel(item, manifest);
 }
 
 function resetScenePanel(message = 'Choose a scene from the gallery') {
@@ -184,7 +231,8 @@ function renderCard(item) {
     metaRow('Splats', formatCount(item.artifact?.splatCount)),
     metaRow('Size', formatBytes(item.artifact?.sizeBytes)),
     metaRow('Profile', item.technical?.profile ?? '-'),
-    metaRow('Views', formatCount(item.technical?.cameraViews)),
+    metaRow('Images', formatCount(item.technical?.imagesUsed)),
+    metaRow('Quality', compactQualityLabel(item.technical)),
   );
   const footer = document.createElement('div');
   footer.className = 'gallery-card-footer';
