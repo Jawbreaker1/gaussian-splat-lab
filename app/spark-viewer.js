@@ -94,6 +94,13 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   let cameraViewsToken = '';
   let activeCameraViewIndex = 0;
   let navigationMode = 'walk';
+  let guardrailMode = 'safe';
+  let guardrailState = null;
+  let lastGuardrailClamp = null;
+  let lastGuidedKeyStepMs = 0;
+  let guidedPlaying = false;
+  let guidedProgress = 0;
+  let guidedDirection = 1;
   let draggingLook = false;
   let lastPointerX = 0;
   let lastPointerY = 0;
@@ -122,6 +129,17 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   const walkPitchQuat = new THREE.Quaternion();
   const pressedKeys = new Set();
   const spherical = new THREE.Spherical();
+  const guardrailClosest = new THREE.Vector3();
+  const guardrailCandidate = new THREE.Vector3();
+  const guardrailSegment = new THREE.Vector3();
+  const guardrailDelta = new THREE.Vector3();
+  const guardrailHorizontal = new THREE.Vector3();
+  const guardrailConstrained = new THREE.Vector3();
+  const guardrailCorrection = new THREE.Vector3();
+  const guidedPosition = new THREE.Vector3();
+  const guidedTarget = new THREE.Vector3();
+  const guidedForward = new THREE.Vector3();
+  const guidedUp = new THREE.Vector3();
 
   canvas.tabIndex = canvas.tabIndex >= 0 ? canvas.tabIndex : 0;
 
@@ -262,6 +280,37 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     return { mode: navigationMode };
   }
 
+  function setGuardrailMode(mode = 'safe') {
+    guardrailMode = ['guided', 'safe', 'free'].includes(mode) ? mode : 'safe';
+    lastGuidedKeyStepMs = 0;
+    if (guardrailMode === 'guided' && navigationMode !== 'walk') {
+      setNavigationMode('walk');
+    }
+    if (guardrailMode === 'guided' && fitState && cameraViews.length) {
+      const nearestIndex = nearestCameraViewIndex();
+      guidedProgress = nearestIndex >= 0 ? nearestIndex : activeCameraViewIndex;
+      guidedDirection = 1;
+      guidedPlaying = cameraViews.length > 1;
+      applyCameraView(guidedProgress);
+    } else if (guardrailMode !== 'free') {
+      guidedPlaying = false;
+      const clamped = applyPositionGuardrail();
+      if (clamped && navigationMode === 'walk') syncTargetToCamera();
+    } else {
+      guidedPlaying = false;
+      lastGuardrailClamp = null;
+    }
+    return { mode: guardrailMode, guidedPlaying, guardrail: guardrailState };
+  }
+
+  function setGuidedPlayback(playing = true) {
+    if (playing && guardrailMode !== 'guided') {
+      setGuardrailMode('guided');
+    }
+    guidedPlaying = Boolean(playing) && guardrailMode === 'guided' && cameraViews.length > 1;
+    return { mode: guardrailMode, guidedPlaying, activeViewIndex: activeCameraViewIndex, viewCount: cameraViews.length };
+  }
+
   function setCameraViews(views = []) {
     const nextViews = Array.isArray(views)
       ? views.filter((view) => (
@@ -277,6 +326,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     setNavigationUp(camera.up);
     if (changed) activeCameraViewIndex = 0;
     if (activeCameraViewIndex >= cameraViews.length) activeCameraViewIndex = 0;
+    if (fitState) buildNavigationGuardrails();
     if (changed && fitState && splat && cameraViews.length) applyCameraView(activeCameraViewIndex);
     return {
       changed,
@@ -289,6 +339,232 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   function transformRawPoint(point) {
     if (!fitState) return point.clone();
     return point.clone().sub(fitState.center).multiplyScalar(fitState.scale);
+  }
+
+  function scaledSceneExtent() {
+    if (!fitState) return 1.62;
+    return clamp(fitState.maxExtent * fitState.scale, 0.6, 2.4);
+  }
+
+  function buildNavigationGuardrails() {
+    if (!fitState || cameraViews.length < 2) {
+      guardrailState = null;
+      lastGuardrailClamp = null;
+      return null;
+    }
+
+    const points = cameraViews
+      .map((view) => vectorFromArray(view?.position))
+      .filter(Boolean)
+      .map((point) => transformRawPoint(point));
+    if (points.length < 2) {
+      guardrailState = null;
+      lastGuardrailClamp = null;
+      return null;
+    }
+
+    let pathLength = 0;
+    for (let index = 1; index < points.length; index += 1) {
+      pathLength += points[index - 1].distanceTo(points[index]);
+    }
+    const extent = scaledSceneExtent();
+    const averageSpacing = pathLength / Math.max(1, points.length - 1);
+    const safeRadius = clamp(Math.max(averageSpacing * 5, extent * 0.085), extent * 0.055, extent * 0.18);
+    const guidedRadius = clamp(Math.max(averageSpacing * 2.2, extent * 0.032), extent * 0.025, extent * 0.07);
+    const verticalRadius = clamp(extent * 0.085, 0.045, 0.18);
+    const guidedVerticalRadius = clamp(verticalRadius * 0.45, 0.025, 0.08);
+
+    guardrailState = {
+      points,
+      pathLength,
+      averageSpacing,
+      safeRadius,
+      guidedRadius,
+      verticalRadius,
+      guidedVerticalRadius,
+    };
+    lastGuardrailClamp = null;
+    return guardrailState;
+  }
+
+  function closestPathPoint(position, out = guardrailClosest) {
+    const points = guardrailState?.points ?? [];
+    if (!points.length) return null;
+    if (points.length === 1) {
+      out.copy(points[0]);
+      return { index: 0, segmentT: 0, distanceSq: position.distanceToSquared(out) };
+    }
+
+    let bestDistanceSq = Infinity;
+    let bestIndex = 0;
+    let bestT = 0;
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const start = points[index];
+      const end = points[index + 1];
+      guardrailSegment.subVectors(end, start);
+      const segmentLengthSq = guardrailSegment.lengthSq();
+      guardrailDelta.subVectors(position, start);
+      const t = segmentLengthSq <= 1e-12
+        ? 0
+        : clamp(guardrailDelta.dot(guardrailSegment) / segmentLengthSq, 0, 1);
+      guardrailCandidate.copy(start).addScaledVector(guardrailSegment, t);
+      const distanceSq = position.distanceToSquared(guardrailCandidate);
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        bestIndex = index;
+        bestT = t;
+        out.copy(guardrailCandidate);
+      }
+    }
+    return { index: bestIndex, segmentT: bestT, distanceSq: bestDistanceSq };
+  }
+
+  function nearestCameraViewIndex(position = camera.position) {
+    const points = guardrailState?.points ?? [];
+    if (!points.length) return -1;
+    let bestIndex = 0;
+    let bestDistanceSq = Infinity;
+    for (let index = 0; index < points.length; index += 1) {
+      const distanceSq = position.distanceToSquared(points[index]);
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
+  }
+
+  function readCameraViewPose(index) {
+    const view = cameraViews[index];
+    const rawPosition = vectorFromArray(view?.position);
+    const viewForward = normalizeVector(view?.forward);
+    const viewUp = normalizeVector(view?.up);
+    if (!rawPosition || !viewForward || !viewUp) return null;
+    return {
+      rawPosition,
+      forward: viewForward,
+      up: viewUp,
+      fovYDegrees: clamp(Number(view.fovYDegrees) || 48, 20, 85),
+    };
+  }
+
+  function focusDistanceForPose(rawPosition, viewForward) {
+    const centerOffset = fitState.center.clone().sub(rawPosition);
+    let focusDistance = centerOffset.dot(viewForward);
+    const minFocusDistance = fitState.maxExtent * 0.04;
+    if (!Number.isFinite(focusDistance) || focusDistance < minFocusDistance) {
+      focusDistance = Math.max(fitState.maxExtent * 0.62, 0.25);
+    }
+    return focusDistance;
+  }
+
+  function applyCameraPose(rawPosition, viewForward, viewUp, fovYDegrees) {
+    const focusDistance = focusDistanceForPose(rawPosition, viewForward);
+    guidedTarget.copy(rawPosition).addScaledVector(viewForward, focusDistance);
+    const nextPosition = transformRawPoint(rawPosition);
+    const nextTarget = transformRawPoint(guidedTarget);
+    camera.up.copy(viewUp);
+    camera.position.copy(nextPosition);
+    camera.fov = clamp(Number(fovYDegrees) || 48, 20, 85);
+    camera.near = 0.002;
+    camera.far = 100;
+    camera.updateProjectionMatrix();
+    camera.lookAt(nextTarget);
+    camera.updateMatrixWorld(true);
+    controls.target.copy(nextTarget);
+    controls.update();
+    setWalkBasisFromCamera();
+    if (navigationMode === 'walk') applyWalkLook();
+    else stabilizeOrbitRoll();
+    return true;
+  }
+
+  function applyInterpolatedCameraView(progress = guidedProgress) {
+    if (!fitState || !cameraViews.length) return false;
+    if (cameraViews.length === 1) return applyCameraView(0);
+    const maxIndex = cameraViews.length - 1;
+    const boundedProgress = clamp(Number(progress) || 0, 0, maxIndex);
+    const leftIndex = Math.floor(boundedProgress);
+    const rightIndex = Math.min(maxIndex, leftIndex + 1);
+    const t = boundedProgress - leftIndex;
+    const left = readCameraViewPose(leftIndex);
+    const rightPose = readCameraViewPose(rightIndex);
+    if (!left || !rightPose) return false;
+
+    guidedPosition.copy(left.rawPosition).lerp(rightPose.rawPosition, t);
+    guidedForward.copy(left.forward).lerp(rightPose.forward, t);
+    if (guidedForward.lengthSq() <= 1e-10) guidedForward.copy(left.forward);
+    guidedForward.normalize();
+
+    guidedUp.copy(left.up);
+    const rightUp = rightPose.up.clone();
+    if (guidedUp.dot(rightUp) < 0) rightUp.negate();
+    guidedUp.lerp(rightUp, t);
+    if (guidedUp.lengthSq() <= 1e-10) guidedUp.copy(left.up);
+    guidedUp.normalize();
+
+    guidedProgress = boundedProgress;
+    activeCameraViewIndex = Math.round(boundedProgress);
+    return applyCameraPose(
+      guidedPosition,
+      guidedForward,
+      guidedUp,
+      THREE.MathUtils.lerp(left.fovYDegrees, rightPose.fovYDegrees, t),
+    );
+  }
+
+  function updateGuidedAnimation(deltaSeconds) {
+    if (guardrailMode !== 'guided' || !guidedPlaying || cameraViews.length < 2) return;
+    const maxIndex = cameraViews.length - 1;
+    const viewsPerSecond = clamp(8 * navigationSensitivity, 2.5, 10);
+    guidedProgress += viewsPerSecond * deltaSeconds * guidedDirection;
+    if (guidedProgress >= maxIndex) {
+      guidedProgress = maxIndex;
+      guidedDirection = -1;
+    } else if (guidedProgress <= 0) {
+      guidedProgress = 0;
+      guidedDirection = 1;
+    }
+    applyInterpolatedCameraView(guidedProgress);
+  }
+
+  function applyPositionGuardrail() {
+    if (navigationMode !== 'walk' || guardrailMode === 'free' || !guardrailState) {
+      lastGuardrailClamp = null;
+      return false;
+    }
+
+    const nearest = closestPathPoint(camera.position, guardrailClosest);
+    if (!nearest) return false;
+
+    const radius = guardrailMode === 'guided' ? guardrailState.guidedRadius : guardrailState.safeRadius;
+    const verticalRadius = guardrailMode === 'guided'
+      ? guardrailState.guidedVerticalRadius
+      : guardrailState.verticalRadius;
+    guardrailDelta.subVectors(camera.position, guardrailClosest);
+    const verticalOffset = guardrailDelta.dot(walkNavigationUp);
+    guardrailHorizontal.copy(guardrailDelta).addScaledVector(walkNavigationUp, -verticalOffset);
+    const horizontalLength = guardrailHorizontal.length();
+
+    guardrailConstrained.copy(guardrailClosest);
+    if (horizontalLength > 1e-10) {
+      guardrailConstrained.addScaledVector(guardrailHorizontal, Math.min(horizontalLength, radius) / horizontalLength);
+    }
+    guardrailConstrained.addScaledVector(walkNavigationUp, clamp(verticalOffset, -verticalRadius, verticalRadius));
+
+    guardrailCorrection.subVectors(guardrailConstrained, camera.position);
+    const clamped = guardrailCorrection.lengthSq() > 1e-10;
+    if (clamped) {
+      camera.position.copy(guardrailConstrained);
+    }
+    lastGuardrailClamp = {
+      clamped,
+      distance: Number(Math.sqrt(nearest.distanceSq).toFixed(6)),
+      radius: Number(radius.toFixed(6)),
+      verticalOffset: Number(verticalOffset.toFixed(6)),
+      mode: guardrailMode,
+    };
+    return clamped;
   }
 
   function applyDefaultView() {
@@ -306,37 +582,11 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
   function applyCameraView(index = activeCameraViewIndex) {
     if (!fitState || !cameraViews.length) return false;
-    const view = cameraViews[index];
-    const rawPosition = vectorFromArray(view?.position);
-    const forward = normalizeVector(view?.forward);
-    const cameraUp = normalizeVector(view?.up);
-    if (!rawPosition || !forward || !cameraUp) return false;
-
+    const pose = readCameraViewPose(index);
+    if (!pose) return false;
     activeCameraViewIndex = index;
-    const centerOffset = fitState.center.clone().sub(rawPosition);
-    let focusDistance = centerOffset.dot(forward);
-    const minFocusDistance = fitState.maxExtent * 0.04;
-    if (!Number.isFinite(focusDistance) || focusDistance < minFocusDistance) {
-      focusDistance = Math.max(fitState.maxExtent * 0.62, 0.25);
-    }
-
-    const rawTarget = rawPosition.clone().add(forward.clone().multiplyScalar(focusDistance));
-    const nextPosition = transformRawPoint(rawPosition);
-    const nextTarget = transformRawPoint(rawTarget);
-    camera.up.copy(cameraUp);
-    camera.position.copy(nextPosition);
-    camera.fov = clamp(Number(view.fovYDegrees) || 48, 20, 85);
-    camera.near = 0.002;
-    camera.far = 100;
-    camera.updateProjectionMatrix();
-    camera.lookAt(nextTarget);
-    camera.updateMatrixWorld(true);
-    controls.target.copy(nextTarget);
-    controls.update();
-    setWalkBasisFromCamera();
-    if (navigationMode === 'walk') applyWalkLook();
-    else stabilizeOrbitRoll();
-    return true;
+    guidedProgress = index;
+    return applyCameraPose(pose.rawPosition, pose.forward, pose.up, pose.fovYDegrees);
   }
 
   function fitSplat(mesh) {
@@ -358,13 +608,10 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     mesh.position.set(-center.x * scale, -center.y * scale, -center.z * scale);
     mesh.updateMatrixWorld(true);
 
+    buildNavigationGuardrails();
     if (!applyCameraView(activeCameraViewIndex)) applyDefaultView();
     setNavigationMode(navigationMode);
-  }
-
-  function scaledSceneExtent() {
-    if (!fitState) return 1.62;
-    return clamp(fitState.maxExtent * fitState.scale, 0.6, 2.4);
+    setGuardrailMode(guardrailMode);
   }
 
   function walkButtonStep() {
@@ -396,6 +643,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
       .addScaledVector(forward, deltaForward * step);
     if (move.lengthSq() <= 1e-12) return false;
     camera.position.add(move);
+    applyPositionGuardrail();
     return true;
   }
 
@@ -529,6 +777,26 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     ].includes(code);
   }
 
+  function updateGuidedKeyboard() {
+    if (guardrailMode !== 'guided' || navigationMode !== 'walk' || !pressedKeys.size || !cameraViews.length) {
+      return false;
+    }
+    const now = performance.now();
+    if (now - lastGuidedKeyStepMs < 140) return true;
+    let direction = 0;
+    if (pressedKeys.has('KeyW') || pressedKeys.has('KeyD') || pressedKeys.has('KeyE') || pressedKeys.has('Space')) {
+      direction += 1;
+    }
+    if (pressedKeys.has('KeyS') || pressedKeys.has('KeyA') || pressedKeys.has('KeyQ')) {
+      direction -= 1;
+    }
+    if (direction !== 0) {
+      nextCameraView(direction > 0 ? 1 : -1);
+      lastGuidedKeyStepMs = now;
+    }
+    return true;
+  }
+
   function canUseWalkKeyboard(event) {
     if (navigationMode !== 'walk' || keyboardTargetIsEditable(event)) return false;
     return true;
@@ -547,6 +815,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
 
   function updateWalkMovement(deltaSeconds) {
     if (navigationMode !== 'walk' || !pressedKeys.size) return;
+    if (updateGuidedKeyboard()) return;
     move.set(0, 0, 0);
     const basis = walkMovementBasis();
     forward.copy(basis.horizontalForward);
@@ -565,6 +834,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     const speed = scaledSceneExtent() * 0.24 * navigationSensitivity * (fast ? 3.2 : 1) * (slow ? 0.3 : 1);
     move.normalize().multiplyScalar(speed * deltaSeconds);
     camera.position.add(move);
+    applyPositionGuardrail();
     syncTargetToCamera();
   }
 
@@ -573,6 +843,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     camera.updateMatrixWorld(true);
     camera.getWorldDirection(forward).normalize();
     camera.position.addScaledVector(forward, amount);
+    applyPositionGuardrail();
     syncTargetToCamera();
   }
 
@@ -646,6 +917,16 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
       targetDistance: Number(camera.position.distanceTo(controls.target).toFixed(6)),
       walkFocusDistance: Number(walkFocusDistance.toFixed(6)),
       navigationSensitivity: Number(navigationSensitivity.toFixed(3)),
+      guardrailMode,
+      guidedPlaying,
+      guidedProgress: Number(guidedProgress.toFixed(3)),
+      guardrail: guardrailState ? {
+        viewCount: guardrailState.points.length,
+        safeRadius: Number(guardrailState.safeRadius.toFixed(6)),
+        guidedRadius: Number(guardrailState.guidedRadius.toFixed(6)),
+        verticalRadius: Number(guardrailState.verticalRadius.toFixed(6)),
+        lastClamp: lastGuardrailClamp,
+      } : null,
       fov: Number(camera.fov.toFixed(6)),
       activeCameraViewIndex,
       viewCount: cameraViews.length,
@@ -659,6 +940,7 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
     const deltaSeconds = Math.min((now - lastRenderMs) / 1000, 0.08);
     lastRenderMs = now;
     resize();
+    updateGuidedAnimation(deltaSeconds);
     updateWalkMovement(deltaSeconds);
     controls.update();
     renderer.render(scene, camera);
@@ -679,6 +961,8 @@ export function createSparkViewer({ canvas, overlay, onStatus }) {
   return {
     load,
     setNavigationMode,
+    setGuardrailMode,
+    setGuidedPlayback,
     setNavigationSensitivity,
     setCameraViews,
     previousCameraView: () => nextCameraView(-1),

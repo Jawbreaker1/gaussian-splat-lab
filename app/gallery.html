@@ -69,6 +69,11 @@
           </div>
 
           <div class="viewer-controls gallery-controls" aria-label="Gallery viewer controls">
+            <div class="viewer-navigation-switch guardrail-switch" aria-label="Navigation guardrails">
+              <button class="nav-mode-button" id="galleryGuidedButton" type="button">Guided</button>
+              <button class="nav-mode-button active" id="gallerySafeButton" type="button">Path safe</button>
+              <button class="nav-mode-button" id="galleryFreeButton" type="button">Free debug</button>
+            </div>
             <div class="viewer-navigation-switch" aria-label="Navigation mode">
               <button class="nav-mode-button active" id="galleryWalkButton" type="button">Walk</button>
               <button class="nav-mode-button" id="galleryOrbitButton" type="button">Orbit</button>
@@ -91,6 +96,7 @@
               <button class="icon-button" id="galleryMaximizeButton" title="Maximize scene" aria-label="Maximize scene" aria-pressed="false">⛶</button>
             </div>
             <div class="viewer-control-group" aria-label="Reference camera controls">
+              <button class="icon-button" id="galleryPathPlayButton" title="Play guided path" aria-label="Play guided path">▶</button>
               <button class="icon-button" id="galleryCameraPrevButton" title="Previous reference camera" aria-label="Previous reference camera">‹</button>
               <button class="icon-button" id="galleryCameraNextButton" title="Next reference camera" aria-label="Next reference camera">›</button>
             </div>

@@ -74,6 +74,8 @@ const els = {
   sparkViewport: document.querySelector('#sparkViewport'),
   sparkCanvas: document.querySelector('#sparkCanvas'),
   sparkOverlay: document.querySelector('#sparkOverlay'),
+  debugViewport: document.querySelector('#debugViewport'),
+  debugOverlay: document.querySelector('#debugOverlay'),
   canvas: document.querySelector('#splatCanvas'),
 };
 
@@ -128,6 +130,8 @@ const viewerScene = {
   activeCameraView: null,
   uploadedArtifactUrl: null,
   webglFailed: false,
+  debugLoadLabel: '',
+  debugLoadType: 'neutral',
 };
 
 if (typeof window !== 'undefined') {
@@ -1500,6 +1504,71 @@ function setViewerStatus(text, type = 'neutral') {
   els.viewerStatusPill.className = `pill ${type}`;
 }
 
+function setDebugLoadStatus(text = '', type = 'neutral') {
+  viewerScene.debugLoadLabel = text;
+  viewerScene.debugLoadType = type;
+  if (!els.debugOverlay) return;
+  els.debugOverlay.hidden = !text;
+  els.debugOverlay.textContent = text;
+  els.debugOverlay.dataset.type = type;
+  if (viewerScene.mode === 'debug' && text) setViewerStatus(text, type);
+}
+
+function formatDebugDownloadProgress(progress = {}) {
+  const percent = Number(progress.percent);
+  if (Number.isFinite(percent)) return `Loading debug PLY ${Math.round(clamp(percent, 0, 100))}%`;
+  if (Number.isFinite(progress.loaded)) return `Loading debug PLY ${formatBytes(progress.loaded)}`;
+  return 'Loading debug PLY';
+}
+
+function waitForViewerPaint() {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
+    else setTimeout(resolve, 0);
+  });
+}
+
+async function fetchArrayBufferWithProgress(url, onProgress = null) {
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`artifact ${response.status}`);
+  const contentLength = Number.parseInt(response.headers.get('Content-Length') ?? '', 10);
+  const total = Number.isFinite(contentLength) && contentLength > 0 ? contentLength : 0;
+  if (!response.body?.getReader) {
+    onProgress?.({ loaded: 0, total, percent: total ? 0 : null });
+    const buffer = await response.arrayBuffer();
+    onProgress?.({ loaded: buffer.byteLength, total: total || buffer.byteLength, percent: 100 });
+    return buffer;
+  }
+
+  const reader = response.body.getReader();
+  const chunks = total ? null : [];
+  const output = total ? new Uint8Array(total) : null;
+  let loaded = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value?.byteLength) continue;
+    if (output) output.set(value, loaded);
+    else chunks.push(value);
+    loaded += value.byteLength;
+    onProgress?.({
+      loaded,
+      total,
+      percent: total ? (loaded / total) * 100 : null,
+    });
+  }
+  onProgress?.({ loaded, total: total || loaded, percent: 100 });
+  if (output) return loaded === output.byteLength ? output.buffer : output.buffer.slice(0, loaded);
+
+  const merged = new Uint8Array(loaded);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged.buffer;
+}
+
 function setExportLink(link, url, fileName) {
   if (!link) return;
   if (!url) {
@@ -1614,6 +1683,9 @@ function renderViewerMeta(extra = null) {
   const status = viewer.viewerStatus ?? viewer.packagingStatus ?? 'packaged';
   const quality = viewerQuality(status, training, runConfig);
   setViewerStatus(quality.text, quality.type);
+  if (viewerScene.mode === 'debug' && viewerScene.debugLoadLabel) {
+    setViewerStatus(viewerScene.debugLoadLabel, viewerScene.debugLoadType);
+  }
   setExportLink(els.exportSplatLink, exportInfo.primaryAssetUrl ?? artifact.url, exportInfo.recommendedSplatFileName ?? `gaussian-splat-${training.profile ?? runConfig.profile ?? 'artifact'}.ply`);
   setExportLink(els.exportManifestLink, viewer.viewerManifestUrl, exportInfo.recommendedManifestFileName ?? 'viewer-manifest.json');
   els.viewerMeta.append(
@@ -1783,21 +1855,31 @@ async function loadViewerArtifact() {
     viewerScene.debugPointCount = 0;
     viewerScene.artifactUrl = null;
     viewerScene.uploadedArtifactUrl = null;
+    setDebugLoadStatus('');
     markViewerReady();
     renderViewerMeta();
     return;
   }
   if (viewerScene.artifactUrl === url && viewerScene.pointData) {
+    setDebugLoadStatus('');
     renderViewerMeta({ pointCount: viewerScene.pointCount });
     return;
   }
 
   const token = ++viewerLoadToken;
-  setViewerStatus('loading', 'neutral');
+  setDebugLoadStatus('Loading debug PLY 0%', 'neutral');
   try {
-    const response = await fetch(url, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`artifact ${response.status}`);
-    const parsed = parseBinaryPly(await response.arrayBuffer());
+    const buffer = await fetchArrayBufferWithProgress(url, (progress) => {
+      if (token !== viewerLoadToken) return;
+      setDebugLoadStatus(formatDebugDownloadProgress(progress), 'neutral');
+    });
+    if (token !== viewerLoadToken) return;
+    setDebugLoadStatus('Parsing debug PLY', 'neutral');
+    await waitForViewerPaint();
+    const parsed = parseBinaryPly(buffer);
+    if (token !== viewerLoadToken) return;
+    setDebugLoadStatus('Preparing debug points', 'neutral');
+    await waitForViewerPaint();
     if (token !== viewerLoadToken) return;
     viewerScene.pointData = buildPointData(normalizePoints(parsed.points));
     viewerScene.pointCount = parsed.vertexCount;
@@ -1805,7 +1887,9 @@ async function loadViewerArtifact() {
     viewerScene.artifactUrl = url;
     viewerScene.uploadedArtifactUrl = null;
     uploadPointData();
+    setDebugLoadStatus('');
     renderViewerMeta({ pointCount: parsed.vertexCount });
+    markViewerReady();
   } catch (error) {
     if (token !== viewerLoadToken) return;
     viewerScene.pointData = null;
@@ -1813,6 +1897,7 @@ async function loadViewerArtifact() {
     viewerScene.debugPointCount = 0;
     viewerScene.artifactUrl = null;
     viewerScene.uploadedArtifactUrl = null;
+    setDebugLoadStatus(`Debug load failed: ${error.message}`, 'fail');
     setViewerStatus('viewer error', 'fail');
     els.viewerMeta.replaceChildren(row('Error', error.message));
     markViewerReady();
@@ -2249,7 +2334,7 @@ function setViewerMode(mode) {
   viewerScene.mode = mode;
   const isSpark = mode === 'spark';
   els.sparkViewport.hidden = !isSpark;
-  els.canvas.hidden = isSpark;
+  els.debugViewport.hidden = isSpark;
   els.viewerModeSparkButton.classList.toggle('active', isSpark);
   els.viewerModeDebugButton.classList.toggle('active', !isSpark);
   els.viewerModeSparkButton.setAttribute('aria-pressed', String(isSpark));

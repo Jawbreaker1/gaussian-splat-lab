@@ -232,7 +232,10 @@
             <canvas id="sparkCanvas" width="960" height="640" aria-label="Production Gaussian splat render scene"></canvas>
             <div class="viewer-overlay" id="sparkOverlay">Loading Spark renderer</div>
           </div>
-          <canvas id="splatCanvas" width="960" height="640" aria-label="Gaussian splat debug inspection scene" hidden></canvas>
+          <div class="debug-viewport" id="debugViewport" hidden>
+            <canvas id="splatCanvas" width="960" height="640" aria-label="Gaussian splat debug inspection scene"></canvas>
+            <div class="viewer-overlay" id="debugOverlay">Debug view idle</div>
+          </div>
           <div class="render-compare" id="renderCompare" hidden>
             <figure id="sampleRenderFigure">
               <div class="render-frame"><img id="sampleRenderImage" alt="gsplat rendered sample" /></div>

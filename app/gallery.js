@@ -13,6 +13,9 @@ const els = {
   canvas: document.querySelector('#gallerySparkCanvas'),
   overlay: document.querySelector('#gallerySparkOverlay'),
   sceneMeta: document.querySelector('#gallerySceneMeta'),
+  guidedButton: document.querySelector('#galleryGuidedButton'),
+  safeButton: document.querySelector('#gallerySafeButton'),
+  freeButton: document.querySelector('#galleryFreeButton'),
   walkButton: document.querySelector('#galleryWalkButton'),
   orbitButton: document.querySelector('#galleryOrbitButton'),
   sensitivityInput: document.querySelector('#gallerySensitivityInput'),
@@ -25,6 +28,7 @@ const els = {
   zoomOutButton: document.querySelector('#galleryZoomOutButton'),
   zoomInButton: document.querySelector('#galleryZoomInButton'),
   maximizeButton: document.querySelector('#galleryMaximizeButton'),
+  pathPlayButton: document.querySelector('#galleryPathPlayButton'),
   cameraPrevButton: document.querySelector('#galleryCameraPrevButton'),
   cameraNextButton: document.querySelector('#galleryCameraNextButton'),
   reviewPanel: document.querySelector('#galleryReviewPanel'),
@@ -38,6 +42,8 @@ let selectedDetail = null;
 let controller = null;
 let viewerModulePromise = null;
 let navigationMode = 'walk';
+let guardrailMode = 'safe';
+let guidedPathPlaying = false;
 let navigationSensitivity = 0.55;
 let searchTerm = '';
 let sortMode = 'newest';
@@ -250,6 +256,7 @@ async function ensureController() {
     },
   });
   controller.setNavigationMode(navigationMode);
+  controller.setGuardrailMode(guardrailMode);
   controller.setNavigationSensitivity(navigationSensitivity);
   return controller;
 }
@@ -405,11 +412,56 @@ async function deleteScene(jobId = selectedId) {
 
 function setNavigationMode(mode) {
   navigationMode = mode === 'orbit' ? 'orbit' : 'walk';
+  if (navigationMode === 'orbit' && guardrailMode === 'guided') {
+    setGuardrailMode('safe');
+  }
   els.walkButton.classList.toggle('active', navigationMode === 'walk');
   els.orbitButton.classList.toggle('active', navigationMode === 'orbit');
   els.walkButton.setAttribute('aria-pressed', String(navigationMode === 'walk'));
   els.orbitButton.setAttribute('aria-pressed', String(navigationMode === 'orbit'));
   controller?.setNavigationMode(navigationMode);
+}
+
+function setGuardrailMode(mode) {
+  guardrailMode = ['guided', 'safe', 'free'].includes(mode) ? mode : 'safe';
+  if (guardrailMode !== 'guided') guidedPathPlaying = false;
+  els.guidedButton.classList.toggle('active', guardrailMode === 'guided');
+  els.safeButton.classList.toggle('active', guardrailMode === 'safe');
+  els.freeButton.classList.toggle('active', guardrailMode === 'free');
+  els.guidedButton.setAttribute('aria-pressed', String(guardrailMode === 'guided'));
+  els.safeButton.setAttribute('aria-pressed', String(guardrailMode === 'safe'));
+  els.freeButton.setAttribute('aria-pressed', String(guardrailMode === 'free'));
+  if (guardrailMode === 'guided' && navigationMode !== 'walk') {
+    setNavigationMode('walk');
+  }
+  const result = controller?.setGuardrailMode(guardrailMode);
+  if (result?.guidedPlaying != null) guidedPathPlaying = Boolean(result.guidedPlaying);
+  else if (guardrailMode === 'guided') guidedPathPlaying = true;
+  syncGuidedPlaybackButton();
+}
+
+function syncGuidedPlaybackButton() {
+  const active = guardrailMode === 'guided' && guidedPathPlaying;
+  els.pathPlayButton.textContent = active ? '⏸' : '▶';
+  els.pathPlayButton.title = active ? 'Pause guided path' : 'Play guided path';
+  els.pathPlayButton.setAttribute('aria-label', active ? 'Pause guided path' : 'Play guided path');
+  els.pathPlayButton.setAttribute('aria-pressed', String(active));
+  els.pathPlayButton.classList.toggle('active', active);
+}
+
+function setGuidedPlayback(playing) {
+  if (guardrailMode !== 'guided') {
+    setGuardrailMode('guided');
+    if (playing === false) {
+      guidedPathPlaying = false;
+      controller?.setGuidedPlayback(false);
+    }
+  } else {
+    guidedPathPlaying = Boolean(playing);
+    const result = controller?.setGuidedPlayback(guidedPathPlaying);
+    if (result?.guidedPlaying != null) guidedPathPlaying = Boolean(result.guidedPlaying);
+  }
+  syncGuidedPlaybackButton();
 }
 
 function setSensitivity(value) {
@@ -444,6 +496,9 @@ function attachControls() {
     renderGallery();
   });
   els.deleteSceneButton.addEventListener('click', () => deleteScene().catch(showError));
+  els.guidedButton.addEventListener('click', () => setGuardrailMode('guided'));
+  els.safeButton.addEventListener('click', () => setGuardrailMode('safe'));
+  els.freeButton.addEventListener('click', () => setGuardrailMode('free'));
   els.walkButton.addEventListener('click', () => setNavigationMode('walk'));
   els.orbitButton.addEventListener('click', () => setNavigationMode('orbit'));
   els.sensitivityInput.addEventListener('input', (event) => setSensitivity(event.target.value));
@@ -455,6 +510,7 @@ function attachControls() {
   els.zoomOutButton.addEventListener('click', () => controller?.zoom(0.86));
   els.zoomInButton.addEventListener('click', () => controller?.zoom(1.16));
   els.maximizeButton.addEventListener('click', () => setSceneMaximized(!sceneMaximized));
+  els.pathPlayButton.addEventListener('click', () => setGuidedPlayback(!(guardrailMode === 'guided' && guidedPathPlaying)));
   els.cameraPrevButton.addEventListener('click', () => controller?.previousCameraView());
   els.cameraNextButton.addEventListener('click', () => controller?.nextCameraView());
   document.addEventListener('keydown', (event) => {
@@ -470,6 +526,8 @@ function showError(error) {
 }
 
 attachControls();
+setGuardrailMode('safe');
+syncGuidedPlaybackButton();
 setSensitivity(55);
 resetScenePanel();
 
