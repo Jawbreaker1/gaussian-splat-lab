@@ -8,6 +8,7 @@ const els = {
   acceptCaptureWarningRow: document.querySelector('#acceptCaptureWarningRow'),
   importVideoButton: document.querySelector('#importVideoButton'),
   importStatus: document.querySelector('#importStatus'),
+  queueSelectedSourceButton: document.querySelector('#queueSelectedSourceButton'),
   planJobButton: document.querySelector('#planJobButton'),
   wizardCaptureName: document.querySelector('#wizardCaptureName'),
   wizardSceneKind: document.querySelector('#wizardSceneKind'),
@@ -188,9 +189,9 @@ const qualityPresetLabels = {
   rtx_stable_quality: 'Max stable',
   rtx_max_quality: 'Max stress',
   splatfacto_preview: 'Splatfacto preview',
-  splatfacto_reference: 'Standard 3DGS',
+  splatfacto_reference: 'Reference quality',
   splatfacto_big_quality: 'Best quality',
-  splatfacto_ceiling: 'Ceiling test',
+  splatfacto_ceiling: 'Lab ceiling',
 };
 const fallbackSceneProfiles = {
   room: {
@@ -217,11 +218,11 @@ const fallbackSceneProfiles = {
 };
 const generationStrategyDetails = {
   splatfacto_reference: {
-    purpose: 'Full 3DGS scene with balanced runtime.',
+    purpose: 'Full Splatfacto scene with the balanced settings we use as our comparison baseline.',
     training: 'Splatfacto, 30k iterations',
   },
   splatfacto_big_quality: {
-    purpose: 'Recommended when final visual quality matters.',
+    purpose: 'Higher-capacity Splatfacto run for final-quality checks on strong input.',
     training: 'Splatfacto Big, 30k iterations',
   },
   quality_probe: {
@@ -229,7 +230,7 @@ const generationStrategyDetails = {
     training: 'Short local trainer probe',
   },
   splatfacto_ceiling: {
-    purpose: 'Lab run for testing the quality ceiling on strong input.',
+    purpose: 'Highest-detail lab run; useful for finding whether source data or training capacity is the real limit.',
     training: 'Splatfacto Big, full-resolution path',
   },
 };
@@ -340,6 +341,10 @@ function selectedCaptureReadiness() {
 
 function selectedLicenseCheck() {
   return selectedCaptureReadiness()?.checks?.find((check) => check.id === 'source_license') ?? null;
+}
+
+function captureInputKind(capture) {
+  return capture?.input?.kind ?? (capture?.source?.kind === 'local_dataset' ? 'dataset' : 'plain_video');
 }
 
 function selectedTrainingProfile() {
@@ -621,6 +626,8 @@ function updateImportControls() {
   els.acceptCaptureWarningRow.hidden = !needsWarningAcceptance;
   els.importVideoButton.disabled = running || !capture || !file || importingVideo || (needsWarningAcceptance && !els.acceptCaptureWarning.checked);
   els.importVideoButton.textContent = importingVideo ? 'Importing' : 'Import video';
+  els.queueSelectedSourceButton.disabled = !capture || queueActionBusy;
+  els.queueSelectedSourceButton.textContent = queueActionBusy ? 'Adding' : 'Add selected source to queue';
 }
 
 function renderCaptures() {
@@ -660,8 +667,10 @@ function renderCaptureSummary(capture, readiness) {
   const source = capture.source?.license === 'local-test-only'
     ? 'Technical baseline only'
     : capture.source?.license ?? 'License unknown';
+  const inputKind = captureInputKind(capture);
   els.captureSummary.append(
     header,
+    sourceSummary('Input', inputKind.replace(/_/g, ' ')),
     sourceSummary('Use', source),
     sourceSummary('Scene', capture.capture?.subject ?? '-'),
     sourceSummary('Motion', capture.capture?.motion ?? '-'),
@@ -678,10 +687,12 @@ function renderCaptureMeta() {
   }
 
   const readiness = selectedCaptureReadiness();
+  const inputKind = captureInputKind(capture);
   renderCaptureSummary(capture, readiness);
   updateImportControls();
   els.captureMeta.append(
     row('Capture ID', capture.id),
+    row('Input', inputKind.replace(/_/g, ' ')),
     row('File', readiness?.status ?? 'unknown'),
     row('Target', readiness?.sourcePath),
     row('Source', capture.source?.sourceUrl),
@@ -1480,6 +1491,22 @@ async function generatePipeline() {
     wizardBusy = false;
     updateWizardControls();
     renderStages();
+  }
+}
+
+async function queueSelectedSource() {
+  const capture = selectedCapture();
+  if (!capture || queueActionBusy) return;
+  const profile = selectedTrainingProfile();
+  const sceneKind = selectedSceneProfileKey();
+  els.importStatus.textContent = '';
+  try {
+    await enqueueCapture(capture.id, profile, sceneKind, capture.displayName || capture.id);
+    els.importStatus.textContent = `Added ${capture.displayName || capture.id} to the render queue.`;
+  } catch (error) {
+    els.importStatus.textContent = error.message;
+  } finally {
+    updateImportControls();
   }
 }
 
@@ -2479,6 +2506,7 @@ els.wizardSelfCaptured.addEventListener('change', updateWizardControls);
 els.generatePipelineButton.addEventListener('click', generatePipeline);
 els.acceptCaptureWarning.addEventListener('change', updateImportControls);
 els.importVideoButton.addEventListener('click', importVideo);
+els.queueSelectedSourceButton.addEventListener('click', queueSelectedSource);
 els.planJobButton.addEventListener('click', () => createJob());
 els.renderCancelButton.addEventListener('click', () => {
   const item = activeQueueItem();

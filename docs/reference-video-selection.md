@@ -22,7 +22,7 @@ Manifest id: `nerfstudio-dozer-reference`
 
 Reason: use a purpose-built neural-rendering capture instead of a generic stock video. Nerfstudio exposes downloadable real-world captures through `ns-download-data nerfstudio --capture-name=dozer`, and the `dozer` scene is a better match for 3DGS validation because it should have real-world geometry, outdoor texture, strong parallax and no obvious reliance on a close-up glossy subject.
 
-The current pipeline is still video-first, so the manifest records a derived MP4 target at `data/videos/nerfstudio-dozer-reference.mp4`. Treat that MP4 as a compatibility artifact only. Keep the original downloaded image sequence, metadata and provenance as the source of truth. A near-term pipeline improvement should add image-sequence/dataset input as a first-class source so benchmark datasets do not need to be flattened into video.
+The pipeline now has a direct `nerfstudio_dataset` lane for datasets with `transforms.json`, so reference datasets no longer need to be flattened into video before training. A derived MP4 can still be useful when deliberately testing the ordinary video path, but it is a compatibility artifact. Keep the original downloaded image sequence, metadata and provenance as the source of truth.
 
 License posture: technical validation only until the exact downloaded dataset license evidence is attached. The Nerfstudio paper states that associated code and data are publicly available with open-source licensing, and the Nerfstudio repository is Apache-2.0 licensed, but that is not enough by itself to call a specific downloaded capture commercially cleared. Record the downloaded archive, source page, command, hash and license evidence before using it in a commercial demo.
 
@@ -30,9 +30,9 @@ Stop conditions before using it as reference evidence:
 
 - dataset must be downloaded through a documented command or manually imported with provenance
 - derived MP4, if used, must be reproducible from the original image sequence
-- intake must report duration, resolution, frame rate and hash for the derived MP4
-- sampled frames must show enough parallax and low blur
-- SfM must register enough frames with acceptable reprojection error
+- intake must validate images, transforms and license posture for dataset input, or duration/resolution/frame-rate/hash for derived video input
+- sampled or precomputed frames must show enough coverage and low blur
+- SfM must register enough frames with acceptable reprojection error for video input, or explicitly skip with validated known poses for dataset input
 - splat training must report RTX 5090 device use
 - quality report must compare render review against the previous baseline
 

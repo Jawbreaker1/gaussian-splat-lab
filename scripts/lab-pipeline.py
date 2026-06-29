@@ -350,7 +350,7 @@ STAGES = [
     {
         "id": "intake",
         "group": "media_pipeline",
-        "label": "Video intake",
+        "label": "Input intake",
         "reads": "CaptureInput",
         "writes": "CaptureMetadata",
     },
@@ -403,6 +403,18 @@ STAGES = [
 class CaptureSelection:
     manifest_path: Path
     capture: dict[str, Any]
+
+
+PLAIN_VIDEO_INPUT_KIND = "plain_video"
+COLMAP_DATASET_INPUT_KIND = "colmap_dataset"
+NERFSTUDIO_DATASET_INPUT_KIND = "nerfstudio_dataset"
+RGBD_CAPTURE_BUNDLE_INPUT_KIND = "rgbd_capture_bundle"
+SUPPORTED_INPUT_KINDS = {
+    PLAIN_VIDEO_INPUT_KIND,
+    COLMAP_DATASET_INPUT_KIND,
+    NERFSTUDIO_DATASET_INPUT_KIND,
+    RGBD_CAPTURE_BUNDLE_INPUT_KIND,
+}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -954,6 +966,16 @@ def link_or_copytree(source: Path, target: Path) -> None:
         shutil.copytree(source, target)
 
 
+def link_or_copyfile(source: Path, target: Path) -> None:
+    if target.exists() or target.is_symlink():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.symlink(source.resolve(), target)
+    except OSError:
+        shutil.copy2(source, target)
+
+
 def prepare_downscaled_images(source_dir: Path, output_dir: Path, factor: int) -> int:
     if factor <= 1:
         return 0
@@ -981,30 +1003,171 @@ def prepare_downscaled_images(source_dir: Path, output_dir: Path, factor: int) -
     return len(source_images)
 
 
+def prepare_colmap_source_images(
+    source_dir: Path,
+    output_dir: Path,
+    expected_size: tuple[int, int] | None,
+) -> dict[str, Any]:
+    if expected_size is None:
+        link_or_copytree(source_dir, output_dir)
+        return {
+            "mode": "linked_original",
+            "sourceDirectory": str(source_dir),
+            "imageDirectory": str(output_dir),
+            "normalizedImageCount": 0,
+        }
+
+    suffixes = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+    source_images = sorted(path for path in source_dir.iterdir() if path.is_file() and path.suffix.lower() in suffixes)
+    if not source_images:
+        link_or_copytree(source_dir, output_dir)
+        return {
+            "mode": "linked_original_empty",
+            "sourceDirectory": str(source_dir),
+            "imageDirectory": str(output_dir),
+            "normalizedImageCount": 0,
+        }
+
+    first_width, first_height = image_dimensions(source_images[0])
+    expected_width, expected_height = expected_size
+    if first_width == expected_width and first_height == expected_height:
+        link_or_copytree(source_dir, output_dir)
+        return {
+            "mode": "linked_original_matching_camera",
+            "sourceDirectory": str(source_dir),
+            "imageDirectory": str(output_dir),
+            "expectedSize": {"width": expected_width, "height": expected_height},
+            "normalizedImageCount": 0,
+        }
+
+    from PIL import Image  # type: ignore[import-not-found]
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    normalized_count = 0
+    for source in source_images:
+        target = output_dir / source.name
+        if target.exists():
+            normalized_count += 1
+            continue
+        with Image.open(source) as image:
+            rgb = image.convert("RGB")
+            if rgb.width >= expected_width and rgb.height >= expected_height:
+                rgb = rgb.crop((0, 0, expected_width, expected_height))
+            if rgb.width != expected_width or rgb.height != expected_height:
+                rgb = rgb.resize((expected_width, expected_height), Image.Resampling.LANCZOS)
+            save_kwargs: dict[str, Any] = {}
+            if target.suffix.lower() in {".jpg", ".jpeg"}:
+                save_kwargs = {"quality": 96, "subsampling": 1, "optimize": True}
+            rgb.save(target, **save_kwargs)
+            normalized_count += 1
+    return {
+        "mode": "normalized_to_colmap_camera_size",
+        "sourceDirectory": str(source_dir),
+        "imageDirectory": str(output_dir),
+        "sourceFirstImageSize": {"width": first_width, "height": first_height},
+        "expectedSize": {"width": expected_width, "height": expected_height},
+        "normalizedImageCount": normalized_count,
+    }
+
+
+def nerfstudio_image_root_from_transforms(dataset_path: Path, transforms: dict[str, Any]) -> Path:
+    frames = transforms.get("frames")
+    if not isinstance(frames, list):
+        return dataset_path / "images" if (dataset_path / "images").exists() else dataset_path
+    image_paths = [
+        path
+        for frame in frames
+        if isinstance(frame, dict)
+        for path in [normalize_nerfstudio_frame_path(dataset_path, frame.get("file_path"))]
+        if path is not None
+    ]
+    parents = [path.parent for path in image_paths if path.parent.exists()]
+    if not parents:
+        return dataset_path / "images" if (dataset_path / "images").exists() else dataset_path
+    try:
+        common = Path(os.path.commonpath([str(parent.resolve()) for parent in parents]))
+    except ValueError:
+        return parents[0]
+    return common if common.exists() else parents[0]
+
+
+def prepare_nerfstudio_transforms_data(
+    *,
+    data_dir: Path,
+    dataset_path: Path,
+    downscale_factor: int,
+) -> dict[str, Any]:
+    transforms_path = dataset_path / "transforms.json"
+    transforms = read_json(transforms_path)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    for child in dataset_path.iterdir():
+        target = data_dir / child.name
+        if child.is_dir():
+            link_or_copytree(child, target)
+        elif child.is_file():
+            link_or_copyfile(child, target)
+
+    image_root = nerfstudio_image_root_from_transforms(dataset_path, transforms)
+    downscaled_count = 0
+    downscaled_path: Path | None = None
+    if downscale_factor > 1 and image_root.exists() and image_root.is_dir():
+        try:
+            relative_image_root = image_root.resolve().relative_to(dataset_path.resolve())
+        except ValueError:
+            relative_image_root = Path("images")
+        if relative_image_root == Path("."):
+            downscaled_path = data_dir / f"images_{downscale_factor}"
+        else:
+            downscaled_path = data_dir / relative_image_root.with_name(f"{relative_image_root.name}_{downscale_factor}")
+        downscaled_count = prepare_downscaled_images(image_root, downscaled_path, downscale_factor)
+
+    return {
+        "inputKind": NERFSTUDIO_DATASET_INPUT_KIND,
+        "dataDir": str(data_dir),
+        "sourceDatasetPath": str(dataset_path),
+        "transformsPath": str(data_dir / "transforms.json"),
+        "sourceTransformsPath": str(transforms_path),
+        "imagesPath": str(data_dir / image_root.name) if image_root.parent == dataset_path else str(image_root),
+        "imageRoot": str(image_root),
+        "downscaleFactor": downscale_factor,
+        "downscaledImages": downscaled_count,
+        "downscaledImagesPath": str(downscaled_path) if downscaled_path else None,
+        "frameCount": len(transforms.get("frames", [])) if isinstance(transforms.get("frames"), list) else 0,
+    }
+
+
 def prepare_nerfstudio_colmap_data(
     *,
     data_dir: Path,
     sparse_model_path: Path,
     colmap_image_dir: Path,
     downscale_factor: int,
+    expected_image_size: tuple[int, int] | None = None,
 ) -> dict[str, Any]:
     images_link = data_dir / "images"
     sparse_link = data_dir / "colmap" / "sparse" / "0"
-    link_or_copytree(colmap_image_dir, images_link)
+    image_prepare_summary = prepare_colmap_source_images(colmap_image_dir, images_link, expected_image_size)
     link_or_copytree(sparse_model_path, sparse_link)
     downscaled_count = 0
     if downscale_factor > 1:
-        downscaled_count = prepare_downscaled_images(
-            colmap_image_dir,
-            data_dir / f"images_{downscale_factor}",
-            downscale_factor,
-        )
+        downscaled_target = data_dir / f"images_{downscale_factor}"
+        existing_downscaled = colmap_image_dir.parent / f"{colmap_image_dir.name}_{downscale_factor}"
+        if expected_image_size is None and existing_downscaled.exists() and existing_downscaled.is_dir():
+            link_or_copytree(existing_downscaled, downscaled_target)
+            downscaled_count = count_image_files(existing_downscaled)
+        else:
+            downscaled_count = prepare_downscaled_images(
+                images_link,
+                downscaled_target,
+                downscale_factor,
+            )
     return {
         "dataDir": str(data_dir),
         "imagesPath": str(images_link),
         "sparseModelPath": str(sparse_link),
         "downscaleFactor": downscale_factor,
         "downscaledImages": downscaled_count,
+        "imagePreparation": image_prepare_summary,
     }
 
 
@@ -1019,6 +1182,93 @@ def selected_images_from_colmap_text(colmap_text_dir: Path, image_dir: Path) -> 
         }
         for image in sorted(images.values(), key=lambda item: int(item["imageId"]))
     ]
+
+
+def image_dimensions(path: Path) -> tuple[int | None, int | None]:
+    try:
+        from PIL import Image  # type: ignore[import-not-found]
+
+        with Image.open(path) as image:
+            return int(image.width), int(image.height)
+    except Exception:
+        return None, None
+
+
+def value_from_frame_or_transforms(frame: dict[str, Any], transforms: dict[str, Any], key: str) -> Any:
+    value = frame.get(key)
+    if value is not None:
+        return value
+    return transforms.get(key)
+
+
+def nerfstudio_frame_intrinsics(
+    *,
+    frame: dict[str, Any],
+    transforms: dict[str, Any],
+    image_path: Path,
+) -> dict[str, Any]:
+    width_raw = value_from_frame_or_transforms(frame, transforms, "w")
+    height_raw = value_from_frame_or_transforms(frame, transforms, "h")
+    try:
+        width = int(width_raw)
+        height = int(height_raw)
+    except (TypeError, ValueError):
+        width, height = image_dimensions(image_path)
+    width = int(width or 1)
+    height = int(height or 1)
+
+    def float_value(key: str, default: float) -> float:
+        try:
+            return float(value_from_frame_or_transforms(frame, transforms, key))
+        except (TypeError, ValueError):
+            return default
+
+    fx = float_value("fl_x", max(width, height, 1))
+    fy = float_value("fl_y", fx)
+    cx = float_value("cx", width / 2)
+    cy = float_value("cy", height / 2)
+    fov_y = math.degrees(2 * math.atan(height / (2 * max(fy, 1.0e-6))))
+    return {
+        "model": "NERFSTUDIO_PINHOLE",
+        "sourceWidth": width,
+        "sourceHeight": height,
+        "width": width,
+        "height": height,
+        "fx": round(fx, 6),
+        "fy": round(fy, 6),
+        "cx": round(cx, 6),
+        "cy": round(cy, 6),
+        "fovYDegrees": round(fov_y, 6),
+    }
+
+
+def selected_images_from_nerfstudio_transforms(dataset_path: Path, transforms: dict[str, Any]) -> list[dict[str, Any]]:
+    frames = transforms.get("frames")
+    if not isinstance(frames, list):
+        return []
+    selected: list[dict[str, Any]] = []
+    for index, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            continue
+        image_path = normalize_nerfstudio_frame_path(dataset_path, frame.get("file_path"))
+        if image_path is None:
+            continue
+        selected.append(
+            {
+                "imageId": index + 1,
+                "name": Path(str(frame.get("file_path") or image_path.name)).name,
+                "cameraId": index + 1,
+                "path": str(image_path),
+                "filePath": frame.get("file_path"),
+                "transformMatrix": frame.get("transform_matrix"),
+                "intrinsics": nerfstudio_frame_intrinsics(
+                    frame=frame,
+                    transforms=transforms,
+                    image_path=image_path,
+                ),
+            }
+        )
+    return selected
 
 
 def build_image_contact_sheet(image_paths: list[Path], output_path: Path, max_images: int = 12) -> Path | None:
@@ -1168,26 +1418,359 @@ def stage_status_from_job(job: dict[str, Any], stage_id: str) -> str | None:
     return None
 
 
+def resolve_repo_path(raw_path: str, repo_root: Path) -> Path:
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = repo_root / path
+    return path
+
+
+def capture_input_descriptor(capture: dict[str, Any]) -> dict[str, Any]:
+    explicit = capture.get("input")
+    if isinstance(explicit, dict):
+        descriptor = dict(explicit)
+    else:
+        source = capture.get("source", {}) if isinstance(capture.get("source"), dict) else {}
+        descriptor = {
+            "kind": PLAIN_VIDEO_INPUT_KIND,
+            "path": source.get("path"),
+            "source": "legacy_source_path",
+        }
+    kind = str(descriptor.get("kind") or PLAIN_VIDEO_INPUT_KIND).strip()
+    aliases = {
+        "video": PLAIN_VIDEO_INPUT_KIND,
+        "local_file": PLAIN_VIDEO_INPUT_KIND,
+        "colmap": COLMAP_DATASET_INPUT_KIND,
+        "colmap_scene": COLMAP_DATASET_INPUT_KIND,
+        "nerfstudio_capture": NERFSTUDIO_DATASET_INPUT_KIND,
+    }
+    descriptor["kind"] = aliases.get(kind, kind)
+    return descriptor
+
+
+def capture_record_from(value: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(value.get("job"), dict) and isinstance(value.get("capture"), dict):
+        return value["capture"]
+    return value
+
+
+def capture_input_kind(capture_or_job: dict[str, Any]) -> str:
+    capture = capture_record_from(capture_or_job)
+    if not isinstance(capture, dict):
+        return PLAIN_VIDEO_INPUT_KIND
+    return str(capture_input_descriptor(capture).get("kind") or PLAIN_VIDEO_INPUT_KIND)
+
+
 def capture_video_path(job: dict[str, Any], repo_root: Path) -> Path:
+    input_descriptor = capture_input_descriptor(job.get("capture", {}))
+    if input_descriptor.get("kind") == PLAIN_VIDEO_INPUT_KIND and isinstance(input_descriptor.get("path"), str):
+        return resolve_repo_path(str(input_descriptor["path"]), repo_root)
     source = job.get("capture", {}).get("source", {})
     raw_path = source.get("path")
     if not isinstance(raw_path, str) or not raw_path:
         raise ValueError("capture source.path is required")
-    video_path = Path(raw_path)
-    if not video_path.is_absolute():
-        video_path = repo_root / video_path
-    return video_path
+    return resolve_repo_path(raw_path, repo_root)
 
 
 def capture_source_path(capture: dict[str, Any], repo_root: Path) -> Path | None:
+    descriptor = capture_input_descriptor(capture)
+    raw_input_path = descriptor.get("path")
+    if isinstance(raw_input_path, str) and raw_input_path:
+        return resolve_repo_path(raw_input_path, repo_root)
     source = capture.get("source", {}) if isinstance(capture.get("source"), dict) else {}
     raw_path = source.get("path")
     if not isinstance(raw_path, str) or not raw_path:
         return None
-    path = Path(raw_path)
+    return resolve_repo_path(raw_path, repo_root)
+
+
+def nerfstudio_dataset_path(capture_or_job: dict[str, Any], repo_root: Path) -> Path | None:
+    capture = capture_record_from(capture_or_job)
+    if not isinstance(capture, dict):
+        return None
+    descriptor = capture_input_descriptor(capture)
+    raw_path = descriptor.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        dataset = capture.get("dataset", {}) if isinstance(capture.get("dataset"), dict) else {}
+        raw_path = dataset.get("path") or dataset.get("expectedLocalDatasetPath")
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    return resolve_repo_path(raw_path, repo_root)
+
+
+def colmap_dataset_paths(capture_or_job: dict[str, Any], repo_root: Path) -> dict[str, Path | None]:
+    capture = capture_record_from(capture_or_job)
+    if not isinstance(capture, dict):
+        return {"datasetPath": None, "imageDirectory": None, "sparseModelPath": None}
+    descriptor = capture_input_descriptor(capture)
+    dataset = capture.get("dataset", {}) if isinstance(capture.get("dataset"), dict) else {}
+
+    raw_dataset_path = descriptor.get("path") or dataset.get("scenePath") or dataset.get("expectedLocalDatasetPath")
+    dataset_path = resolve_repo_path(str(raw_dataset_path), repo_root) if isinstance(raw_dataset_path, str) and raw_dataset_path else None
+
+    raw_image_dir = descriptor.get("imageDirectory") or dataset.get("imageSequencePath")
+    if isinstance(raw_image_dir, str) and raw_image_dir:
+        image_dir = resolve_repo_path(raw_image_dir, repo_root)
+    elif dataset_path is not None and (dataset_path / "images").exists():
+        image_dir = dataset_path / "images"
+    elif dataset_path is not None and (dataset_path / "images_2").exists():
+        image_dir = dataset_path / "images_2"
+    else:
+        image_dir = None
+
+    raw_sparse_path = descriptor.get("sparseModelPath") or dataset.get("sparseModelPath")
+    if isinstance(raw_sparse_path, str) and raw_sparse_path:
+        sparse_model_path = resolve_repo_path(raw_sparse_path, repo_root)
+    elif dataset_path is not None and (dataset_path / "sparse" / "0").exists():
+        sparse_model_path = dataset_path / "sparse" / "0"
+    else:
+        sparse_model_path = None
+
+    return {
+        "datasetPath": dataset_path,
+        "imageDirectory": image_dir,
+        "sparseModelPath": sparse_model_path,
+    }
+
+
+def count_image_files(image_dir: Path) -> int:
+    suffixes = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+    return sum(1 for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in suffixes)
+
+
+def validate_colmap_dataset(capture_or_job: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    paths = colmap_dataset_paths(capture_or_job, repo_root)
+    dataset_path = paths["datasetPath"]
+    image_dir = paths["imageDirectory"]
+    sparse_model_path = paths["sparseModelPath"]
+    checks: list[dict[str, Any]] = [
+        {
+            "id": "dataset_directory",
+            "status": "pass" if dataset_path and dataset_path.exists() and dataset_path.is_dir() else "setup_gap",
+            "summary": "dataset directory exists" if dataset_path and dataset_path.exists() and dataset_path.is_dir() else "dataset directory is missing",
+            "path": str(dataset_path) if dataset_path else None,
+        },
+        {
+            "id": "image_directory",
+            "status": "pass" if image_dir and image_dir.exists() and image_dir.is_dir() else "setup_gap",
+            "summary": "image directory exists" if image_dir and image_dir.exists() and image_dir.is_dir() else "image directory is missing",
+            "path": str(image_dir) if image_dir else None,
+        },
+        {
+            "id": "sparse_model",
+            "status": "pass" if sparse_model_path and sparse_model_path.exists() and sparse_model_path.is_dir() else "setup_gap",
+            "summary": "COLMAP sparse model exists" if sparse_model_path and sparse_model_path.exists() and sparse_model_path.is_dir() else "COLMAP sparse model is missing",
+            "path": str(sparse_model_path) if sparse_model_path else None,
+        },
+    ]
+    image_count = count_image_files(image_dir) if image_dir and image_dir.exists() and image_dir.is_dir() else 0
+    checks.append(
+        {
+            "id": "image_files",
+            "status": "pass" if image_count > 0 else "fail",
+            "summary": f"{image_count} input images found" if image_count > 0 else "no supported input images found",
+            "imageCount": image_count,
+        }
+    )
+    sparse_files = []
+    if sparse_model_path and sparse_model_path.exists() and sparse_model_path.is_dir():
+        sparse_files = [path.name for path in sparse_model_path.iterdir() if path.is_file()]
+    has_binary_model = {"cameras.bin", "images.bin", "points3D.bin"}.issubset(set(sparse_files))
+    has_text_model = {"cameras.txt", "images.txt", "points3D.txt"}.issubset(set(sparse_files))
+    checks.append(
+        {
+            "id": "sparse_model_files",
+            "status": "pass" if has_binary_model or has_text_model else "fail",
+            "summary": "COLMAP sparse model files are present" if has_binary_model or has_text_model else "COLMAP sparse model is missing cameras/images/points3D files",
+            "files": sparse_files,
+        }
+    )
+    statuses = [check["status"] for check in checks]
+    status = "fail" if "fail" in statuses else "setup_gap" if "setup_gap" in statuses else "pass"
+    return {
+        "status": status,
+        "summary": "COLMAP dataset is ready" if status == "pass" else "COLMAP dataset is incomplete",
+        "datasetPath": str(dataset_path) if dataset_path else None,
+        "imageDirectory": str(image_dir) if image_dir else None,
+        "sparseModelPath": str(sparse_model_path) if sparse_model_path else None,
+        "imageCount": image_count,
+        "checks": checks,
+    }
+
+
+def normalize_nerfstudio_frame_path(dataset_path: Path, file_path: Any) -> Path | None:
+    if not isinstance(file_path, str) or not file_path:
+        return None
+    path = Path(file_path)
     if not path.is_absolute():
-        path = repo_root / path
+        path = dataset_path / path
+    if path.suffix:
+        return path
+    for suffix in (".jpg", ".jpeg", ".png"):
+        candidate = path.with_suffix(suffix)
+        if candidate.exists():
+            return candidate
     return path
+
+
+def validate_nerfstudio_dataset(dataset_path: Path) -> dict[str, Any]:
+    transforms_path = dataset_path / "transforms.json"
+    checks: list[dict[str, Any]] = [
+        {
+            "id": "dataset_directory",
+            "status": "pass" if dataset_path.exists() and dataset_path.is_dir() else "setup_gap",
+            "summary": "dataset directory exists" if dataset_path.exists() and dataset_path.is_dir() else "dataset directory is missing",
+            "path": str(dataset_path),
+        },
+        {
+            "id": "transforms_json",
+            "status": "pass" if transforms_path.exists() else "setup_gap",
+            "summary": "transforms.json exists" if transforms_path.exists() else "transforms.json is missing",
+            "path": str(transforms_path),
+        },
+    ]
+    if not dataset_path.exists() or not dataset_path.is_dir() or not transforms_path.exists():
+        return {
+            "status": "setup_gap",
+            "summary": "Nerfstudio dataset is not present locally",
+            "datasetPath": str(dataset_path),
+            "transformsPath": str(transforms_path),
+            "checks": checks,
+        }
+
+    try:
+        transforms = read_json(transforms_path)
+    except Exception as exc:  # noqa: BLE001 - report invalid user/reference data directly
+        checks.append({"id": "transforms_parse", "status": "fail", "summary": f"transforms.json is not readable: {exc}"})
+        return {
+            "status": "fail",
+            "summary": "Nerfstudio transforms.json is invalid",
+            "datasetPath": str(dataset_path),
+            "transformsPath": str(transforms_path),
+            "checks": checks,
+        }
+
+    frames = transforms.get("frames")
+    if not isinstance(frames, list) or not frames:
+        checks.append({"id": "frame_entries", "status": "fail", "summary": "transforms.json has no frames"})
+        return {
+            "status": "fail",
+            "summary": "Nerfstudio dataset has no frame entries",
+            "datasetPath": str(dataset_path),
+            "transformsPath": str(transforms_path),
+            "frameCount": 0,
+            "readableFrameCount": 0,
+            "depthFrameCount": 0,
+            "checks": checks,
+        }
+
+    readable_count = 0
+    missing: list[str] = []
+    pose_count = 0
+    depth_count = 0
+    for frame in frames:
+        if not isinstance(frame, dict):
+            continue
+        image_path = normalize_nerfstudio_frame_path(dataset_path, frame.get("file_path"))
+        if image_path and image_path.exists() and image_path.is_file():
+            readable_count += 1
+        elif image_path:
+            missing.append(str(image_path))
+        matrix = frame.get("transform_matrix")
+        if isinstance(matrix, list) and len(matrix) == 4 and all(isinstance(row, list) and len(row) == 4 for row in matrix):
+            pose_count += 1
+        depth_path = normalize_nerfstudio_frame_path(dataset_path, frame.get("depth_file_path"))
+        if depth_path and depth_path.exists():
+            depth_count += 1
+
+    checks.append(
+        {
+            "id": "frame_images",
+            "status": "pass" if readable_count == len(frames) else "fail",
+            "summary": "all transform frame images exist" if readable_count == len(frames) else f"{len(frames) - readable_count} transform frame images are missing",
+            "frameCount": len(frames),
+            "readableFrameCount": readable_count,
+            "missingExamples": missing[:5],
+        }
+    )
+    checks.append(
+        {
+            "id": "frame_poses",
+            "status": "pass" if pose_count == len(frames) else "fail",
+            "summary": "all frames contain transform matrices" if pose_count == len(frames) else f"{len(frames) - pose_count} frames are missing transform matrices",
+            "poseCount": pose_count,
+        }
+    )
+    if depth_count:
+        checks.append(
+            {
+                "id": "depth_maps",
+                "status": "pass",
+                "summary": f"{depth_count} frames reference readable depth maps",
+                "depthFrameCount": depth_count,
+            }
+        )
+
+    status = "pass" if readable_count == len(frames) and pose_count == len(frames) else "fail"
+    image_root = dataset_path / "images"
+    if not image_root.exists():
+        image_root = dataset_path
+    return {
+        "status": status,
+        "summary": "Nerfstudio dataset is ready" if status == "pass" else "Nerfstudio dataset is incomplete",
+        "datasetPath": str(dataset_path),
+        "transformsPath": str(transforms_path),
+        "imageRoot": str(image_root),
+        "frameCount": len(frames),
+        "readableFrameCount": readable_count,
+        "depthFrameCount": depth_count,
+        "checks": checks,
+    }
+
+
+def nerfstudio_frame_entries(dataset_path: Path, transforms: dict[str, Any]) -> list[dict[str, Any]]:
+    frames = transforms.get("frames")
+    if not isinstance(frames, list):
+        return []
+    entries: list[dict[str, Any]] = []
+    for index, frame in enumerate(frames):
+        if not isinstance(frame, dict):
+            continue
+        image_path = normalize_nerfstudio_frame_path(dataset_path, frame.get("file_path"))
+        if image_path is None:
+            continue
+        depth_path = normalize_nerfstudio_frame_path(dataset_path, frame.get("depth_file_path"))
+        entry = {
+            "index": index,
+            "path": str(image_path),
+            "filePath": frame.get("file_path"),
+            "timestampSeconds": frame.get("timestampSeconds", index),
+            "sizeBytes": image_path.stat().st_size if image_path.exists() else None,
+            "sha256": file_sha256(image_path) if image_path.exists() and image_path.is_file() else None,
+            "transformMatrix": frame.get("transform_matrix"),
+        }
+        if depth_path is not None:
+            entry["depthPath"] = str(depth_path)
+            entry["depthExists"] = depth_path.exists()
+        entries.append(entry)
+    return entries
+
+
+def colmap_dataset_frame_entries(image_dir: Path) -> list[dict[str, Any]]:
+    suffixes = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+    entries: list[dict[str, Any]] = []
+    for index, image_path in enumerate(sorted(path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in suffixes)):
+        entries.append(
+            {
+                "index": index,
+                "path": str(image_path),
+                "filePath": image_path.name,
+                "timestampSeconds": index,
+                "sizeBytes": image_path.stat().st_size,
+                "sha256": file_sha256(image_path),
+            }
+        )
+    return entries
 
 
 def classify_capture_license(source: dict[str, Any]) -> tuple[str, str, str]:
@@ -1215,18 +1798,46 @@ def classify_capture_license(source: dict[str, Any]) -> tuple[str, str, str]:
 
 def capture_readiness(capture: dict[str, Any], repo_root: Path) -> dict[str, Any]:
     source = capture.get("source", {}) if isinstance(capture.get("source"), dict) else {}
-    source_path = capture_source_path(capture, repo_root)
+    input_kind = capture_input_kind(capture)
     license_status, license_summary, commercial_posture = classify_capture_license(source)
-    file_exists = bool(source_path and source_path.exists())
-    file_status = "pass" if file_exists else "setup_gap"
-    checks = [
-        {
+    source_path = capture_source_path(capture, repo_root)
+    if input_kind == COLMAP_DATASET_INPUT_KIND:
+        dataset_report = validate_colmap_dataset(capture, repo_root)
+        source_check = {
+            "id": "source_dataset",
+            "status": dataset_report["status"],
+            "summary": dataset_report["summary"],
+            "path": dataset_report.get("datasetPath"),
+            "frameCount": dataset_report.get("imageCount"),
+            "sparseModelPath": dataset_report.get("sparseModelPath"),
+        }
+    elif input_kind == NERFSTUDIO_DATASET_INPUT_KIND:
+        dataset_path = nerfstudio_dataset_path(capture, repo_root)
+        dataset_report = validate_nerfstudio_dataset(dataset_path) if dataset_path else {
+            "status": "setup_gap",
+            "summary": "Nerfstudio dataset path is missing",
+            "datasetPath": None,
+            "checks": [{"id": "dataset_path", "status": "setup_gap", "summary": "input.path or dataset.expectedLocalDatasetPath is required"}],
+        }
+        source_check = {
+            "id": "source_dataset",
+            "status": dataset_report["status"],
+            "summary": dataset_report["summary"],
+            "path": dataset_report.get("datasetPath"),
+            "frameCount": dataset_report.get("frameCount"),
+            "depthFrameCount": dataset_report.get("depthFrameCount"),
+        }
+    else:
+        file_exists = bool(source_path and source_path.exists())
+        source_check = {
             "id": "source_file",
-            "status": file_status,
+            "status": "pass" if file_exists else "setup_gap",
             "summary": "source file exists" if file_exists else "source file is not present locally",
             "path": str(source_path) if source_path else None,
             "sizeBytes": source_path.stat().st_size if file_exists and source_path else None,
-        },
+        }
+    checks = [
+        source_check,
         {
             "id": "source_license",
             "status": license_status,
@@ -1250,6 +1861,7 @@ def capture_readiness(capture: dict[str, Any], repo_root: Path) -> dict[str, Any
     return {
         "id": capture.get("id"),
         "displayName": capture.get("displayName"),
+        "inputKind": input_kind,
         "status": status,
         "commercialPosture": commercial_posture,
         "sourcePath": str(source_path) if source_path else None,
@@ -2511,6 +3123,138 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
         )
         return base
 
+    input_kind = str(intake_report.get("inputKind") or capture_input_kind(job))
+    if input_kind == COLMAP_DATASET_INPUT_KIND:
+        image_dir_raw = intake_report.get("imageDirectory")
+        sparse_model_raw = intake_report.get("sparseModelPath")
+        image_dir = Path(str(image_dir_raw)) if image_dir_raw else None
+        sparse_model_path = Path(str(sparse_model_raw)) if sparse_model_raw else None
+        if image_dir is None or not image_dir.exists() or sparse_model_path is None or not sparse_model_path.exists():
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "precomputed_colmap_dataset",
+                    "status": "setup_gap",
+                    "summary": "intake did not provide a readable COLMAP dataset",
+                    "imageDirectory": str(image_dir) if image_dir else None,
+                    "sparseModelPath": str(sparse_model_path) if sparse_model_path else None,
+                }
+            )
+            return base
+        frames = colmap_dataset_frame_entries(image_dir)
+        frame_dir = frame_run_directory(job_path)
+        frame_dir.mkdir(parents=True, exist_ok=True)
+        frame_manifest = {
+            "schemaVersion": 1,
+            "stage": {
+                "id": "frame_sampling",
+                "status": "pass",
+                "generatedAt": utc_now(),
+                "jobPath": str(job_path),
+            },
+            "inputKind": input_kind,
+            "source": {
+                "intakeReportPath": str(intake_path),
+                "datasetPath": intake_report.get("datasetPath"),
+                "imageDirectory": str(image_dir),
+                "sparseModelPath": str(sparse_model_path),
+            },
+            "sampling": {
+                "strategy": "precomputed_colmap_images",
+                "targetFps": None,
+                "effectiveFps": None,
+                "maxFrames": len(frames),
+                "actualFrameCount": len(frames),
+                "cappedByMaxFrames": False,
+            },
+            "frameDirectory": str(image_dir),
+            "frames": frames,
+            "sparseModelPath": str(sparse_model_path),
+        }
+        frame_manifest_path = frame_dir / "frame_manifest.json"
+        write_json(frame_manifest_path, frame_manifest)
+        base["stage"]["status"] = "pass"
+        base["inputKind"] = input_kind
+        base["frameManifestPath"] = str(frame_manifest_path)
+        base["frameDirectory"] = str(image_dir)
+        base["sparseModelPath"] = str(sparse_model_path)
+        base["sampling"] = frame_manifest["sampling"]
+        base["checks"].append(
+            {
+                "id": "precomputed_frames",
+                "status": "pass",
+                "summary": f"skipped FFmpeg sampling; using {len(frames)} images from COLMAP dataset",
+                "frameCount": len(frames),
+                "imageDirectory": str(image_dir),
+            }
+        )
+        return base
+
+    if input_kind == NERFSTUDIO_DATASET_INPUT_KIND:
+        dataset_path_raw = intake_report.get("datasetPath")
+        transforms_path_raw = intake_report.get("transformsPath")
+        dataset_path = Path(str(dataset_path_raw)) if dataset_path_raw else None
+        transforms_path = Path(str(transforms_path_raw)) if transforms_path_raw else None
+        if dataset_path is None or transforms_path is None or not transforms_path.exists():
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "precomputed_dataset",
+                    "status": "setup_gap",
+                    "summary": "intake did not provide a readable Nerfstudio dataset",
+                    "datasetPath": str(dataset_path) if dataset_path else None,
+                    "transformsPath": str(transforms_path) if transforms_path else None,
+                }
+            )
+            return base
+        transforms = read_json(transforms_path)
+        frames = nerfstudio_frame_entries(dataset_path, transforms)
+        frame_dir = frame_run_directory(job_path)
+        frame_dir.mkdir(parents=True, exist_ok=True)
+        frame_manifest = {
+            "schemaVersion": 1,
+            "stage": {
+                "id": "frame_sampling",
+                "status": "pass",
+                "generatedAt": utc_now(),
+                "jobPath": str(job_path),
+            },
+            "inputKind": input_kind,
+            "source": {
+                "intakeReportPath": str(intake_path),
+                "datasetPath": str(dataset_path),
+                "transformsPath": str(transforms_path),
+            },
+            "sampling": {
+                "strategy": "precomputed_nerfstudio_frames",
+                "targetFps": None,
+                "effectiveFps": None,
+                "maxFrames": len(frames),
+                "actualFrameCount": len(frames),
+                "cappedByMaxFrames": False,
+            },
+            "frameDirectory": str(dataset_path),
+            "frames": frames,
+            "transformsPath": str(transforms_path),
+        }
+        frame_manifest_path = frame_dir / "frame_manifest.json"
+        write_json(frame_manifest_path, frame_manifest)
+        base["stage"]["status"] = "pass"
+        base["inputKind"] = input_kind
+        base["frameManifestPath"] = str(frame_manifest_path)
+        base["frameDirectory"] = str(dataset_path)
+        base["sampling"] = frame_manifest["sampling"]
+        base["checks"].append(
+            {
+                "id": "precomputed_frames",
+                "status": "pass",
+                "summary": f"skipped FFmpeg sampling; using {len(frames)} frames from Nerfstudio transforms.json",
+                "frameCount": len(frames),
+                "transformsPath": str(transforms_path),
+            }
+        )
+        return base
+
     try:
         target_fps, max_frames = frame_sampling_settings(job)
     except ValueError as exc:
@@ -2718,10 +3462,12 @@ def build_splatfacto_training_report(
     *,
     job_path: Path,
     base: dict[str, Any],
-    sparse_model_path: Path,
-    colmap_image_dir: Path,
+    sparse_model_path: Path | None,
+    colmap_image_dir: Path | None,
     training_config: dict[str, Any],
     requested_profile: str,
+    nerfstudio_data_path: Path | None = None,
+    source_input_kind: str | None = None,
 ) -> dict[str, Any]:
     paths = nerfstudio_venv_paths()
     trainer_env, trainer_env_summary = build_nerfstudio_environment()
@@ -2851,68 +3597,122 @@ def build_splatfacto_training_report(
     }
     base["runConfig"] = run_config
 
-    try:
-        data_summary = prepare_nerfstudio_colmap_data(
-            data_dir=training_dir / "nerfstudio-data",
-            sparse_model_path=sparse_model_path,
-            colmap_image_dir=colmap_image_dir,
-            downscale_factor=int(run_config["downscaleFactor"]),
+    input_kind = source_input_kind or (NERFSTUDIO_DATASET_INPUT_KIND if nerfstudio_data_path is not None else PLAIN_VIDEO_INPUT_KIND)
+    if nerfstudio_data_path is not None:
+        try:
+            data_summary = prepare_nerfstudio_transforms_data(
+                data_dir=training_dir / "nerfstudio-data",
+                dataset_path=nerfstudio_data_path,
+                downscale_factor=int(run_config["downscaleFactor"]),
+            )
+        except Exception as exc:  # noqa: BLE001 - report dataset setup failures directly
+            base["stage"]["status"] = "fail"
+            base["checks"].append(
+                {
+                    "id": "nerfstudio_dataset_layout",
+                    "status": "fail",
+                    "summary": str(exc),
+                }
+            )
+            return base
+    else:
+        if sparse_model_path is None or colmap_image_dir is None:
+            base["stage"]["status"] = "fail"
+            base["checks"].append(
+                {
+                    "id": "colmap_training_input",
+                    "status": "fail",
+                    "summary": "COLMAP Splatfacto training requires both sparseModelPath and colmapImageDirectory",
+                }
+            )
+            return base
+        colmap_text_dir = training_dir / "colmap_txt"
+        colmap_text_dir.mkdir(parents=True, exist_ok=True)
+        model_converter = run_command(
+            [
+                *colmap_command("model_converter", env=trainer_env),
+                "--input_path",
+                str(sparse_model_path),
+                "--output_path",
+                str(colmap_text_dir),
+                "--output_type",
+                "TXT",
+            ],
+            timeout_seconds=300,
+            env=trainer_env,
         )
-    except Exception as exc:  # noqa: BLE001 - report dataset setup failures directly
-        base["stage"]["status"] = "fail"
+        commands["colmapModelConverter"] = model_converter
         base["checks"].append(
             {
-                "id": "nerfstudio_dataset_layout",
-                "status": "fail",
-                "summary": str(exc),
+                "id": "colmap_text_export",
+                "status": model_converter["status"],
+                "summary": "COLMAP text model exported"
+                if model_converter["status"] == "pass"
+                else command_summary(model_converter) or "COLMAP text export failed",
             }
         )
-        return base
+        if model_converter["status"] != "pass":
+            base["stage"]["status"] = model_converter["status"]
+            return base
+        cameras = parse_colmap_cameras(colmap_text_dir / "cameras.txt")
+        first_camera = next(iter(cameras.values()), None)
+        expected_image_size = (
+            int(first_camera["width"]),
+            int(first_camera["height"]),
+        ) if isinstance(first_camera, dict) and first_camera.get("width") and first_camera.get("height") else None
+        selected_images = selected_images_from_colmap_text(colmap_text_dir, colmap_image_dir)
+        try:
+            data_summary = prepare_nerfstudio_colmap_data(
+                data_dir=training_dir / "nerfstudio-data",
+                sparse_model_path=sparse_model_path,
+                colmap_image_dir=colmap_image_dir,
+                downscale_factor=int(run_config["downscaleFactor"]),
+                expected_image_size=expected_image_size,
+            )
+        except Exception as exc:  # noqa: BLE001 - report dataset setup failures directly
+            base["stage"]["status"] = "fail"
+            base["checks"].append(
+                {
+                    "id": "nerfstudio_dataset_layout",
+                    "status": "fail",
+                    "summary": str(exc),
+                }
+            )
+            return base
 
     base["nerfstudioData"] = data_summary
     base["checks"].append(
         {
             "id": "nerfstudio_dataset_layout",
             "status": "pass",
-            "summary": "Nerfstudio COLMAP dataset layout prepared",
+            "summary": "Nerfstudio dataset layout prepared",
             "details": data_summary,
         }
     )
 
-    colmap_text_dir = training_dir / "colmap_txt"
-    colmap_text_dir.mkdir(parents=True, exist_ok=True)
-    model_converter = run_command(
-        [
-            *colmap_command("model_converter", env=trainer_env),
-            "--input_path",
-            str(sparse_model_path),
-            "--output_path",
-            str(colmap_text_dir),
-            "--output_type",
-            "TXT",
-        ],
-        timeout_seconds=300,
-        env=trainer_env,
-    )
-    commands["colmapModelConverter"] = model_converter
-    base["checks"].append(
-        {
-            "id": "colmap_text_export",
-            "status": model_converter["status"],
-            "summary": "COLMAP text model exported"
-            if model_converter["status"] == "pass"
-            else command_summary(model_converter) or "COLMAP text export failed",
-        }
-    )
-    if model_converter["status"] != "pass":
-        base["stage"]["status"] = model_converter["status"]
-        return base
-
-    selected_images = selected_images_from_colmap_text(colmap_text_dir, colmap_image_dir)
+    if nerfstudio_data_path is not None:
+        transforms = read_json(nerfstudio_data_path / "transforms.json")
+        selected_images = selected_images_from_nerfstudio_transforms(nerfstudio_data_path, transforms)
+        base["checks"].append(
+            {
+                "id": "nerfstudio_transform_cameras",
+                "status": "pass" if selected_images else "fail",
+                "summary": f"{len(selected_images)} camera poses loaded from transforms.json"
+                if selected_images
+                else "no camera poses could be loaded from transforms.json",
+            }
+        )
+        if not selected_images:
+            base["stage"]["status"] = "fail"
+            return base
+    else:
+        pass
     timestamp = training_dir.name
     runs_dir = training_dir / "nerfstudio-runs"
     experiment_name = profile
     train_log_path = training_dir / "logs" / "ns-train.log"
+    dataparser_name = "nerfstudio-data" if nerfstudio_data_path is not None else "colmap"
+    dataparser_data_dir = Path(str(data_summary["dataDir"]))
     train_command = [
         str(paths["ns_train"]),
         method,
@@ -2936,9 +3736,9 @@ def build_splatfacto_training_report(
         "True",
         "--pipeline.datamanager.cache-images",
         str(run_config["cacheImages"]),
-        "colmap",
+        dataparser_name,
         "--data",
-        str(training_dir / "nerfstudio-data"),
+        str(dataparser_data_dir),
         "--downscale-factor",
         str(run_config["downscaleFactor"]),
         "--eval-mode",
@@ -2950,6 +3750,8 @@ def build_splatfacto_training_report(
         "backend": "nerfstudio_splatfacto",
         "profile": profile,
         "method": method,
+        "inputKind": input_kind,
+        "dataparser": dataparser_name,
         "iterations": int(run_config["iterations"]),
         "startedAt": utc_now(),
     }
@@ -3037,6 +3839,8 @@ def build_splatfacto_training_report(
     }
     training_metrics = {
         "backend": "nerfstudio_splatfacto",
+        "inputKind": input_kind,
+        "dataparser": dataparser_name,
         "profile": profile,
         "method": method,
         "iterations": int(run_config["iterations"]),
@@ -3640,6 +4444,97 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         )
         return base
 
+    input_kind = str(frame_sampling_report.get("inputKind") or capture_input_kind(job))
+    if input_kind == COLMAP_DATASET_INPUT_KIND:
+        frame_manifest_path_raw = frame_sampling_report.get("frameManifestPath")
+        frame_manifest_path = Path(str(frame_manifest_path_raw)) if frame_manifest_path_raw else None
+        if frame_manifest_path is None or not frame_manifest_path.exists():
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "frame_manifest",
+                    "status": "setup_gap",
+                    "summary": "precomputed frame manifest is missing",
+                    "path": str(frame_manifest_path) if frame_manifest_path else None,
+                }
+            )
+            return base
+        frame_manifest = read_json(frame_manifest_path)
+        source = frame_manifest.get("source") if isinstance(frame_manifest.get("source"), dict) else {}
+        image_dir = source.get("imageDirectory") or frame_manifest.get("frameDirectory")
+        sparse_model_path = source.get("sparseModelPath") or frame_manifest.get("sparseModelPath")
+        frames = frame_manifest.get("frames", [])
+        base["stage"]["status"] = "pass"
+        base["inputKind"] = input_kind
+        base["frameManifestPath"] = str(frame_manifest_path)
+        base["datasetPath"] = source.get("datasetPath")
+        base["colmapImageDirectory"] = image_dir
+        base["sparseModelPath"] = sparse_model_path
+        base["metrics"] = {
+            "registeredImages": len(frames) if isinstance(frames, list) else 0,
+            "sparsePoints": None,
+            "precomputedImageCount": len(frames) if isinstance(frames, list) else 0,
+        }
+        base["checks"].append(
+            {
+                "id": "precomputed_colmap_model",
+                "status": "pass",
+                "summary": f"skipped COLMAP SfM; using existing sparse model with {len(frames) if isinstance(frames, list) else 0} images",
+                "imageDirectory": image_dir,
+                "sparseModelPath": sparse_model_path,
+            }
+        )
+        base["sfm"] = {
+            "backend": "precomputed_colmap",
+            "note": "COLMAP was not run because the input dataset already contains a sparse model.",
+        }
+        return base
+
+    if input_kind == NERFSTUDIO_DATASET_INPUT_KIND:
+        frame_manifest_path_raw = frame_sampling_report.get("frameManifestPath")
+        frame_manifest_path = Path(str(frame_manifest_path_raw)) if frame_manifest_path_raw else None
+        if frame_manifest_path is None or not frame_manifest_path.exists():
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "frame_manifest",
+                    "status": "setup_gap",
+                    "summary": "precomputed frame manifest is missing",
+                    "path": str(frame_manifest_path) if frame_manifest_path else None,
+                }
+            )
+            return base
+        frame_manifest = read_json(frame_manifest_path)
+        transforms_path = frame_manifest.get("transformsPath") or frame_sampling_report.get("transformsPath")
+        dataset_path = (frame_manifest.get("source") or {}).get("datasetPath") if isinstance(frame_manifest.get("source"), dict) else None
+        frames = frame_manifest.get("frames", [])
+        base["stage"]["status"] = "pass"
+        base["inputKind"] = input_kind
+        base["frameManifestPath"] = str(frame_manifest_path)
+        base["nerfstudioDataPath"] = dataset_path
+        base["transformsPath"] = transforms_path
+        base["colmapImageDirectory"] = frame_manifest.get("frameDirectory")
+        base["sparseModelPath"] = None
+        base["metrics"] = {
+            "registeredImages": len(frames) if isinstance(frames, list) else 0,
+            "sparsePoints": None,
+            "precomputedCameraCount": len(frames) if isinstance(frames, list) else 0,
+        }
+        base["checks"].append(
+            {
+                "id": "precomputed_cameras",
+                "status": "pass",
+                "summary": f"skipped COLMAP SfM; using {len(frames) if isinstance(frames, list) else 0} Nerfstudio transform cameras",
+                "transformsPath": transforms_path,
+                "datasetPath": dataset_path,
+            }
+        )
+        base["sfm"] = {
+            "backend": "nerfstudio_transforms",
+            "note": "COLMAP was not run because the input dataset already contains camera poses and intrinsics.",
+        }
+        return base
+
     if not allow_heavy:
         base["stage"]["status"] = "blocked_workload"
         base["checks"].append(
@@ -3930,6 +4825,55 @@ def build_splat_training_report(
         }
         return base
 
+    job = read_json(job_path)
+    training_config = base["training"] if isinstance(base.get("training"), dict) else {}
+    requested_profile = str(training_profile_override or training_config.get("profile") or "smoke")
+    requested_backend = str(training_config.get("backend") or "").strip().lower()
+    input_kind = str(sfm_report.get("inputKind") or capture_input_kind(job))
+    if input_kind == NERFSTUDIO_DATASET_INPUT_KIND:
+        dataset_raw = sfm_report.get("nerfstudioDataPath")
+        dataset_path = Path(str(dataset_raw)) if isinstance(dataset_raw, str) and dataset_raw else None
+        transforms_raw = sfm_report.get("transformsPath")
+        base["source"].update(
+            {
+                "inputKind": input_kind,
+                "nerfstudioDataPath": str(dataset_path) if dataset_path else None,
+                "transformsPath": transforms_raw,
+            }
+        )
+        if dataset_path is None or not dataset_path.exists():
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "nerfstudio_dataset",
+                    "status": "setup_gap",
+                    "summary": "Nerfstudio dataset path is missing from the SfM report",
+                    "datasetPath": str(dataset_path) if dataset_path else None,
+                }
+            )
+            return base
+        if requested_backend in {"gsplat", "mini_gsplat", "mini-gsplat"}:
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "nerfstudio_dataset_training_backend",
+                    "status": "setup_gap",
+                    "summary": "known-pose Nerfstudio datasets currently train through Nerfstudio Splatfacto, not the repo-local mini gsplat trainer",
+                    "requestedBackend": requested_backend,
+                }
+            )
+            return base
+        return build_splatfacto_training_report(
+            job_path=job_path,
+            base=base,
+            sparse_model_path=None,
+            colmap_image_dir=None,
+            training_config=training_config,
+            requested_profile=requested_profile,
+            nerfstudio_data_path=dataset_path,
+            source_input_kind=input_kind,
+        )
+
     sparse_model_raw = sfm_report.get("sparseModelPath")
     if not isinstance(sparse_model_raw, str) or not sparse_model_raw:
         base["stage"]["status"] = "fail"
@@ -3980,9 +4924,6 @@ def build_splat_training_report(
         )
         return base
 
-    training_config = base["training"] if isinstance(base.get("training"), dict) else {}
-    requested_profile = str(training_profile_override or training_config.get("profile") or "smoke")
-    requested_backend = str(training_config.get("backend") or "").strip().lower()
     if requested_backend in {"nerfstudio_splatfacto", "splatfacto", "nerfstudio"} or requested_profile in SPLATFACTO_PROFILE_DEFAULTS:
         return build_splatfacto_training_report(
             job_path=job_path,
@@ -3991,6 +4932,7 @@ def build_splat_training_report(
             colmap_image_dir=colmap_image_dir,
             training_config=training_config,
             requested_profile=requested_profile,
+            source_input_kind=input_kind,
         )
 
     torch_cuda = check_torch_cuda()
@@ -4791,6 +5733,52 @@ def camera_view_from_colmap(
     return view
 
 
+def valid_nerfstudio_transform_matrix(matrix: Any) -> bool:
+    return (
+        isinstance(matrix, list)
+        and len(matrix) >= 3
+        and all(isinstance(row, list) and len(row) >= 4 for row in matrix[:3])
+    )
+
+
+def camera_view_from_nerfstudio_selected(
+    *,
+    selected: dict[str, Any],
+    selected_index: int,
+    review_sample: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    matrix = selected.get("transformMatrix")
+    if not valid_nerfstudio_transform_matrix(matrix):
+        return None
+    rows = matrix[:3]
+    position = [float(rows[0][3]), float(rows[1][3]), float(rows[2][3])]
+    up = [float(rows[0][1]), float(rows[1][1]), float(rows[2][1])]
+    forward = [-float(rows[0][2]), -float(rows[1][2]), -float(rows[2][2])]
+    intrinsics = selected.get("intrinsics") if isinstance(selected.get("intrinsics"), dict) else {}
+    fov_y = intrinsics.get("fovYDegrees") if isinstance(intrinsics.get("fovYDegrees"), (int, float)) else 60.0
+    view = {
+        "selectedIndex": selected_index,
+        "imageId": selected.get("imageId"),
+        "imageName": selected.get("name") or selected.get("filePath"),
+        "cameraId": selected.get("cameraId"),
+        "position": rounded3(position),
+        "forward": rounded3(normalize3(forward)),
+        "up": rounded3(normalize3(up)),
+        "intrinsics": intrinsics,
+        "fovYDegrees": round(float(fov_y), 6),
+        "coordinateSpace": "nerfstudio_input",
+    }
+    if review_sample is not None:
+        view["referenceKind"] = "render_review"
+        view["reviewOrder"] = review_sample.get("order")
+        view["reviewMae"] = review_sample.get("mae")
+        view["renderPath"] = review_sample.get("renderPath")
+        view["targetPath"] = review_sample.get("targetPath")
+    else:
+        view["referenceKind"] = "training_selected"
+    return view
+
+
 def build_camera_views(training_report: dict[str, Any]) -> dict[str, Any]:
     metrics = training_report.get("metrics", {})
     if not isinstance(metrics, dict):
@@ -4805,10 +5793,6 @@ def build_camera_views(training_report: dict[str, Any]) -> dict[str, Any]:
     if training_dir is None:
         return {"status": "warning", "summary": "training directory missing", "views": []}
 
-    colmap_text_dir = training_dir / "colmap_txt"
-    cameras = parse_colmap_cameras(colmap_text_dir / "cameras.txt")
-    images_by_id = parse_colmap_images(colmap_text_dir / "images.txt")
-    images_by_name = {image["name"]: image for image in images_by_id.values()}
     selected_images = metrics.get("selectedImages", [])
     if not isinstance(selected_images, list) or not selected_images:
         return {"status": "warning", "summary": "selected training images missing", "views": []}
@@ -4834,6 +5818,38 @@ def build_camera_views(training_report: dict[str, Any]) -> dict[str, Any]:
         if selected_index not in seen_indices:
             ordered_items.append((selected_index, None))
             seen_indices.add(selected_index)
+
+    if any(isinstance(item, dict) and valid_nerfstudio_transform_matrix(item.get("transformMatrix")) for item in selected_images):
+        views: list[dict[str, Any]] = []
+        for selected_index, review_sample in ordered_items:
+            selected = selected_images[selected_index]
+            if not isinstance(selected, dict):
+                continue
+            view = camera_view_from_nerfstudio_selected(
+                selected=selected,
+                selected_index=selected_index,
+                review_sample=review_sample,
+            )
+            if view is None:
+                continue
+            if camera_transform is not None:
+                view = apply_nerfstudio_transform_to_view(view, camera_transform)
+            views.append(view)
+        return {
+            "status": "pass" if views else "warning",
+            "summary": f"{len(views)} Nerfstudio camera views exported" if views else "no Nerfstudio camera views could be exported",
+            "views": views,
+            "source": {
+                "selectedImageCount": len(selected_images),
+                "renderReviewSampleCount": len(review_samples),
+                "coordinateSpace": "nerfstudio_dataparser" if camera_transform is not None else "nerfstudio_input",
+            },
+        }
+
+    colmap_text_dir = training_dir / "colmap_txt"
+    cameras = parse_colmap_cameras(colmap_text_dir / "cameras.txt")
+    images_by_id = parse_colmap_images(colmap_text_dir / "images.txt")
+    images_by_name = {image["name"]: image for image in images_by_id.values()}
 
     views: list[dict[str, Any]] = []
     for selected_index, review_sample in ordered_items:
@@ -5299,6 +6315,7 @@ def build_intake_report(job_path: Path) -> dict[str, Any]:
     job = read_json(job_path)
     environment_status = stage_status_from_job(job, "environment")
     source = job.get("capture", {}).get("source", {})
+    input_kind = capture_input_kind(job)
 
     base = {
         "schemaVersion": 1,
@@ -5308,6 +6325,8 @@ def build_intake_report(job_path: Path) -> dict[str, Any]:
             "generatedAt": utc_now(),
             "jobPath": str(job_path),
         },
+        "input": capture_input_descriptor(job.get("capture", {})),
+        "inputKind": input_kind,
         "source": source,
         "checks": [],
     }
@@ -5319,6 +6338,112 @@ def build_intake_report(job_path: Path) -> dict[str, Any]:
                 "id": "environment_required",
                 "status": "setup_gap",
                 "summary": f"environment stage must pass before intake; current status is {environment_status}",
+            }
+        )
+        return base
+
+    if input_kind == COLMAP_DATASET_INPUT_KIND:
+        dataset_report = validate_colmap_dataset(job, repo_root)
+        base["datasetPath"] = dataset_report.get("datasetPath")
+        base["imageDirectory"] = dataset_report.get("imageDirectory")
+        base["sparseModelPath"] = dataset_report.get("sparseModelPath")
+        base["metadata"] = {
+            "hasVideo": False,
+            "inputKind": input_kind,
+            "dataset": {
+                "kind": "colmap_dataset",
+                "path": dataset_report.get("datasetPath"),
+                "imageDirectory": dataset_report.get("imageDirectory"),
+                "sparseModelPath": dataset_report.get("sparseModelPath"),
+                "imageCount": dataset_report.get("imageCount"),
+            },
+        }
+        base["checks"].extend(dataset_report.get("checks", []))
+        source_license_status, source_license_summary, commercial_posture = classify_capture_license(source)
+        base["commercialPosture"] = commercial_posture
+        base["checks"].append(
+            {
+                "id": "source_license",
+                "status": source_license_status,
+                "summary": source_license_summary,
+                "license": source.get("license"),
+                "sourceUrl": source.get("sourceUrl"),
+                "licenseSourceUrl": source.get("licenseSourceUrl"),
+                "termsUrl": source.get("termsUrl"),
+                "licenseVerifiedAt": source.get("licenseVerifiedAt"),
+            }
+        )
+        statuses = [check.get("status") for check in base["checks"] if isinstance(check, dict)]
+        if any(status == "fail" for status in statuses):
+            base["stage"]["status"] = "fail"
+        elif any(status == "setup_gap" for status in statuses):
+            base["stage"]["status"] = "setup_gap"
+        elif any(status == "warning" for status in statuses):
+            base["stage"]["status"] = "warning"
+        else:
+            base["stage"]["status"] = "pass"
+        return base
+
+    if input_kind == NERFSTUDIO_DATASET_INPUT_KIND:
+        dataset_path = nerfstudio_dataset_path(job, repo_root)
+        if dataset_path is None:
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "dataset_path",
+                    "status": "setup_gap",
+                    "summary": "Nerfstudio dataset input requires input.path or dataset.expectedLocalDatasetPath",
+                }
+            )
+            return base
+        dataset_report = validate_nerfstudio_dataset(dataset_path)
+        base["datasetPath"] = dataset_report.get("datasetPath")
+        base["transformsPath"] = dataset_report.get("transformsPath")
+        base["imageRoot"] = dataset_report.get("imageRoot")
+        base["metadata"] = {
+            "hasVideo": False,
+            "inputKind": input_kind,
+            "dataset": {
+                "kind": "nerfstudio_dataset",
+                "path": dataset_report.get("datasetPath"),
+                "frameCount": dataset_report.get("frameCount"),
+                "readableFrameCount": dataset_report.get("readableFrameCount"),
+                "depthFrameCount": dataset_report.get("depthFrameCount"),
+            },
+        }
+        base["checks"].extend(dataset_report.get("checks", []))
+        source_license_status, source_license_summary, commercial_posture = classify_capture_license(source)
+        base["commercialPosture"] = commercial_posture
+        base["checks"].append(
+            {
+                "id": "source_license",
+                "status": source_license_status,
+                "summary": source_license_summary,
+                "license": source.get("license"),
+                "sourceUrl": source.get("sourceUrl"),
+                "licenseSourceUrl": source.get("licenseSourceUrl"),
+                "termsUrl": source.get("termsUrl"),
+                "licenseVerifiedAt": source.get("licenseVerifiedAt"),
+            }
+        )
+        statuses = [check.get("status") for check in base["checks"] if isinstance(check, dict)]
+        if any(status == "fail" for status in statuses):
+            base["stage"]["status"] = "fail"
+        elif any(status == "setup_gap" for status in statuses):
+            base["stage"]["status"] = "setup_gap"
+        elif any(status == "warning" for status in statuses):
+            base["stage"]["status"] = "warning"
+        else:
+            base["stage"]["status"] = "pass"
+        return base
+
+    if input_kind != PLAIN_VIDEO_INPUT_KIND:
+        base["stage"]["status"] = "setup_gap"
+        base["checks"].append(
+            {
+                "id": "input_kind",
+                "status": "setup_gap",
+                "summary": f"input kind {input_kind!r} is documented but not implemented in intake yet",
             }
         )
         return base

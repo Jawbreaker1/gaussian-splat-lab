@@ -27,6 +27,18 @@ Current best-quality trainer result from that capture:
 - navigation: Walk, Orbit, mouse-look, wheel zoom, reference cameras and debug point-cloud mode
 - export: streamed PLY and viewer-manifest download
 
+Current known-camera reference job:
+
+`outputs/jobs/mipnerf360-flowers-colmap-reference-20260629T200216Z`
+
+- input lane: `colmap_dataset`
+- profile: `splatfacto_big_quality`
+- trainer: Nerfstudio Splatfacto-big
+- splats: `4421583`
+- viewer PLY size: `1.096 GB`
+- eval: PSNR `20.4715`, SSIM `0.5701`, LPIPS `0.2974`
+- note: best current Flowers metric result, but heavy enough that browser interaction and future compression/LOD work matter.
+
 The quality report may still be `warning` because the current public reference capture and some commercial-use evidence are not product-ready. That is useful signal rather than a broken run; training, packaging and viewer validation pass for the active technical reference.
 
 ## GUI Screenshots
@@ -74,6 +86,25 @@ Gaussian Splat Lab can now:
 
 Large generated files remain outside git. The repo commits scripts, manifests, docs, configuration and screenshots; videos, extracted frames, SfM databases, checkpoints, splats and generated reports stay local.
 
+## Input Lanes
+
+Plain `mp4`/`mov` video remains a first-class input path. It is still the default user workflow: FFmpeg extracts frames, COLMAP solves cameras, Splatfacto trains the scene, and the browser viewer packages the result.
+
+The next intake expansion adds structured inputs beside that path, not instead of it:
+
+- COLMAP datasets: `images/` plus `sparse/0`, for externally solved cameras
+- Nerfstudio datasets: `transforms.json` plus images and optional depth, for known-pose reference scenes
+- RGB-D capture bundles: images, depth, confidence, poses and intrinsics, for LiDAR/Record3D/ARKit-style experiments
+
+All lanes must converge to the same output shape: PLY splat, `viewer-manifest.json`, gallery scene, reference cameras where available and quality report. The working decision is documented in [docs/input-intake-roadmap.md](docs/input-intake-roadmap.md).
+
+Current implementation status:
+
+- Plain video remains the normal GUI/upload path.
+- `nerfstudio_dataset` is implemented for local datasets with `transforms.json`: intake validates images and poses, frame sampling and SfM are skipped with explicit reports, Splatfacto trains through Nerfstudio's `nerfstudio-data` dataparser, and packaging exports reference camera views from the dataset transforms.
+- `colmap_dataset` is implemented for local `images/` plus `sparse/0` datasets: intake validates the dataset, frame sampling and SfM are skipped with explicit reports, Splatfacto trains through Nerfstudio's `colmap` dataparser, and packaging exports reference camera views from the sparse model.
+- `rgbd_capture_bundle` is documented as the next richer input lane, not an active training path yet.
+
 ## Pipeline
 
 The workflow is boring on purpose: one step writes evidence, the next step reads it.
@@ -82,9 +113,9 @@ The workflow is boring on purpose: one step writes evidence, the next step reads
 | ---: | --- | --- | --- | --- |
 | 1 | Framework and license review | Decide which tools are allowed and which are blocked for commercial use. | `framework_license.json` | Flags blocked, conditional and review-required dependencies. |
 | 2 | Workstation check | Verify the local RTX workstation, CUDA/PyTorch visibility, COLMAP, FFmpeg and GPU baseline. | `environment.json` | Confirms RTX 5090 visibility and warns if GPU is already busy. |
-| 3 | Video intake | Confirm the selected source exists and that capture quality/source rights are acceptable for the current purpose. | `intake.json` | Blocks missing files and records source/license warnings. |
-| 4 | Frame sampling | Extract candidate frames across the full clip, score them for sharpness, contrast, exposure and texture, then keep the best keyframes per time segment. | `frames/`, candidate frames, frame manifest, contact sheet | Verifies frame count, hashes, video coverage, selected keyframes and capture-quality metadata. |
-| 5 | SfM camera solve | Run COLMAP feature extraction, matching and mapping. | sparse COLMAP model | Verifies registered images, sparse points and model analyzer output. |
+| 3 | Input intake | Confirm the selected source exists and that capture quality/source rights are acceptable for the current purpose. | `intake.json` | Blocks missing files and records source/license warnings. |
+| 4 | Frame sampling | For video, extract candidate frames across the full clip, score them for sharpness, contrast, exposure and texture, then keep the best keyframes per time segment. For known-pose datasets, record the precomputed frames instead. | `frames/`, candidate frames, frame manifest, contact sheet | Verifies frame count, hashes, video coverage, selected keyframes and capture-quality metadata. |
+| 5 | SfM camera solve | For video, run COLMAP feature extraction, matching and mapping. For known-pose Nerfstudio datasets, record the supplied camera transforms and skip COLMAP. | sparse COLMAP model or validated transforms | Verifies registered images, sparse points and model analyzer output, or validated precomputed cameras. |
 | 6 | Splat training | Train Gaussian Splats on the RTX GPU. `Best quality` uses Nerfstudio Splatfacto; debug/stress profiles use the repo-local `gsplat` trainer. | checkpoint, PLY, sample render, render-review sheet | Verifies CUDA, training completion, exported PLY and render/target review metrics. |
 | 7 | Packaging | Build the browser viewer manifest around the active splat artifact. Splatfacto exports keep the original PLY for download and add a viewer-optimized PLY for browser navigation when needed. | `viewer-manifest.json` | Verifies PLY hash, size, header, viewer artifact and reference camera views. |
 | 8 | Viewer validation | Confirm the local browser viewer can load the packaged artifact. | `viewer.json` | Verifies manifest, artifact hash, camera views and viewer hooks. |
@@ -98,15 +129,15 @@ The upload wizard keeps the main choice short and practical. The user is choosin
 
 | Wizard choice | Typical full-run estimate | Use it when |
 | --- | ---: | --- |
-| `Standard 3DGS` | about 1h 15m | You want a normal full scene without immediately spending the longest runtime. |
+| `Reference quality` | about 1h 15m | You want a normal full scene without immediately spending the longest runtime. |
 | `Best quality` | about 2h 15m | You care about the best current visual result from a good video. This is the recommended path for final output right now. |
 | `Quick preview` | about 27m | You only want to check that upload, frame extraction, camera solve and training work on a new video. |
-| `Ceiling test` | about 3h 15m or more | You are deliberately testing how far the RTX workstation and the input video can be pushed. |
+| `Lab ceiling` | about 3h 15m or more | You are deliberately testing how far the RTX workstation and the input video can be pushed. |
 
 Splatfacto quality path:
 
 - `splatfacto_big_quality`: `Best quality` in the GUI. Uses Nerfstudio `splatfacto-big`, 30k iterations, COLMAP data, downscale factor `2`, CPU image cache, PLY export and Nerfstudio eval renders. This is the current best measured user-facing path.
-- `splatfacto_reference`: `Standard 3DGS` in the GUI. Uses standard Nerfstudio Splatfacto, 30k iterations and downscale factor `2`. It is lighter than `splatfacto_big_quality` and remains useful as a comparison point.
+- `splatfacto_reference`: `Reference quality` in the GUI. Uses standard Nerfstudio Splatfacto, 30k iterations and downscale factor `2`. It is lighter than `splatfacto_big_quality` and remains useful as a comparison point.
 - `splatfacto_ceiling`: deliberate lab profile for finding the current quality ceiling. Uses Nerfstudio `splatfacto-big`, 30k iterations, downscale factor `1`, more COLMAP features and a longer timeout. It can run for hours on large 4K videos and should be treated as an experiment, not the default user path. A 40k full-resolution attempt hit the practical VRAM ceiling on the RTX 5090 before export.
 - `splatfacto_preview`: short integration smoke profile, useful for checking that train/export/eval/package/viewer still work without waiting for a full run.
 
@@ -196,6 +227,7 @@ The UI is a local lab console with:
 - a guided scene capture wizard for direct video upload
 - capture profile and quality strategy selection
 - automatic upload, job planning and queued stage-by-stage generation
+- queueing of selected manifest sources, including local COLMAP and Nerfstudio reference datasets, from the Advanced panel
 - an editable render queue for overnight batches: queued items can be reordered, edited, cancelled or removed before they start
 - a rendering modal for active jobs, with current step, elapsed time, estimated remaining time and immediate or after-current-step stop controls
 - progress text, elapsed time and ETA for the full generation run

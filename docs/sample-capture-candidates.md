@@ -12,14 +12,14 @@ For technical quality work, prefer a capture/dataset built for neural rendering 
 - Source docs: https://docs.nerf.studio/reference/cli/ns_download_data.html
 - Source command: `ns-download-data nerfstudio --capture-name=dozer`
 - Local dataset target: `data/datasets/nerfstudio/dozer`
-- Derived video target: `data/videos/nerfstudio-dozer-reference.mp4`
+- Derived video target, if needed for video regression only: `data/videos/nerfstudio-dozer-reference.mp4`
 - Intended use: high-quality local technical validation only until exact dataset license evidence is attached.
 
 Why it is the preferred technical candidate:
 
 - It comes from a real-world neural-rendering dataset rather than a generic stock clip.
 - The scene should be static, textured and outdoor, which is closer to the eventual room/outdoor use case than the hardware close-up.
-- A dataset image sequence gives us more control over frame selection than a compressed stock MP4.
+- A dataset image sequence gives us camera transforms and image provenance without first flattening the source into a compressed stock-style MP4.
 - It is a better stress test for the Spark/Three.js splat viewer because the resulting scene should be recognizable from many camera angles.
 
 License posture:
@@ -32,9 +32,9 @@ Manual next step when ready:
 
 1. Download the `dozer` capture through Nerfstudio tooling or a documented manual equivalent.
 2. Store the original image sequence and metadata under `data/datasets/nerfstudio/dozer`.
-3. Derive `data/videos/nerfstudio-dozer-reference.mp4` only as a compatibility layer for the current video-first pipeline.
-4. Import or record provenance for the derived MP4 before starting a job.
-5. Run preflight plus `intake` and `frame_sampling`; inspect contact sheets before any heavy SfM/training run.
+3. Prefer the direct `nerfstudio_dataset` lane when `transforms.json` is present.
+4. Derive `data/videos/nerfstudio-dozer-reference.mp4` only when deliberately testing the plain-video regression path.
+5. Run preflight plus `intake` and `frame_sampling`; inspect dataset frames before any heavy training run.
 
 Readiness check:
 
@@ -48,6 +48,14 @@ Initial job command after the derived MP4 exists:
 .venv/bin/python scripts/lab-pipeline.py init-job \
   --capture-manifest data/manifests/captures.example.json \
   --capture-id nerfstudio-dozer-reference
+```
+
+Known-pose dataset smoke/reference command after `poster` has been downloaded:
+
+```bash
+.venv/bin/python scripts/lab-pipeline.py init-job \
+  --capture-manifest data/manifests/captures.example.json \
+  --capture-id nerfstudio-poster-known-pose-reference
 ```
 
 ## Benchmark Cross-Check: Mip-NeRF 360

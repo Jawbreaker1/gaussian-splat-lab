@@ -134,7 +134,7 @@ UI_QUALITY_PRESETS = {
         },
     },
     "splatfacto_reference": {
-        "label": "Standard 3DGS",
+        "label": "Reference quality",
         "targetFps": 3,
         "maxFrames": 360,
         "trainingProfile": "splatfacto_reference",
@@ -170,7 +170,7 @@ UI_QUALITY_PRESETS = {
         },
     },
     "splatfacto_ceiling": {
-        "label": "Ceiling test",
+        "label": "Lab ceiling",
         "targetFps": 3,
         "maxFrames": 420,
         "trainingProfile": "splatfacto_ceiling",

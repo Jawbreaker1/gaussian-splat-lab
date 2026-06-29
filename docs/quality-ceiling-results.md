@@ -60,6 +60,19 @@ The main quality lesson changed after testing Nerfstudio Splatfacto. The best re
 
 Practical conclusion: expose `splatfacto_big_quality` as the GUI's `Best quality` path: 30k Splatfacto-big at downscale 2 is the current best measured balance. Keep `splatfacto_ceiling` as an explicit lab profile for full-resolution experiments; 30k full-resolution completed but was perceptually worse, while 40k full-resolution hit the VRAM cliff before export. Keep the repo-local mini `gsplat` trainer for fast debug, controlled stress testing and experiments where we need tighter ownership of the training code.
 
+## 2026-06-29 Known-Camera Flowers Dataset
+
+Reference input: `mipnerf360-flowers-colmap-reference`
+
+This uses the local Mip-NeRF 360 `flowers` scene as a direct COLMAP dataset: original images plus `sparse/0`. FFmpeg frame sampling and COLMAP SfM are skipped because the camera model is already supplied. This gives a cleaner trainer/viewer reference than the older MP4-derived flowers path.
+
+| Job | Profile | Method | Images | Viewer splats | Viewer PLY | Splat stage time | Eval result | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `mipnerf360-flowers-colmap-reference-20260629T193455Z` | `splatfacto_reference` | Splatfacto | 173 | 1968279 | 488 MB | ~14 min train, ~17 min stage | PSNR `20.1776`, SSIM `0.5418`, LPIPS `0.3750` | Good reference baseline. Much better than preview and visibly cleaner than the older derived-video path. |
+| `mipnerf360-flowers-colmap-reference-20260629T200216Z` | `splatfacto_big_quality` | Splatfacto-big | 173 | 4421583 | 1.096 GB | 1569.8 s | PSNR `20.4715`, SSIM `0.5701`, LPIPS `0.2974` | Better on all eval metrics, but the viewer artifact is more than twice as large. Treat as high-end quality/export evidence until browser interaction is inspected on the actual workstation. |
+
+Practical conclusion: direct COLMAP datasets are now the best reference lane for measuring trainer quality without conflating it with video sampling or camera-solve failures. `splatfacto_big_quality` gives a real quality gain on Flowers, but the cost is a very large browser artifact. Keep `splatfacto_reference` as the lighter comparison baseline and use `splatfacto_big_quality` when the goal is to find the current quality ceiling.
+
 ## 2026-06-20 Local 4K Video Samples
 
 These runs used the current default high-quality path, `splatfacto_big_quality`: Splatfacto-big, 30k iterations, downscale factor `2`, 3 fps frame sampling, COLMAP sequential matching and viewer packaging.

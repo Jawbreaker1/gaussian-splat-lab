@@ -46,6 +46,8 @@ Current important decisions:
 - Nerfstudio/Splatfacto and `gsplat` are accepted candidates, subject to notices and transitive dependency review
 - FFmpeg/ffprobe is conditional as a system external tool until redistribution/build flags are reviewed
 - NVIDIA CUDA is conditional for local workstation use; do not redistribute CUDA components without EULA review
+- input intake will support multiple lanes side by side: plain video remains first-class, while COLMAP datasets, Nerfstudio datasets and RGB-D capture bundles are added as richer reference/capture paths
+- direct Nerfstudio `transforms.json` datasets are implemented through Splatfacto's `nerfstudio-data` parser; do not force these references through derived MP4 unless testing the plain-video regression path
 
 ## Installation Discipline
 
@@ -84,6 +86,7 @@ Use these documents as the source of truth:
 - `docs/end-user-ui.md`: local UI scope and viewer runtime
 - `docs/reference-video-selection.md`: reference capture criteria and current room-scale candidate
 - `docs/input-quality-experiments.md`: post-golden-path degradation experiments
+- `docs/input-intake-roadmap.md`: decision record for plain video, COLMAP, Nerfstudio and RGB-D input lanes
 - `docs/phases.md`: long-range phase plan
 - `docs/validation/`: recorded validation evidence
 

@@ -184,6 +184,120 @@
         }
       },
       "status": "active-technical-reference-candidate"
+    },
+    {
+      "id": "mipnerf360-flowers-colmap-reference",
+      "displayName": "Known-camera reference: Mip-NeRF 360 flowers",
+      "input": {
+        "kind": "colmap_dataset",
+        "path": "data/datasets/mipnerf360/flowers",
+        "imageDirectory": "data/datasets/mipnerf360/flowers/images",
+        "sparseModelPath": "data/datasets/mipnerf360/flowers/sparse/0"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/mipnerf360/flowers",
+        "sourceUrl": "https://jonbarron.info/mipnerf360/",
+        "license": "mipnerf360-dataset-license-unverified",
+        "licenseNotes": "Known-camera technical benchmark using the local Mip-NeRF 360 flowers scene. Use for local validation only until exact dataset license evidence is recorded.",
+        "licenseSourceUrl": "https://jonbarron.info/mipnerf360/",
+        "repositoryLicenseUrl": "https://github.com/google-research/multinerf/blob/main/LICENSE",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "colmap_dataset",
+        "scenePath": "data/datasets/mipnerf360/flowers",
+        "imageSequencePath": "data/datasets/mipnerf360/flowers/images",
+        "sparseModelPath": "data/datasets/mipnerf360/flowers/sparse/0",
+        "layout": "COLMAP sparse model plus images; no derived MP4 required"
+      },
+      "capture": {
+        "subject": "outdoor flowers scene from a 360-degree neural-rendering benchmark dataset",
+        "motion": "precomputed multi-view image sequence with COLMAP sparse cameras",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "dataset-provided images"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "precomputed_colmap_images"
+        },
+        "sfm": {
+          "backend": "precomputed_colmap",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_reference",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "ui": {
+        "sceneKind": "outdoor",
+        "qualityPreset": "splatfacto_reference"
+      },
+      "status": "known-camera-reference-candidate"
+    },
+    {
+      "id": "nerfstudio-poster-known-pose-reference",
+      "displayName": "Known-pose reference: Nerfstudio poster",
+      "input": {
+        "kind": "nerfstudio_dataset",
+        "path": "data/datasets/nerfstudio/poster"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/nerfstudio/poster",
+        "sourceUrl": "https://docs.nerf.studio/reference/cli/ns_download_data.html",
+        "license": "nerfstudio-data-license-unverified",
+        "licenseNotes": "Technical reference candidate for the direct Nerfstudio transforms.json lane. Do not use as commercial showcase material until the downloaded archive, hash and exact dataset license/terms are retained.",
+        "licenseSourceUrl": "https://docs.nerf.studio/reference/cli/ns_download_data.html",
+        "repositoryLicenseUrl": "https://github.com/nerfstudio-project/nerfstudio/blob/main/LICENSE",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "nerfstudio_dataset",
+        "captureName": "poster",
+        "downloadCommand": ".venv-nerfstudio-py312/bin/ns-download-data nerfstudio --capture-name=poster --save-dir data/datasets/nerfstudio",
+        "expectedLocalDatasetPath": "data/datasets/nerfstudio/poster",
+        "layout": "transforms.json plus image files; no derived MP4 required"
+      },
+      "capture": {
+        "subject": "Nerfstudio poster known-pose scene",
+        "motion": "precomputed multi-view image sequence with camera transforms",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "dataset-provided images"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "precomputed_nerfstudio_frames"
+        },
+        "sfm": {
+          "backend": "nerfstudio_transforms",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_reference",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "status": "known-pose-reference-candidate"
     }
   ]
 }
