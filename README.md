@@ -34,10 +34,11 @@ Current known-camera reference job:
 - input lane: `colmap_dataset`
 - profile: `splatfacto_big_quality`
 - trainer: Nerfstudio Splatfacto-big
-- splats: `4421583`
-- viewer PLY size: `1.096 GB`
+- interactive viewer splats: `2000000`
+- interactive viewer PLY size: `496 MB`
+- full export: `4784784` splats, `1.186 GB`
 - eval: PSNR `20.4715`, SSIM `0.5701`, LPIPS `0.2974`
-- note: best current Flowers metric result, but heavy enough that browser interaction and future compression/LOD work matter.
+- note: best current Flowers metric result; the browser defaults to a budgeted interactive artifact while keeping the full export available.
 
 The quality report may still be `warning` because the current public reference capture and some commercial-use evidence are not product-ready. That is useful signal rather than a broken run; training, packaging and viewer validation pass for the active technical reference.
 

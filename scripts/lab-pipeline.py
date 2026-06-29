@@ -5324,6 +5324,14 @@ VIEWER_FILTER_PROFILE = {
     "coordinateCrop": False,
 }
 
+VIEWER_INTERACTIVE_BUDGET = {
+    "name": "interactive_balanced_budget",
+    "maxVertexCount": 2_000_000,
+    "maxSizeBytes": 512 * 1024 * 1024,
+    "minimumVertexCount": 750_000,
+    "importanceTopRatio": 0.72,
+}
+
 
 def sigmoid(value: float) -> float:
     if value >= 0:
@@ -5485,14 +5493,45 @@ def build_viewer_filtered_ply(source: Path, target: Path) -> dict[str, Any]:
             padding = max((high - low) * float(VIEWER_FILTER_PROFILE["boundsPaddingRatio"]), 1.0e-6)
             bounds[axis] = (low - padding, high + padding)
 
-    kept_indices = [
+    filtered_indices = [
         int(item["index"])
         for item in initial
         if not bounds or all(bounds[axis][0] <= item[axis] <= bounds[axis][1] for axis in ("x", "y", "z"))
     ]
-    if len(kept_indices) < max(1000, int(vertex_count * 0.35)):
-        kept_indices = [int(item["index"]) for item in records]
+    if len(filtered_indices) < max(1000, int(vertex_count * 0.35)):
+        filtered_indices = [int(item["index"]) for item in records]
+        initial = records
         bounds = {}
+
+    max_by_size = max(
+        int(VIEWER_INTERACTIVE_BUDGET["minimumVertexCount"]),
+        int((int(VIEWER_INTERACTIVE_BUDGET["maxSizeBytes"]) - header_end) / max(stride, 1)),
+    )
+    budget_count = min(int(VIEWER_INTERACTIVE_BUDGET["maxVertexCount"]), max_by_size)
+    budget_count = max(int(VIEWER_INTERACTIVE_BUDGET["minimumVertexCount"]), budget_count)
+    downsampled = len(filtered_indices) > budget_count
+
+    if downsampled:
+        filtered_set = set(filtered_indices)
+        candidates = [item for item in initial if int(item["index"]) in filtered_set]
+        top_count = max(1, min(budget_count, int(round(budget_count * float(VIEWER_INTERACTIVE_BUDGET["importanceTopRatio"])))))
+        fill_count = max(0, budget_count - top_count)
+
+        def importance(item: dict[str, float]) -> float:
+            scale_penalty = math.sqrt(max(item["averageScale"], 1.0e-8))
+            return item["opacity"] / max(scale_penalty, 1.0e-4)
+
+        ranked = sorted(candidates, key=importance, reverse=True)
+        selected = {int(item["index"]) for item in ranked[:top_count]}
+        if fill_count:
+            remainder = [item for item in candidates if int(item["index"]) not in selected]
+            if remainder:
+                step = len(remainder) / fill_count
+                for offset in range(fill_count):
+                    selected.add(int(remainder[min(len(remainder) - 1, int(offset * step))]["index"]))
+        kept_indices = sorted(selected)
+    else:
+        kept_indices = filtered_indices
 
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("wb") as handle:
@@ -5510,10 +5549,13 @@ def build_viewer_filtered_ply(source: Path, target: Path) -> dict[str, Any]:
         "path": str(target),
         "repoRelativePath": repo_relative_path(target),
         "originalVertexCount": vertex_count,
+        "filteredVertexCount": len(filtered_indices),
         "vertexCount": len(kept_indices),
         "removedVertexCount": vertex_count - len(kept_indices),
         "keptRatio": round(len(kept_indices) / max(vertex_count, 1), 6),
+        "downsampledForInteractiveViewer": downsampled,
         "filterProfile": dict(VIEWER_FILTER_PROFILE),
+        "interactiveBudget": dict(VIEWER_INTERACTIVE_BUDGET),
         "maxAverageScale": max_scale if math.isfinite(max_scale) else None,
         "bounds": {axis: [round(pair[0], 6), round(pair[1], 6)] for axis, pair in bounds.items()},
     }
@@ -5923,6 +5965,33 @@ def build_viewer_manifest(
     original_ply_header = parse_ply_header(artifact)
     camera_views = build_camera_views(training_report)
     export_file_stem = f"gaussian-splat-lab-{profile}-{artifact.stem}"
+    artifact_variants = [
+        {
+            "id": "viewer_default",
+            "label": "Interactive",
+            "role": "browser_viewer",
+            "path": str(viewer_artifact),
+            "repoRelativePath": repo_relative_path(viewer_artifact),
+            "sizeBytes": viewer_artifact.stat().st_size,
+            "sha256": file_sha256(viewer_artifact),
+            "ply": ply_header,
+            "default": True,
+        }
+    ]
+    if viewer_artifact != artifact:
+        artifact_variants.append(
+            {
+                "id": "full_export",
+                "label": "Full export",
+                "role": "archive_export",
+                "path": str(artifact),
+                "repoRelativePath": repo_relative_path(artifact),
+                "sizeBytes": artifact.stat().st_size,
+                "sha256": file_sha256(artifact),
+                "ply": original_ply_header,
+                "default": False,
+            }
+        )
     return {
         "schemaVersion": 1,
         "generatedAt": utc_now(),
@@ -5950,6 +6019,7 @@ def build_viewer_manifest(
             "sha256": file_sha256(artifact),
             "ply": original_ply_header,
         },
+        "artifactVariants": artifact_variants,
         "viewerFilter": viewer_filter,
         "preview": {
             "sampleRenderPath": str(sample_render_path) if sample_render_path else None,

@@ -208,7 +208,11 @@ function artifactVariantOptions(manifest = {}, item = {}) {
 
 function variantFileName(item = {}, variant = {}) {
   const base = item.artifactFileName || `${item.id || 'scene'}.ply`;
-  if (!variant?.id || variant.id === 'viewer_default') return base;
+  if (variant?.role === 'archive_export' || variant?.id === 'full_export') return base;
+  if (variant?.role === 'browser_viewer' || variant?.id === 'viewer_default') {
+    return base.replace(/\.ply$/i, '.interactive.ply');
+  }
+  if (!variant?.id) return base;
   const safeId = String(variant.id).replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
   return base.replace(/\.ply$/i, `.${safeId}.ply`);
 }

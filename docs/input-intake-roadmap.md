@@ -96,7 +96,7 @@ Smoke evidence from 2026-06-29:
 
 - A local three-frame `nerfstudio_dataset` fixture passed the full light pipeline through Splatfacto, export, packaging and viewer validation.
 - The local Mip-NeRF 360 `flowers` COLMAP dataset passed the full light pipeline through Splatfacto preview, export, packaging and viewer validation as `mipnerf360-flowers-colmap-reference-20260629T181131Z`.
-- The same `flowers` COLMAP dataset passed full `splatfacto_reference` and `splatfacto_big_quality` runs. The best-quality run produced `4421583` viewer splats, a `1.096 GB` viewer PLY and improved eval metrics to PSNR `20.4715`, SSIM `0.5701`, LPIPS `0.2974`.
+- The same `flowers` COLMAP dataset passed full `splatfacto_reference` and `splatfacto_big_quality` runs. The best-quality run improved eval metrics to PSNR `20.4715`, SSIM `0.5701`, LPIPS `0.2974`; packaging keeps the `4784784`-splat full export and defaults the browser to a `2000000`-splat interactive PLY.
 - The quality report stayed at `warning` because the fixture is `local-test-only` and framework/license review has warnings, which is expected for a smoke fixture.
 
 ## Later Product Direction
