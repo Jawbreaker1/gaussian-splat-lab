@@ -246,6 +246,68 @@
       "status": "known-camera-reference-candidate"
     },
     {
+      "id": "tumrgbd-freiburg1-xyz-reference",
+      "displayName": "RGB-D reference: TUM freiburg1 xyz",
+      "input": {
+        "kind": "nerfstudio_dataset",
+        "path": "data/datasets/tumrgbd/freiburg1_xyz_nerfstudio"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/tumrgbd/freiburg1_xyz_nerfstudio",
+        "sourceUrl": "https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz",
+        "license": "CC-BY-4.0",
+        "licenseNotes": "TUM RGB-D states that unless otherwise noted, benchmark data is licensed under Creative Commons Attribution 4.0. Use as a technical RGB-D/kamera-pose validation sample and keep attribution if shown outside local lab work.",
+        "licenseSourceUrl": "https://cvg.cit.tum.de/data/datasets/rgbd-dataset",
+        "repositoryLicenseUrl": null,
+        "termsUrl": null,
+        "licenseVerifiedAt": "2026-06-30"
+      },
+      "dataset": {
+        "kind": "tum_rgbd_sequence",
+        "captureName": "freiburg1_xyz",
+        "archiveUrl": "https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz",
+        "archivePath": "data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz.tgz",
+        "rawSequencePath": "data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz",
+        "expectedLocalDatasetPath": "data/datasets/tumrgbd/freiburg1_xyz_nerfstudio",
+        "downloadCommand": "mkdir -p data/datasets/tumrgbd && curl -L https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz -o data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz.tgz && tar -xzf data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz.tgz -C data/datasets/tumrgbd",
+        "conversionCommand": "python3 scripts/convert-tum-rgbd-to-nerfstudio.py --input data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz --output data/datasets/tumrgbd/freiburg1_xyz_nerfstudio --max-frames 300",
+        "layout": "TUM RGB-D RGB/depth/groundtruth converted into Nerfstudio transforms.json with linked images/depth maps."
+      },
+      "capture": {
+        "subject": "office desk RGB-D debugging sequence",
+        "motion": "small translatory Kinect motion with ground-truth camera poses",
+        "expectedDurationSeconds": 30,
+        "expectedResolution": "640x480"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "precomputed_nerfstudio_frames"
+        },
+        "sfm": {
+          "backend": "nerfstudio_transforms",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_preview",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "ui": {
+        "sceneKind": "indoor",
+        "qualityPreset": "splatfacto_preview"
+      },
+      "status": "rgbd-known-pose-reference"
+    },
+    {
       "id": "record3d-bear-reference",
       "displayName": "RGB-D reference: Record3D bear",
       "input": {

@@ -86,6 +86,39 @@ The pipeline validates `rgb/`, `metadata.json`, camera poses, intrinsics and ima
 
 For self-capture, use an iPhone or iPad with LiDAR and export Record3D data in the folder layout above. Avoid shiny/transparent scenes, fast motion, people, private documents and large blank walls for the first tests.
 
+## RGB-D / Known-Pose Fallback: TUM Freiburg1 XYZ
+
+- Capture id: `tumrgbd-freiburg1-xyz-reference`
+- Source page: https://cvg.cit.tum.de/data/datasets/rgbd-dataset
+- Source archive: https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz
+- Local archive: `data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz.tgz`
+- Converted dataset target: `data/datasets/tumrgbd/freiburg1_xyz_nerfstudio`
+- License: CC BY 4.0 unless otherwise noted by TUM RGB-D.
+- Intended use: stable technical RGB-D/kamera-pose validation sample.
+
+This is not an iPhone/Record3D capture, but it is a real RGB-D sequence with RGB images, depth maps and ground-truth camera poses. It is much smaller and more reliable to download than WildRGB-D categories, and it gives us a concrete sample for the known-pose/depth side of the pipeline while the Nerfstudio Record3D `bear` Google Drive link is unavailable.
+
+Download and convert:
+
+```bash
+mkdir -p data/datasets/tumrgbd
+curl -L https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz \
+  -o data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz.tgz
+tar -xzf data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz.tgz -C data/datasets/tumrgbd
+python3 scripts/convert-tum-rgbd-to-nerfstudio.py \
+  --input data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz \
+  --output data/datasets/tumrgbd/freiburg1_xyz_nerfstudio \
+  --max-frames 300
+```
+
+2026-06-30 validation notes:
+
+- Archive download succeeded; size was about `428 MB`.
+- Unpacked raw sequence was about `461 MB`.
+- Raw sequence contains `798` RGB frames, `798` depth maps and `3000` pose rows.
+- Conversion matched `797` RGB/depth/pose rows and selected `300` frames.
+- Pipeline validation passed through `frame_sampling` and `sfm`; `splat_training` correctly stopped at `blocked_workload` without `--allow-heavy`.
+
 ## Benchmark Cross-Check: Mip-NeRF 360
 
 - Source page: https://jonbarron.info/mipnerf360/
