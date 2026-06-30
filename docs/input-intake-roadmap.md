@@ -87,11 +87,12 @@ Implemented now:
 - `nerfstudio_dataset`: local `transforms.json` datasets now pass intake, frame-manifest creation, SfM skip, Splatfacto training through Nerfstudio's `nerfstudio-data` dataparser, PLY export, viewer packaging and reference camera export.
 - `colmap_dataset`: local `images/` plus `sparse/0` datasets now pass intake, frame-manifest creation, SfM skip, Splatfacto training through Nerfstudio's `colmap` dataparser, PLY export, viewer packaging and reference camera export.
 - `rgbd_capture_bundle` with `format: record3d`: raw Record3D `rgb/` + `metadata.json` exports now pass intake, are converted with `ns-process-data record3d`, skip COLMAP via Record3D poses/intrinsics, and train through Splatfacto's `nerfstudio-data` parser. Depth files are counted and reported but are not yet consumed by training.
+- ARKitScenes raw sequences can be converted with `scripts/convert-arkitscenes-to-nerfstudio.py` into the `nerfstudio_dataset` lane. The converter supports selectable RGB streams such as `lowres_wide` and `vga_wide`, links RGB/depth/confidence frames, writes ARKit camera transforms and keeps Apple license provenance in the manifest.
 - The web UI can queue selected manifest sources from the Advanced panel, so local reference datasets and ordinary uploaded videos now use the same render queue.
 
 Not implemented yet:
 
-- Direct ARKit/Polycam bundle handling beyond Record3D.
+- Generic ARKit app exports and Polycam bundle handling beyond Record3D/ARKitScenes conversion.
 - Depth-aware training, depth-guided cleanup and confidence-map use.
 
 Smoke evidence from 2026-06-29:
@@ -99,6 +100,7 @@ Smoke evidence from 2026-06-29:
 - A local three-frame `nerfstudio_dataset` fixture passed the full light pipeline through Splatfacto, export, packaging and viewer validation.
 - The local Mip-NeRF 360 `flowers` COLMAP dataset passed the full light pipeline through Splatfacto preview, export, packaging and viewer validation as `mipnerf360-flowers-colmap-reference-20260629T181131Z`.
 - The same `flowers` COLMAP dataset passed full `splatfacto_reference` and `splatfacto_big_quality` runs. The best-quality run improved eval metrics to PSNR `20.4715`, SSIM `0.5701`, LPIPS `0.2974`; packaging keeps the `4784784`-splat full export and defaults the browser to a `2000000`-splat interactive PLY.
+- TUM RGB-D `freiburg1_xyz` and ARKitScenes `42444511` both passed the known-pose RGB-D lane into gallery on 2026-06-30. TUM is a stable smoke sample; ARKitScenes VGA is the better iPhone/LiDAR-style proof, with `790806` packaged splats in the `splatfacto_reference` run.
 - The quality report stayed at `warning` because the fixture is `local-test-only` and framework/license review has warnings, which is expected for a smoke fixture.
 
 ## Later Product Direction

@@ -514,3 +514,43 @@ Validation: `.venv/bin/python -m pip show gdown`, `sha256sum data/datasets/mipne
 Revert plan: remove `gdown` and its transitive packages from the venv if they are not needed by other tooling; delete ignored local artifacts `data/datasets/mipnerf360/`, `data/videos/mipnerf360-flowers-reference.mp4`, `data/videos/.provenance/mipnerf360-flowers-reference.mp4.derived.json`, and `outputs/jobs/mipnerf360-flowers-reference-20260617T142004Z/`; revert tracked manifest/docs changes if abandoning this reference.
 Result: partial pass. Nerfstudio `dozer` failed through `gdown` because Google Drive did not expose a retrievable public file URL to CLI automation. Mip-NeRF 360 `360_extra_scenes.zip` downloaded from Google Cloud Storage and extracted `flowers`; derived MP4 SHA-256 is `adabc37325e0182770f104a7222af6b8d74e12bc27ba57ce96dea8b617e80153`, archive SHA-256 is `f8d42b372d7cc589928c3d22849f958c1e2ae948c21e89c6a32c904cefba2fa4`.
 Notes: The active technical run passed frame sampling, SfM, `rtx_reference` training, packaging and viewer validation. SfM registered 173/173 frames with 43,287 sparse points and mean reprojection error 0.477 px. `rtx_reference` used RTX 5090, 9,000 iterations, 64 images, 400,000 gaussians, 67.7 seconds wall time and produced a 22.4 MB binary PLY. Visual review shows a recognizable but still soft scene; this is a pipeline-quality baseline, not commercial showcase material.
+
+## Entry: 2026-06-30 Download RGB-D known-pose reference datasets
+
+Date: 2026-06-30
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Add reproducible RGB-D / known-pose samples after the official Nerfstudio Record3D `bear` Google Drive link returned 404.
+Dependency: local dataset artifacts only; no system package was installed.
+Commercial decision: TUM RGB-D is marked `CC-BY-4.0` with attribution requirement. Apple ARKitScenes is marked `Apple-commercial-terms-review-required`; use only as technical validation until the Apple license terms are reviewed for the product context.
+Commands:
+
+```bash
+curl -L https://cvg.cit.tum.de/rgbd/dataset/freiburg1/rgbd_dataset_freiburg1_xyz.tgz \
+  -o data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz.tgz
+tar -xzf data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz.tgz -C data/datasets/tumrgbd
+python3 scripts/convert-tum-rgbd-to-nerfstudio.py \
+  --input data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz \
+  --output data/datasets/tumrgbd/freiburg1_xyz_nerfstudio \
+  --max-frames 300
+
+mkdir -p data/datasets/arkitscenes/raw/Training/42444511
+for f in vga_wide.zip vga_wide_intrinsics.zip lowres_depth.zip lowres_wide.traj confidence.zip; do
+  curl -L --fail \
+    https://docs-assets.developer.apple.com/ml-research/datasets/arkitscenes/v1/raw/Training/42444511/$f \
+    -o data/datasets/arkitscenes/raw/Training/42444511/$f
+done
+python3 scripts/convert-arkitscenes-to-nerfstudio.py \
+  --input data/datasets/arkitscenes/raw/Training/42444511 \
+  --output data/datasets/arkitscenes/42444511_vga_nerfstudio \
+  --video-id 42444511 \
+  --image-stream vga_wide \
+  --max-frames 600
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: write ignored dataset artifacts under `data/datasets/tumrgbd/` and `data/datasets/arkitscenes/`; update tracked manifests/docs/scripts separately.
+Validation: TUM full gallery run `outputs/jobs/tumrgbd-freiburg1-xyz-reference-20260630T211829Z/job.json`; ARKitScenes VGA reference run `outputs/jobs/arkitscenes-42444511-reference-20260630T215434Z/job.json`.
+Revert plan: delete ignored local artifacts `data/datasets/tumrgbd/`, `data/datasets/arkitscenes/`, and generated jobs matching `outputs/jobs/tumrgbd-freiburg1-xyz-reference-*` plus `outputs/jobs/arkitscenes-42444511-reference-*`; revert tracked manifest/docs/script changes if abandoning these lanes.
+Result: pass. TUM produced `62249` packaged splats from `300` frames in `splatfacto_preview`. ARKitScenes VGA produced `790806` packaged splats from `600` frames in `splatfacto_reference`.
+Notes: Both datasets prove the known-pose RGB-D path into gallery. Neither is a visual showcase ceiling; TUM is a stable smoke sample, and ARKitScenes `42444511` is a better iPhone/LiDAR-style mechanics sample but still a close floor/poster capture.

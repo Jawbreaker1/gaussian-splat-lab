@@ -86,6 +86,46 @@ The pipeline validates `rgb/`, `metadata.json`, camera poses, intrinsics and ima
 
 For self-capture, use an iPhone or iPad with LiDAR and export Record3D data in the folder layout above. Avoid shiny/transparent scenes, fast motion, people, private documents and large blank walls for the first tests.
 
+## iPhone / LiDAR Known-Pose Reference: ARKitScenes 42444511
+
+- Capture id: `arkitscenes-42444511-reference`
+- Source repo: https://github.com/apple/ARKitScenes
+- Source assets: https://docs-assets.developer.apple.com/ml-research/datasets/arkitscenes/v1/raw/Training/42444511
+- Raw local target: `data/datasets/arkitscenes/raw/Training/42444511`
+- Converted dataset target: `data/datasets/arkitscenes/42444511_vga_nerfstudio`
+- License posture: Apple-commercial-terms-review-required.
+- Intended use: iPhone/LiDAR-style technical validation, not commercial showcase material without review.
+
+This is the best current public sample for the structured iPhone/LiDAR path. It is not a Record3D export, but it has the pieces we care about: RGB frames, depth maps, confidence maps, per-frame intrinsics and ARKit camera trajectory. The repo converts it to Nerfstudio `transforms.json`, so the normal known-pose pipeline can skip COLMAP and train Splatfacto directly.
+
+The first low-resolution pass used `lowres_wide` at `256x192`. It proved the poses were usable, but the render was too soft. The active manifest now uses `vga_wide` at `640x480`, which is still compact enough for quick lab runs while giving much better visual evidence.
+
+Download and convert the active VGA sample:
+
+```bash
+mkdir -p data/datasets/arkitscenes/raw/Training/42444511
+for f in vga_wide.zip vga_wide_intrinsics.zip lowres_depth.zip lowres_wide.traj confidence.zip; do
+  curl -L --fail \
+    https://docs-assets.developer.apple.com/ml-research/datasets/arkitscenes/v1/raw/Training/42444511/$f \
+    -o data/datasets/arkitscenes/raw/Training/42444511/$f
+done
+python3 scripts/convert-arkitscenes-to-nerfstudio.py \
+  --input data/datasets/arkitscenes/raw/Training/42444511 \
+  --output data/datasets/arkitscenes/42444511_vga_nerfstudio \
+  --video-id 42444511 \
+  --image-stream vga_wide \
+  --max-frames 600
+```
+
+2026-06-30 validation notes:
+
+- Selected candidate `42444511` because it is Training split, has laser-scanner provenance, is in the upsampling set and has 3DOD metadata.
+- Minimal lowres assets were about `289 MB`; `vga_wide` plus intrinsics added about `518 MB`.
+- VGA conversion matched `1566` of `1583` RGB/intrinsics frames against depth and trajectory, then selected `600` frames.
+- `splatfacto_preview` passed end to end in gallery with about `57k` packaged splats and SSIM around `0.686`.
+- `splatfacto_reference` passed end to end in gallery with `790806` packaged splats, about `222 MB` PLY and SSIM `0.635`; visually it was clearly sharper than preview despite the lower SSIM.
+- The result proves the ARKit known-pose lane, but it is not a visual ceiling sample. The scene is mostly a flat floor/poster close-up, so it is useful for mechanics, not for impressing users.
+
 ## RGB-D / Known-Pose Fallback: TUM Freiburg1 XYZ
 
 - Capture id: `tumrgbd-freiburg1-xyz-reference`

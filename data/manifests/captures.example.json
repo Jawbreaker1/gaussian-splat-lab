@@ -308,6 +308,66 @@
       "status": "rgbd-known-pose-reference"
     },
     {
+      "id": "arkitscenes-42444511-reference",
+      "displayName": "iPhone/LiDAR reference: ARKitScenes 42444511",
+      "input": {
+        "kind": "nerfstudio_dataset",
+        "path": "data/datasets/arkitscenes/42444511_vga_nerfstudio"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/arkitscenes/42444511_vga_nerfstudio",
+        "sourceUrl": "https://docs-assets.developer.apple.com/ml-research/datasets/arkitscenes/v1/raw/Training/42444511",
+        "license": "Apple-commercial-terms-review-required",
+        "licenseNotes": "Apple ARKitScenes LICENSE includes non-commercial terms plus commercial terms for licensees below Apple's stated monthly-active-user threshold before August 2024. Keep Apple attribution/license text and review with counsel before using as commercial showcase or redistributed sample data.",
+        "licenseSourceUrl": "https://github.com/apple/ARKitScenes/blob/main/LICENSE",
+        "repositoryLicenseUrl": "https://github.com/apple/ARKitScenes/blob/main/LICENSE",
+        "termsUrl": "https://github.com/apple/ARKitScenes",
+        "licenseVerifiedAt": "2026-06-30"
+      },
+      "dataset": {
+        "kind": "arkitscenes_raw_sequence",
+        "captureName": "42444511",
+        "rawSequencePath": "data/datasets/arkitscenes/raw/Training/42444511",
+        "expectedLocalDatasetPath": "data/datasets/arkitscenes/42444511_vga_nerfstudio",
+        "downloadCommand": "mkdir -p data/datasets/arkitscenes/raw/Training/42444511 && for f in vga_wide.zip vga_wide_intrinsics.zip lowres_depth.zip lowres_wide.traj confidence.zip; do curl -L --fail https://docs-assets.developer.apple.com/ml-research/datasets/arkitscenes/v1/raw/Training/42444511/$f -o data/datasets/arkitscenes/raw/Training/42444511/$f; done",
+        "conversionCommand": "python3 scripts/convert-arkitscenes-to-nerfstudio.py --input data/datasets/arkitscenes/raw/Training/42444511 --output data/datasets/arkitscenes/42444511_vga_nerfstudio --video-id 42444511 --image-stream vga_wide --max-frames 600",
+        "layout": "ARKitScenes raw vga_wide RGB, vga_wide_intrinsics, lowres_depth, confidence and lowres_wide.traj converted into Nerfstudio transforms.json with linked RGB/depth/confidence frames."
+      },
+      "capture": {
+        "subject": "iPhone/LiDAR indoor ARKitScenes room capture",
+        "motion": "handheld ARKit trajectory with per-frame depth and intrinsics",
+        "expectedDurationSeconds": 53,
+        "expectedResolution": "640x480 vga_wide"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "precomputed_nerfstudio_frames"
+        },
+        "sfm": {
+          "backend": "nerfstudio_transforms",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_reference",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "ui": {
+        "sceneKind": "indoor",
+        "qualityPreset": "splatfacto_reference"
+      },
+      "status": "rgbd-known-pose-reference-license-review"
+    },
+    {
       "id": "record3d-bear-reference",
       "displayName": "RGB-D reference: Record3D bear",
       "input": {

@@ -41,7 +41,7 @@ selectedFrames: 300
 
 ## Pipeline Check
 
-A temporary manifest job passed:
+The first temporary manifest job passed:
 
 ```text
 environment: pass
@@ -52,3 +52,21 @@ splat_training: blocked_workload
 ```
 
 The `intake` warning is expected because the source is an external dataset. `splat_training` was intentionally not run during this download check.
+
+The follow-up gallery run passed the full pipeline:
+
+```text
+Job: outputs/jobs/tumrgbd-freiburg1-xyz-reference-20260630T211829Z/job.json
+Profile: splatfacto_preview
+Iterations: 1000
+Images: 300
+Training wall time: 25.021 seconds
+Training gaussians: 62858
+Packaged splats: 62249
+PLY size: 15590376 bytes
+PSNR: 17.4747
+SSIM: 0.5785
+LPIPS: 0.3571
+```
+
+Visual assessment: useful as a stable RGB-D/kända-poser smoke test, not as a visual showcase. The scene is low-resolution, close-range and has limited camera movement, so it proves the lane more than the quality ceiling.

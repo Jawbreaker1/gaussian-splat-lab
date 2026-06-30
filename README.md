@@ -91,7 +91,7 @@ Large generated files remain outside git. The repo commits scripts, manifests, d
 
 Plain `mp4`/`mov` video remains a first-class input path. It is still the default user workflow: FFmpeg extracts frames, COLMAP solves cameras, Splatfacto trains the scene, and the browser viewer packages the result.
 
-The next intake expansion adds structured inputs beside that path, not instead of it:
+Structured inputs now sit beside that path, not instead of it:
 
 - COLMAP datasets: `images/` plus `sparse/0`, for externally solved cameras
 - Nerfstudio datasets: `transforms.json` plus images and optional depth, for known-pose reference scenes
@@ -105,6 +105,7 @@ Current implementation status:
 - `nerfstudio_dataset` is implemented for local datasets with `transforms.json`: intake validates images and poses, frame sampling and SfM are skipped with explicit reports, Splatfacto trains through Nerfstudio's `nerfstudio-data` dataparser, and packaging exports reference camera views from the dataset transforms.
 - `colmap_dataset` is implemented for local `images/` plus `sparse/0` datasets: intake validates the dataset, frame sampling and SfM are skipped with explicit reports, Splatfacto trains through Nerfstudio's `colmap` dataparser, and packaging exports reference camera views from the sparse model.
 - `rgbd_capture_bundle` is implemented first for `format: record3d`: intake validates the raw `rgb/` + `metadata.json` export, frame sampling runs `ns-process-data record3d`, SfM is skipped using the exported poses, and Splatfacto trains through the same Nerfstudio dataparser path. Depth maps are detected and reported, but the current Record3D path does not use depth-aware training yet.
+- Apple ARKitScenes raw samples are supported through `scripts/convert-arkitscenes-to-nerfstudio.py`, which converts ARKit RGB/depth/confidence/intrinsics/trajectory files into the same `nerfstudio_dataset` lane. The checked-in sample manifest uses ARKitScenes `42444511` with `vga_wide` RGB as an iPhone/LiDAR-style technical reference, marked license-review-required.
 
 ## Pipeline
 
