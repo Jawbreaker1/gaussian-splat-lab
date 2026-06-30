@@ -131,6 +131,7 @@ Validate:
 ```bash
 .venv-nerfstudio-py312/bin/python -m pip show nerfstudio gsplat torch
 .venv-nerfstudio-py312/bin/ns-train --help
+.venv-nerfstudio-py312/bin/ns-process-data record3d --help
 ```
 
 ## 7. Browser Viewer Dependencies

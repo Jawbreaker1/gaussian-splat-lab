@@ -409,6 +409,7 @@ PLAIN_VIDEO_INPUT_KIND = "plain_video"
 COLMAP_DATASET_INPUT_KIND = "colmap_dataset"
 NERFSTUDIO_DATASET_INPUT_KIND = "nerfstudio_dataset"
 RGBD_CAPTURE_BUNDLE_INPUT_KIND = "rgbd_capture_bundle"
+RECORD3D_BUNDLE_FORMAT = "record3d"
 SUPPORTED_INPUT_KINDS = {
     PLAIN_VIDEO_INPUT_KIND,
     COLMAP_DATASET_INPUT_KIND,
@@ -759,6 +760,7 @@ def nerfstudio_venv_paths() -> dict[str, Path]:
         "ns_train": bin_dir / "ns-train",
         "ns_export": bin_dir / "ns-export",
         "ns_eval": bin_dir / "ns-eval",
+        "ns_process_data": bin_dir / "ns-process-data",
     }
 
 
@@ -1096,6 +1098,7 @@ def prepare_nerfstudio_transforms_data(
     data_dir: Path,
     dataset_path: Path,
     downscale_factor: int,
+    input_kind: str = NERFSTUDIO_DATASET_INPUT_KIND,
 ) -> dict[str, Any]:
     transforms_path = dataset_path / "transforms.json"
     transforms = read_json(transforms_path)
@@ -1122,7 +1125,7 @@ def prepare_nerfstudio_transforms_data(
         downscaled_count = prepare_downscaled_images(image_root, downscaled_path, downscale_factor)
 
     return {
-        "inputKind": NERFSTUDIO_DATASET_INPUT_KIND,
+        "inputKind": input_kind,
         "dataDir": str(data_dir),
         "sourceDatasetPath": str(dataset_path),
         "transformsPath": str(data_dir / "transforms.json"),
@@ -1443,8 +1446,12 @@ def capture_input_descriptor(capture: dict[str, Any]) -> dict[str, Any]:
         "colmap": COLMAP_DATASET_INPUT_KIND,
         "colmap_scene": COLMAP_DATASET_INPUT_KIND,
         "nerfstudio_capture": NERFSTUDIO_DATASET_INPUT_KIND,
+        "record3d": RGBD_CAPTURE_BUNDLE_INPUT_KIND,
+        "record3d_bundle": RGBD_CAPTURE_BUNDLE_INPUT_KIND,
     }
     descriptor["kind"] = aliases.get(kind, kind)
+    if kind in {"record3d", "record3d_bundle"} and not descriptor.get("format"):
+        descriptor["format"] = RECORD3D_BUNDLE_FORMAT
     return descriptor
 
 
@@ -1498,6 +1505,41 @@ def nerfstudio_dataset_path(capture_or_job: dict[str, Any], repo_root: Path) -> 
     return resolve_repo_path(raw_path, repo_root)
 
 
+def rgbd_capture_bundle_path(capture_or_job: dict[str, Any], repo_root: Path) -> Path | None:
+    capture = capture_record_from(capture_or_job)
+    if not isinstance(capture, dict):
+        return None
+    descriptor = capture_input_descriptor(capture)
+    raw_path = descriptor.get("path")
+    if not isinstance(raw_path, str) or not raw_path:
+        dataset = capture.get("dataset", {}) if isinstance(capture.get("dataset"), dict) else {}
+        raw_path = dataset.get("path") or dataset.get("expectedLocalDatasetPath")
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    return resolve_repo_path(raw_path, repo_root)
+
+
+def rgbd_capture_bundle_format(capture_or_job: dict[str, Any]) -> str:
+    capture = capture_record_from(capture_or_job)
+    if not isinstance(capture, dict):
+        return RECORD3D_BUNDLE_FORMAT
+    descriptor = capture_input_descriptor(capture)
+    dataset = capture.get("dataset", {}) if isinstance(capture.get("dataset"), dict) else {}
+    raw_format = (
+        descriptor.get("format")
+        or descriptor.get("bundleFormat")
+        or dataset.get("format")
+        or dataset.get("bundleFormat")
+        or RECORD3D_BUNDLE_FORMAT
+    )
+    value = str(raw_format).strip().lower().replace("-", "_")
+    aliases = {
+        "record_3d": RECORD3D_BUNDLE_FORMAT,
+        "record3d_capture": RECORD3D_BUNDLE_FORMAT,
+    }
+    return aliases.get(value, value)
+
+
 def colmap_dataset_paths(capture_or_job: dict[str, Any], repo_root: Path) -> dict[str, Path | None]:
     capture = capture_record_from(capture_or_job)
     if not isinstance(capture, dict):
@@ -1536,6 +1578,11 @@ def colmap_dataset_paths(capture_or_job: dict[str, Any], repo_root: Path) -> dic
 def count_image_files(image_dir: Path) -> int:
     suffixes = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
     return sum(1 for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in suffixes)
+
+
+def image_files_in_directory(image_dir: Path) -> list[Path]:
+    suffixes = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
+    return sorted(path for path in image_dir.iterdir() if path.is_file() and path.suffix.lower() in suffixes)
 
 
 def validate_colmap_dataset(capture_or_job: dict[str, Any], repo_root: Path) -> dict[str, Any]:
@@ -1594,6 +1641,127 @@ def validate_colmap_dataset(capture_or_job: dict[str, Any], repo_root: Path) -> 
         "imageDirectory": str(image_dir) if image_dir else None,
         "sparseModelPath": str(sparse_model_path) if sparse_model_path else None,
         "imageCount": image_count,
+        "checks": checks,
+    }
+
+
+def validate_record3d_bundle(capture_or_job: dict[str, Any], repo_root: Path) -> dict[str, Any]:
+    bundle_path = rgbd_capture_bundle_path(capture_or_job, repo_root)
+    rgb_dir = bundle_path / "rgb" if bundle_path else None
+    metadata_path = bundle_path / "metadata.json" if bundle_path else None
+    checks: list[dict[str, Any]] = [
+        {
+            "id": "bundle_directory",
+            "status": "pass" if bundle_path and bundle_path.exists() and bundle_path.is_dir() else "setup_gap",
+            "summary": "Record3D bundle directory exists" if bundle_path and bundle_path.exists() and bundle_path.is_dir() else "Record3D bundle directory is missing",
+            "path": str(bundle_path) if bundle_path else None,
+        },
+        {
+            "id": "rgb_directory",
+            "status": "pass" if rgb_dir and rgb_dir.exists() and rgb_dir.is_dir() else "setup_gap",
+            "summary": "Record3D rgb directory exists" if rgb_dir and rgb_dir.exists() and rgb_dir.is_dir() else "Record3D rgb directory is missing",
+            "path": str(rgb_dir) if rgb_dir else None,
+        },
+        {
+            "id": "metadata_json",
+            "status": "pass" if metadata_path and metadata_path.exists() and metadata_path.is_file() else "setup_gap",
+            "summary": "Record3D metadata.json exists" if metadata_path and metadata_path.exists() and metadata_path.is_file() else "Record3D metadata.json is missing",
+            "path": str(metadata_path) if metadata_path else None,
+        },
+    ]
+
+    image_files: list[Path] = []
+    numeric_image_files: list[Path] = []
+    if rgb_dir and rgb_dir.exists() and rgb_dir.is_dir():
+        image_files = image_files_in_directory(rgb_dir)
+        numeric_image_files = [path for path in image_files if path.stem.isdigit()]
+    rgb_status = "pass" if numeric_image_files else "fail" if rgb_dir and rgb_dir.exists() and rgb_dir.is_dir() else "setup_gap"
+    checks.append(
+        {
+            "id": "rgb_images",
+            "status": rgb_status,
+            "summary": f"{len(numeric_image_files)} numerically named RGB images found"
+            if numeric_image_files
+            else "no numerically named Record3D RGB images found",
+            "imageCount": len(image_files),
+            "processableImageCount": len(numeric_image_files),
+            "examples": [path.name for path in numeric_image_files[:5]],
+        }
+    )
+
+    metadata: dict[str, Any] = {}
+    if metadata_path and metadata_path.exists() and metadata_path.is_file():
+        try:
+            metadata = read_json(metadata_path)
+        except Exception as exc:  # noqa: BLE001 - report malformed user/export data directly
+            checks.append({"id": "metadata_parse", "status": "fail", "summary": f"metadata.json is not readable: {exc}"})
+
+    pose_count = 0
+    if isinstance(metadata.get("poses"), list):
+        pose_count = len(metadata["poses"])
+    metadata_available = bool(metadata_path and metadata_path.exists() and metadata_path.is_file() and metadata)
+    pose_status = "pass" if pose_count >= len(numeric_image_files) and numeric_image_files else "fail" if metadata_available and numeric_image_files else "setup_gap"
+    checks.append(
+        {
+            "id": "poses",
+            "status": pose_status,
+            "summary": f"{pose_count} Record3D poses found"
+            if pose_count
+            else "Record3D metadata has no poses",
+            "poseCount": pose_count,
+            "processableImageCount": len(numeric_image_files),
+        }
+    )
+
+    intrinsics_ok = isinstance(metadata.get("K"), list) and len(metadata.get("K", [])) == 9
+    width = metadata.get("w")
+    height = metadata.get("h")
+    size_ok = isinstance(width, int) and width > 0 and isinstance(height, int) and height > 0
+    intrinsics_status = "pass" if intrinsics_ok and size_ok else "fail" if metadata_available else "setup_gap"
+    checks.append(
+        {
+            "id": "camera_intrinsics",
+            "status": intrinsics_status,
+            "summary": "Record3D intrinsics and image size are present"
+            if intrinsics_ok and size_ok
+            else "Record3D metadata must contain K plus positive w/h",
+            "width": width,
+            "height": height,
+        }
+    )
+
+    depth_count = 0
+    if bundle_path and bundle_path.exists() and bundle_path.is_dir():
+        depth_suffixes = {".exr", ".png", ".tiff", ".tif", ".npy"}
+        for depth_dir_name in ("depth", "depths", "depthmaps", "depth_maps"):
+            depth_dir = bundle_path / depth_dir_name
+            if depth_dir.exists() and depth_dir.is_dir():
+                depth_count += sum(1 for path in depth_dir.iterdir() if path.is_file() and path.suffix.lower() in depth_suffixes)
+    checks.append(
+        {
+            "id": "depth_maps",
+            "status": "pass",
+            "summary": f"{depth_count} optional depth maps found"
+            if depth_count
+            else "no optional depth maps found; current Record3D path uses poses/intrinsics, not depth-aware training",
+            "depthFrameCount": depth_count,
+            "usedByCurrentTrainingPath": False,
+        }
+    )
+
+    statuses = [check["status"] for check in checks]
+    status = "fail" if "fail" in statuses else "setup_gap" if "setup_gap" in statuses else "pass"
+    return {
+        "status": status,
+        "summary": "Record3D bundle is ready" if status == "pass" else "Record3D bundle is incomplete",
+        "format": RECORD3D_BUNDLE_FORMAT,
+        "bundlePath": str(bundle_path) if bundle_path else None,
+        "rgbDirectory": str(rgb_dir) if rgb_dir else None,
+        "metadataPath": str(metadata_path) if metadata_path else None,
+        "imageCount": len(image_files),
+        "processableImageCount": len(numeric_image_files),
+        "poseCount": pose_count,
+        "depthFrameCount": depth_count,
         "checks": checks,
     }
 
@@ -1756,6 +1924,105 @@ def nerfstudio_frame_entries(dataset_path: Path, transforms: dict[str, Any]) -> 
     return entries
 
 
+def record3d_processing_settings(job: dict[str, Any]) -> dict[str, int]:
+    pipeline = job.get("capture", {}).get("pipeline", {})
+    frame_sampling = pipeline.get("frameSampling", {}) if isinstance(pipeline.get("frameSampling"), dict) else {}
+    record3d = pipeline.get("record3d", {}) if isinstance(pipeline.get("record3d"), dict) else {}
+
+    def integer_setting(source: dict[str, Any], key: str, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(source.get(key, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    max_dataset_default = integer_setting(frame_sampling, "maxFrames", 300, 1, 5000)
+    try:
+        max_dataset_size = int(record3d.get("maxDatasetSize", max_dataset_default))
+    except (TypeError, ValueError):
+        max_dataset_size = max_dataset_default
+    if max_dataset_size != -1:
+        max_dataset_size = max(1, min(5000, max_dataset_size))
+    return {
+        "numDownscales": integer_setting(record3d, "numDownscales", 3, 0, 6),
+        "maxDatasetSize": max_dataset_size,
+        "timeoutSeconds": integer_setting(record3d, "timeoutSeconds", 60 * 60, 60, 6 * 60 * 60),
+    }
+
+
+def process_record3d_bundle_to_nerfstudio(
+    *,
+    bundle_path: Path,
+    output_dir: Path,
+    settings: dict[str, int],
+) -> dict[str, Any]:
+    paths = nerfstudio_venv_paths()
+    trainer_env, trainer_env_summary = build_nerfstudio_environment()
+    base: dict[str, Any] = {
+        "status": "pending",
+        "bundlePath": str(bundle_path),
+        "outputDir": str(output_dir),
+        "settings": settings,
+        "environment": trainer_env_summary,
+        "checks": [
+            {
+                "id": "ns_process_data",
+                "status": "pass" if paths["ns_process_data"].exists() else "setup_gap",
+                "summary": "ns-process-data is available" if paths["ns_process_data"].exists() else "ns-process-data is missing",
+                "path": str(paths["ns_process_data"]),
+            }
+        ],
+    }
+    if not paths["ns_process_data"].exists():
+        base["status"] = "setup_gap"
+        return base
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        str(paths["ns_process_data"]),
+        "record3d",
+        "--data",
+        str(bundle_path),
+        "--output-dir",
+        str(output_dir),
+        "--num-downscales",
+        str(settings["numDownscales"]),
+        "--max-dataset-size",
+        str(settings["maxDatasetSize"]),
+    ]
+    conversion = run_command(
+        command,
+        timeout_seconds=int(settings["timeoutSeconds"]),
+        env=trainer_env,
+    )
+    base["command"] = conversion
+    if conversion["status"] != "pass":
+        base["status"] = conversion["status"]
+        base["checks"].append(
+            {
+                "id": "record3d_conversion",
+                "status": conversion["status"],
+                "summary": command_summary(conversion, max_lines=5) or "Record3D conversion failed",
+            }
+        )
+        return base
+
+    dataset_report = validate_nerfstudio_dataset(output_dir)
+    base["processedDataset"] = dataset_report
+    base["checks"].append(
+        {
+            "id": "processed_nerfstudio_dataset",
+            "status": dataset_report["status"],
+            "summary": dataset_report["summary"],
+            "datasetPath": dataset_report.get("datasetPath"),
+            "transformsPath": dataset_report.get("transformsPath"),
+            "frameCount": dataset_report.get("frameCount"),
+        }
+    )
+    base["status"] = dataset_report["status"]
+    return base
+
+
 def colmap_dataset_frame_entries(image_dir: Path) -> list[dict[str, Any]]:
     suffixes = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
     entries: list[dict[str, Any]] = []
@@ -1793,7 +2060,7 @@ def classify_capture_license(source: dict[str, Any]) -> tuple[str, str, str]:
         return "warning", "Pexels candidate; verify current terms and avoid commercial showcase use without review", "technical_validation_only"
     if source_url:
         return "warning", "external source; keep license evidence with the capture", "needs_review_before_showcase"
-    return "pass", "license/provenance recorded", "candidate_for_golden_path"
+    return "pass", "license/provenance recorded", "candidate_for_reference_pipeline"
 
 
 def capture_readiness(capture: dict[str, Any], repo_root: Path) -> dict[str, Any]:
@@ -1826,6 +2093,26 @@ def capture_readiness(capture: dict[str, Any], repo_root: Path) -> dict[str, Any
             "path": dataset_report.get("datasetPath"),
             "frameCount": dataset_report.get("frameCount"),
             "depthFrameCount": dataset_report.get("depthFrameCount"),
+        }
+    elif input_kind == RGBD_CAPTURE_BUNDLE_INPUT_KIND:
+        bundle_format = rgbd_capture_bundle_format(capture)
+        if bundle_format == RECORD3D_BUNDLE_FORMAT:
+            dataset_report = validate_record3d_bundle(capture, repo_root)
+        else:
+            dataset_report = {
+                "status": "setup_gap",
+                "summary": f"RGB-D bundle format {bundle_format!r} is not implemented",
+                "bundlePath": str(source_path) if source_path else None,
+                "checks": [{"id": "bundle_format", "status": "setup_gap", "summary": "supported format: record3d"}],
+            }
+        source_check = {
+            "id": "source_dataset",
+            "status": dataset_report["status"],
+            "summary": dataset_report["summary"],
+            "path": dataset_report.get("bundlePath"),
+            "frameCount": dataset_report.get("processableImageCount"),
+            "depthFrameCount": dataset_report.get("depthFrameCount"),
+            "format": bundle_format,
         }
     else:
         file_exists = bool(source_path and source_path.exists())
@@ -3255,6 +3542,113 @@ def build_frame_sampling_report(job_path: Path, accept_warning: bool = False) ->
         )
         return base
 
+    if input_kind == RGBD_CAPTURE_BUNDLE_INPUT_KIND:
+        bundle_format = rgbd_capture_bundle_format(job)
+        if bundle_format != RECORD3D_BUNDLE_FORMAT:
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "bundle_format",
+                    "status": "setup_gap",
+                    "summary": f"RGB-D bundle format {bundle_format!r} is not implemented; supported format: record3d",
+                }
+            )
+            return base
+        bundle_path_raw = intake_report.get("record3dBundlePath")
+        bundle_path = Path(str(bundle_path_raw)) if bundle_path_raw else rgbd_capture_bundle_path(job, repo_root_from_script())
+        if bundle_path is None or not bundle_path.exists():
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "record3d_bundle",
+                    "status": "setup_gap",
+                    "summary": "intake did not provide a readable Record3D bundle",
+                    "bundlePath": str(bundle_path) if bundle_path else None,
+                }
+            )
+            return base
+
+        frame_dir = frame_run_directory(job_path)
+        processed_dir = frame_dir / "record3d-nerfstudio"
+        settings = record3d_processing_settings(job)
+        conversion = process_record3d_bundle_to_nerfstudio(
+            bundle_path=bundle_path,
+            output_dir=processed_dir,
+            settings=settings,
+        )
+        base["commands"] = {"record3dProcessData": conversion.get("command")}
+        base["record3dProcessing"] = {
+            "status": conversion.get("status"),
+            "bundlePath": str(bundle_path),
+            "processedDatasetPath": str(processed_dir),
+            "settings": settings,
+            "environment": conversion.get("environment"),
+        }
+        base["checks"].extend(conversion.get("checks", []))
+        if conversion.get("status") != "pass":
+            base["stage"]["status"] = str(conversion.get("status") or "fail")
+            return base
+
+        transforms_path = processed_dir / "transforms.json"
+        transforms = read_json(transforms_path)
+        frames = nerfstudio_frame_entries(processed_dir, transforms)
+        intake_metadata = intake_report.get("metadata", {}) if isinstance(intake_report.get("metadata"), dict) else {}
+        intake_dataset = intake_metadata.get("dataset", {}) if isinstance(intake_metadata.get("dataset"), dict) else {}
+        source_frame_count = intake_dataset.get("processableImageCount")
+        frame_manifest = {
+            "schemaVersion": 1,
+            "stage": {
+                "id": "frame_sampling",
+                "status": "pass",
+                "generatedAt": utc_now(),
+                "jobPath": str(job_path),
+            },
+            "inputKind": input_kind,
+            "source": {
+                "intakeReportPath": str(intake_path),
+                "bundlePath": str(bundle_path),
+                "format": RECORD3D_BUNDLE_FORMAT,
+                "processedDatasetPath": str(processed_dir),
+                "transformsPath": str(transforms_path),
+            },
+            "sampling": {
+                "strategy": "record3d_to_nerfstudio_transforms",
+                "targetFps": None,
+                "effectiveFps": None,
+                "maxFrames": settings["maxDatasetSize"],
+                "actualFrameCount": len(frames),
+                "cappedByMaxFrames": settings["maxDatasetSize"] != -1
+                and isinstance(source_frame_count, int)
+                and source_frame_count > settings["maxDatasetSize"],
+                "sourceFrameCount": source_frame_count,
+                "numDownscales": settings["numDownscales"],
+            },
+            "frameDirectory": str(processed_dir),
+            "frames": frames,
+            "transformsPath": str(transforms_path),
+            "nerfstudioDataPath": str(processed_dir),
+        }
+        frame_manifest_path = frame_dir / "frame_manifest.json"
+        write_json(frame_manifest_path, frame_manifest)
+        base["stage"]["status"] = "pass"
+        base["inputKind"] = input_kind
+        base["frameManifestPath"] = str(frame_manifest_path)
+        base["frameDirectory"] = str(processed_dir)
+        base["transformsPath"] = str(transforms_path)
+        base["nerfstudioDataPath"] = str(processed_dir)
+        base["sampling"] = frame_manifest["sampling"]
+        base["checks"].append(
+            {
+                "id": "record3d_processed_frames",
+                "status": "pass",
+                "summary": f"processed Record3D bundle into {len(frames)} posed Nerfstudio frames",
+                "frameCount": len(frames),
+                "processedDatasetPath": str(processed_dir),
+                "transformsPath": str(transforms_path),
+            }
+        )
+        return base
+
     try:
         target_fps, max_frames = frame_sampling_settings(job)
     except ValueError as exc:
@@ -3604,6 +3998,7 @@ def build_splatfacto_training_report(
                 data_dir=training_dir / "nerfstudio-data",
                 dataset_path=nerfstudio_data_path,
                 downscale_factor=int(run_config["downscaleFactor"]),
+                input_kind=input_kind,
             )
         except Exception as exc:  # noqa: BLE001 - report dataset setup failures directly
             base["stage"]["status"] = "fail"
@@ -4490,7 +4885,7 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
         }
         return base
 
-    if input_kind == NERFSTUDIO_DATASET_INPUT_KIND:
+    if input_kind in {NERFSTUDIO_DATASET_INPUT_KIND, RGBD_CAPTURE_BUNDLE_INPUT_KIND}:
         frame_manifest_path_raw = frame_sampling_report.get("frameManifestPath")
         frame_manifest_path = Path(str(frame_manifest_path_raw)) if frame_manifest_path_raw else None
         if frame_manifest_path is None or not frame_manifest_path.exists():
@@ -4506,7 +4901,8 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
             return base
         frame_manifest = read_json(frame_manifest_path)
         transforms_path = frame_manifest.get("transformsPath") or frame_sampling_report.get("transformsPath")
-        dataset_path = (frame_manifest.get("source") or {}).get("datasetPath") if isinstance(frame_manifest.get("source"), dict) else None
+        source = frame_manifest.get("source") if isinstance(frame_manifest.get("source"), dict) else {}
+        dataset_path = source.get("datasetPath") or source.get("processedDatasetPath") or frame_manifest.get("nerfstudioDataPath")
         frames = frame_manifest.get("frames", [])
         base["stage"]["status"] = "pass"
         base["inputKind"] = input_kind
@@ -4524,14 +4920,16 @@ def build_sfm_report(job_path: Path, accept_warning: bool = False, allow_heavy: 
             {
                 "id": "precomputed_cameras",
                 "status": "pass",
-                "summary": f"skipped COLMAP SfM; using {len(frames) if isinstance(frames, list) else 0} Nerfstudio transform cameras",
+                "summary": f"skipped COLMAP SfM; using {len(frames) if isinstance(frames, list) else 0} transform cameras",
                 "transformsPath": transforms_path,
                 "datasetPath": dataset_path,
+                "inputKind": input_kind,
             }
         )
+        sfm_backend = "record3d_transforms" if input_kind == RGBD_CAPTURE_BUNDLE_INPUT_KIND else "nerfstudio_transforms"
         base["sfm"] = {
-            "backend": "nerfstudio_transforms",
-            "note": "COLMAP was not run because the input dataset already contains camera poses and intrinsics.",
+            "backend": sfm_backend,
+            "note": "COLMAP was not run because the input data already contains camera poses and intrinsics.",
         }
         return base
 
@@ -4830,7 +5228,7 @@ def build_splat_training_report(
     requested_profile = str(training_profile_override or training_config.get("profile") or "smoke")
     requested_backend = str(training_config.get("backend") or "").strip().lower()
     input_kind = str(sfm_report.get("inputKind") or capture_input_kind(job))
-    if input_kind == NERFSTUDIO_DATASET_INPUT_KIND:
+    if input_kind in {NERFSTUDIO_DATASET_INPUT_KIND, RGBD_CAPTURE_BUNDLE_INPUT_KIND}:
         dataset_raw = sfm_report.get("nerfstudioDataPath")
         dataset_path = Path(str(dataset_raw)) if isinstance(dataset_raw, str) and dataset_raw else None
         transforms_raw = sfm_report.get("transformsPath")
@@ -4856,9 +5254,9 @@ def build_splat_training_report(
             base["stage"]["status"] = "setup_gap"
             base["checks"].append(
                 {
-                    "id": "nerfstudio_dataset_training_backend",
+                    "id": "known_pose_dataset_training_backend",
                     "status": "setup_gap",
-                    "summary": "known-pose Nerfstudio datasets currently train through Nerfstudio Splatfacto, not the repo-local mini gsplat trainer",
+                    "summary": "known-pose datasets currently train through Nerfstudio Splatfacto, not the repo-local mini gsplat trainer",
                     "requestedBackend": requested_backend,
                 }
             )
@@ -6479,6 +6877,62 @@ def build_intake_report(job_path: Path) -> dict[str, Any]:
                 "frameCount": dataset_report.get("frameCount"),
                 "readableFrameCount": dataset_report.get("readableFrameCount"),
                 "depthFrameCount": dataset_report.get("depthFrameCount"),
+            },
+        }
+        base["checks"].extend(dataset_report.get("checks", []))
+        source_license_status, source_license_summary, commercial_posture = classify_capture_license(source)
+        base["commercialPosture"] = commercial_posture
+        base["checks"].append(
+            {
+                "id": "source_license",
+                "status": source_license_status,
+                "summary": source_license_summary,
+                "license": source.get("license"),
+                "sourceUrl": source.get("sourceUrl"),
+                "licenseSourceUrl": source.get("licenseSourceUrl"),
+                "termsUrl": source.get("termsUrl"),
+                "licenseVerifiedAt": source.get("licenseVerifiedAt"),
+            }
+        )
+        statuses = [check.get("status") for check in base["checks"] if isinstance(check, dict)]
+        if any(status == "fail" for status in statuses):
+            base["stage"]["status"] = "fail"
+        elif any(status == "setup_gap" for status in statuses):
+            base["stage"]["status"] = "setup_gap"
+        elif any(status == "warning" for status in statuses):
+            base["stage"]["status"] = "warning"
+        else:
+            base["stage"]["status"] = "pass"
+        return base
+
+    if input_kind == RGBD_CAPTURE_BUNDLE_INPUT_KIND:
+        bundle_format = rgbd_capture_bundle_format(job)
+        if bundle_format != RECORD3D_BUNDLE_FORMAT:
+            base["stage"]["status"] = "setup_gap"
+            base["checks"].append(
+                {
+                    "id": "bundle_format",
+                    "status": "setup_gap",
+                    "summary": f"RGB-D bundle format {bundle_format!r} is not implemented; supported format: record3d",
+                }
+            )
+            return base
+        dataset_report = validate_record3d_bundle(job, repo_root)
+        base["record3dBundlePath"] = dataset_report.get("bundlePath")
+        base["record3dRgbDirectory"] = dataset_report.get("rgbDirectory")
+        base["record3dMetadataPath"] = dataset_report.get("metadataPath")
+        base["metadata"] = {
+            "hasVideo": False,
+            "inputKind": input_kind,
+            "dataset": {
+                "kind": "rgbd_capture_bundle",
+                "format": RECORD3D_BUNDLE_FORMAT,
+                "path": dataset_report.get("bundlePath"),
+                "imageCount": dataset_report.get("imageCount"),
+                "processableImageCount": dataset_report.get("processableImageCount"),
+                "poseCount": dataset_report.get("poseCount"),
+                "depthFrameCount": dataset_report.get("depthFrameCount"),
+                "depthUsedByCurrentTrainingPath": False,
             },
         }
         base["checks"].extend(dataset_report.get("checks", []))

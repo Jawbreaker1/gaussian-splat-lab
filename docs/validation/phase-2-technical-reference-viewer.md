@@ -1,4 +1,4 @@
-# Phase 2 Technical Golden Path Viewer Validation
+# Phase 2 Technical Reference Viewer Validation
 
 Verified: 2026-06-16
 

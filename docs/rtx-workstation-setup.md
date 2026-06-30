@@ -2,7 +2,7 @@
 
 Verified: 2026-06-16
 
-This document records the local workstation setup needed for the Gaussian Splat golden path.
+This document records the local workstation setup needed for the Gaussian Splat reference pipeline.
 
 ## Current Environment
 
@@ -85,7 +85,7 @@ sudo apt-get remove colmap
 
 Notes:
 
-- The installed Ubuntu package reports `without CUDA`. This is acceptable for the first golden-path SfM validation, but performance may be CPU-bound.
+- The installed Ubuntu package reports `without CUDA`. This is acceptable for the first reference SfM validation, but performance may be CPU-bound.
 - If we later choose another COLMAP path, such as CUDA-enabled source build, local extracted binary, Docker, or Python bindings, record it in `framework-evaluation.json` and the installation ledger before installing.
 
 ### 2026-06-21 COLMAP GPU/CUDA Check

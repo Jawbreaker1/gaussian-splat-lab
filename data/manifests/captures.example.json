@@ -246,6 +246,71 @@
       "status": "known-camera-reference-candidate"
     },
     {
+      "id": "record3d-bear-reference",
+      "displayName": "RGB-D reference: Record3D bear",
+      "input": {
+        "kind": "rgbd_capture_bundle",
+        "format": "record3d",
+        "path": "data/datasets/record3d/bear"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/record3d/bear",
+        "sourceUrl": "https://docs.nerf.studio/reference/cli/ns_download_data.html",
+        "license": "record3d-sample-license-unverified",
+        "licenseNotes": "Technical RGB-D/pose-aware pipeline reference candidate. Nerfstudio exposes this as ns-download-data record3d --capture-name bear, but the exact dataset archive and terms must be retained before any commercial showcase use.",
+        "licenseSourceUrl": "https://docs.nerf.studio/reference/cli/ns_download_data.html",
+        "repositoryLicenseUrl": "https://github.com/nerfstudio-project/nerfstudio/blob/main/LICENSE",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "rgbd_capture_bundle",
+        "format": "record3d",
+        "captureName": "bear",
+        "downloadCommand": ".venv-nerfstudio-py312/bin/ns-download-data record3d --capture-name bear --save-dir data/datasets/record3d",
+        "expectedLocalDatasetPath": "data/datasets/record3d/bear",
+        "layout": "Record3D export with rgb/ and metadata.json. The current pipeline uses poses/intrinsics through Nerfstudio's Record3D converter; depth maps are detected but not yet used by training."
+      },
+      "capture": {
+        "subject": "Record3D bear sample with camera poses and intrinsics",
+        "motion": "handheld iPhone/LiDAR-style object capture",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "dataset-provided images"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "record3d_to_nerfstudio_transforms",
+          "maxFrames": 300
+        },
+        "record3d": {
+          "numDownscales": 3,
+          "maxDatasetSize": 300
+        },
+        "sfm": {
+          "backend": "record3d_transforms",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_reference",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "ui": {
+        "sceneKind": "object",
+        "qualityPreset": "splatfacto_reference"
+      },
+      "status": "rgbd-reference-candidate"
+    },
+    {
       "id": "nerfstudio-poster-known-pose-reference",
       "displayName": "Known-pose reference: Nerfstudio poster",
       "input": {

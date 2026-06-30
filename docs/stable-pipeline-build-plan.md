@@ -2,7 +2,7 @@
 
 Verified: 2026-06-16
 
-Goal: build the first robust golden path from local video to browser-visible Gaussian Splat on the Windows RTX 5090 workstation.
+Goal: build the first robust reference flow from local video to browser-visible Gaussian Splat on the Windows RTX 5090 workstation.
 
 This plan is intentionally narrower than the long-term roadmap. The next implementation work should make one stage real at a time, validate it, and only then let the next stage depend on its output.
 
@@ -62,7 +62,7 @@ The UI intentionally sends `allowHeavy=false`; use CLI approval only after confi
 
 ## Next Build Step
 
-Move from technical golden path to controlled quality experiments and product-readiness hardening.
+Move from technical reference flow to controlled quality experiments and product-readiness hardening.
 
 Current setup note: PyTorch CUDA works on the RTX 5090. The repo-local mini `gsplat` trainer remains useful for fast debug and ceiling experiments with `smoke`, `baseline`, `quality_probe`, `rtx_reference`, `rtx_high_quality`, `rtx_ultra_quality`, `rtx_stable_quality`, `rtx_ceiling_quality` and `rtx_max_quality`. Nerfstudio Splatfacto is now integrated as the higher-quality GUI path with `splatfacto_preview` and `splatfacto_reference`. `splatfacto_reference` is the normal `Best quality` choice for user-uploaded videos; it prepares Nerfstudio COLMAP data, trains with Splatfacto, exports PLY, runs Nerfstudio eval and writes the same viewer manifest as the mini-trainer path. `rtx_ceiling_quality` and `rtx_max_quality` remain deliberate lab profiles for stock-stable hardware only. Current measured ceiling results are tracked in `docs/quality-ceiling-results.md`; for the local upload, a 247k-gaussian Splatfacto artifact is visibly and metrically better than the 1.6M mini-trainer artifact. Packaging writes a viewer manifest with reference camera views and export metadata, and the local UI can fetch, render and download the exported binary PLY as an interactive Spark + Three.js Gaussian Splat scene. The UI also keeps the point-debug mode, latest render/target pair and multi-view render-review contact sheet. The current end-to-end quality status is `warning` because the capture/framework state is not product-ready.
 
@@ -72,7 +72,7 @@ Why next:
 - the pipeline has explicit reports for each stage and a quality report that preserves the remaining commercial/provenance warning
 - input-quality experiments can now be run against a known working baseline without confusing setup gaps for quality degradation
 
-Current technical golden-path output:
+Current technical reference output:
 
 ```text
 outputs/jobs/<job_id>/reports/splat_training.json
@@ -101,7 +101,7 @@ Next viewer step:
 - keep the Spark dependency path isolated and pinned until product packaging/notices are finalized
 - expose Splatfacto as the default best-quality path, keep mini-trainer ceiling profiles as explicit lab stress profiles, and avoid treating bigger splat counts as better unless render-review/eval evidence agrees
 
-## Golden Path Implementation Sequence
+## Reference Flow Implementation Sequence
 
 ### 0. Preflight Checks
 

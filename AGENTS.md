@@ -4,7 +4,7 @@
 
 Build an isolated, commercially plausible local pipeline that turns a video capture into a browser-interactive Gaussian Splat artifact on this Windows RTX 5090 workstation.
 
-The stable golden path came first and now has a local-test-only technical pass through viewer validation. Input-quality experiments may start from that baseline, but arbitrary-user capture preflight and commercial showcase use still require provenance and compliance hardening.
+The stable reference flow came first and now has a local-test-only technical pass through viewer validation. Input-quality experiments may start from that baseline, but arbitrary-user capture preflight and commercial showcase use still require provenance and compliance hardening.
 
 ## Primary Host
 
@@ -78,14 +78,14 @@ Use these documents as the source of truth:
 
 - `INSTALL.md`: workstation setup order, required software, validation and rollback
 - `docs/mvp-pipeline.md`: end-to-end MVP shape
-- `docs/stable-pipeline-build-plan.md`: immediate build sequence for the golden path
+- `docs/stable-pipeline-build-plan.md`: immediate build sequence for the stable reference flow
 - `docs/framework-evaluation.md`: framework and license decisions
 - `docs/commercial-compliance.md`: commercial-readiness checklist
 - `docs/installation-and-revert-ledger.md`: install/revert ledger and rollback policy
 - `docs/pipeline-gates.md`: stage contracts and stop conditions
 - `docs/end-user-ui.md`: local UI scope and viewer runtime
 - `docs/reference-video-selection.md`: reference capture criteria and current room-scale candidate
-- `docs/input-quality-experiments.md`: post-golden-path degradation experiments
+- `docs/input-quality-experiments.md`: degradation experiments after the baseline works
 - `docs/input-intake-roadmap.md`: decision record for plain video, COLMAP, Nerfstudio and RGB-D input lanes
 - `docs/phases.md`: long-range phase plan
 - `docs/validation/`: recorded validation evidence
@@ -100,7 +100,7 @@ Pipeline stages that can sustain high CPU/GPU load must expose a guard and repor
 
 Follow the staged plan. Do not build later stages on unvalidated earlier stages.
 
-Golden-path order:
+Reference flow order:
 
 1. framework/license gate
 2. RTX workstation environment gate
@@ -161,4 +161,4 @@ Pause before continuing if:
 - one stage cannot be validated without building multiple later stages
 - CUDA/toolchain failures are hidden behind broad fallback logic
 - license/commercial status is unclear but implementation continues anyway
-- input-quality experiments start before a stable golden path exists
+- input-quality experiments start before the stable reference flow exists

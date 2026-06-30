@@ -2,7 +2,7 @@
 
 Verified: 2026-06-17
 
-The preferred golden-path input for commercial evaluation is still self-captured footage: 20-40 seconds, slow orbit, static textured scene, no people, no logos, no recognizable third-party artwork and no private documents. That gives the cleanest chain of custody.
+The preferred reference input for commercial evaluation is still self-captured footage: 20-40 seconds, slow orbit, static textured scene, no people, no logos, no recognizable third-party artwork and no private documents. That gives the cleanest chain of custody.
 
 For technical quality work, prefer a capture/dataset built for neural rendering over ordinary stock footage. Stock videos often look good to humans while being weak SfM inputs.
 
@@ -58,6 +58,34 @@ Known-pose dataset smoke/reference command after `poster` has been downloaded:
   --capture-id nerfstudio-poster-known-pose-reference
 ```
 
+## RGB-D / iPhone LiDAR Candidate: Record3D Bear
+
+- Capture id: `record3d-bear-reference`
+- Source docs: https://docs.nerf.studio/reference/cli/ns_download_data.html
+- Source command: `ns-download-data record3d --capture-name bear`
+- Local dataset target: `data/datasets/record3d/bear`
+- Intended use: technical validation of the `rgbd_capture_bundle` lane only until exact dataset license evidence is attached.
+
+The current implementation expects a Record3D-style folder with:
+
+```text
+<capture>/
+  metadata.json
+  rgb/
+    0.jpg
+    1.jpg
+    ...
+```
+
+The pipeline validates `rgb/`, `metadata.json`, camera poses, intrinsics and image size. It then runs `ns-process-data record3d`, producing a Nerfstudio `transforms.json` dataset used by Splatfacto. Optional depth maps are counted and reported, but not yet used by training.
+
+2026-06-30 note:
+
+- The Nerfstudio `record3d bear` CLI download failed through `gdown`/Google Drive public-link resolution on this workstation.
+- Keep the manifest entry as a setup-gap reference until the archive is downloaded manually or a reliable official mirror is found.
+
+For self-capture, use an iPhone or iPad with LiDAR and export Record3D data in the folder layout above. Avoid shiny/transparent scenes, fast motion, people, private documents and large blank walls for the first tests.
+
 ## Benchmark Cross-Check: Mip-NeRF 360
 
 - Source page: https://jonbarron.info/mipnerf360/
@@ -86,4 +114,4 @@ Mip-NeRF 360 is highly relevant because it targets 360-degree view synthesis aro
 - Local target path: `data/videos/pexels-empty-coffee-shop-interior-14227022.mp4`
 - Intended use: UI import and generic video validation only, not high-quality reference generation.
 
-Keep this as a fallback, not a golden path. It is closer to the intended domain than the CPU-fan clip, but a stock video is not necessarily captured with enough overlap, parallax or reconstruction-friendly motion.
+Keep this as a fallback, not the main reference path. It is closer to the intended domain than the CPU-fan clip, but a stock video is not necessarily captured with enough overlap, parallax or reconstruction-friendly motion.

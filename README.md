@@ -104,7 +104,7 @@ Current implementation status:
 - Plain video remains the normal GUI/upload path.
 - `nerfstudio_dataset` is implemented for local datasets with `transforms.json`: intake validates images and poses, frame sampling and SfM are skipped with explicit reports, Splatfacto trains through Nerfstudio's `nerfstudio-data` dataparser, and packaging exports reference camera views from the dataset transforms.
 - `colmap_dataset` is implemented for local `images/` plus `sparse/0` datasets: intake validates the dataset, frame sampling and SfM are skipped with explicit reports, Splatfacto trains through Nerfstudio's `colmap` dataparser, and packaging exports reference camera views from the sparse model.
-- `rgbd_capture_bundle` is documented as the next richer input lane, not an active training path yet.
+- `rgbd_capture_bundle` is implemented first for `format: record3d`: intake validates the raw `rgb/` + `metadata.json` export, frame sampling runs `ns-process-data record3d`, SfM is skipped using the exported poses, and Splatfacto trains through the same Nerfstudio dataparser path. Depth maps are detected and reported, but the current Record3D path does not use depth-aware training yet.
 
 ## Pipeline
 

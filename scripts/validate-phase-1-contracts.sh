@@ -16,6 +16,7 @@ python3 "${repo_root}/scripts/lab-pipeline.py" list-captures   --capture-manifes
 python3 -m json.tool "${phase1_tmp_dir}"/captures.txt >/dev/null
 grep -q "nerfstudio-dozer-reference" "${phase1_tmp_dir}"/captures.txt
 grep -q "mipnerf360-flowers-reference" "${phase1_tmp_dir}"/captures.txt
+grep -q "record3d-bear-reference" "${phase1_tmp_dir}"/captures.txt
 python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --dry-run   >/dev/null
 
 import_manifest="$(mktemp)"
@@ -148,6 +149,104 @@ python3 "${repo_root}/scripts/lab-pipeline.py" run-stage splat_training   --job 
 grep -q "splat_training_status=blocked_workload" "${phase1_tmp_dir}"/heavy-training.txt
 python3 "${repo_root}/scripts/lab-pipeline.py" run-stage viewer   --job "${heavy_job_manifest}"   >"${phase1_tmp_dir}"/heavy-viewer.txt || true
 grep -q "viewer_status=blocked_workload" "${phase1_tmp_dir}"/heavy-viewer.txt
+
+if [[ -x "${repo_root}/.venv-nerfstudio-py312/bin/ns-process-data" ]]; then
+  record3d_dir="${phase1_tmp_dir}/record3d-fixture"
+  record3d_manifest="${phase1_tmp_dir}/record3d-captures.json"
+  record3d_jobs_dir="${phase1_tmp_dir}/record3d-jobs"
+  python3 - <<'PYCODE' "${record3d_dir}" "${record3d_manifest}"
+from pathlib import Path
+import json
+import struct
+import sys
+import zlib
+
+root = Path(sys.argv[1])
+manifest_path = Path(sys.argv[2])
+rgb = root / "rgb"
+rgb.mkdir(parents=True, exist_ok=True)
+
+def write_png(path: Path, width: int, height: int, color: tuple[int, int, int]) -> None:
+    rows = []
+    for y in range(height):
+        row = bytearray([0])
+        for x in range(width):
+            accent = 90 if 8 < x < width - 8 and 8 < y < height - 8 else 0
+            row.extend(((color[0] + accent) % 256, color[1], color[2]))
+        rows.append(bytes(row))
+    raw = b"".join(rows)
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+poses = []
+for index in range(4):
+    write_png(rgb / f"{index}.png", 96, 72, (40 + index * 30, 90, 140))
+    poses.append([0.0, 0.0, 0.0, 1.0, index * 0.05, 0.0, 0.0])
+
+(root / "metadata.json").write_text(
+    json.dumps(
+        {
+            "K": [80.0, 0.0, 48.0, 0.0, 80.0, 36.0, 0.0, 0.0, 1.0],
+            "h": 72,
+            "w": 96,
+            "poses": poses,
+        },
+        indent=2,
+    )
+    + "\n",
+    encoding="utf-8",
+)
+manifest = {
+    "schemaVersion": 1,
+    "captures": [
+        {
+            "id": "record3d-contract-fixture",
+            "displayName": "Record3D contract fixture",
+            "input": {"kind": "rgbd_capture_bundle", "format": "record3d", "path": str(root)},
+            "source": {"kind": "local_dataset", "path": str(root), "license": "generated-test-fixture"},
+            "capture": {"subject": "synthetic Record3D contract fixture", "motion": "tiny pose sequence"},
+            "pipeline": {
+                "frameSampling": {"backend": "record3d_to_nerfstudio_transforms", "maxFrames": 4},
+                "record3d": {"numDownscales": 1, "maxDatasetSize": 4, "timeoutSeconds": 300},
+                "sfm": {"backend": "record3d_transforms", "requiresExplicitHeavyApproval": False},
+                "training": {"backend": "nerfstudio_splatfacto", "profile": "splatfacto_preview"},
+                "packaging": {"preferredFormats": ["ply", "viewer-manifest"]},
+            },
+        }
+    ],
+}
+manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+PYCODE
+  python3 "${repo_root}/scripts/lab-pipeline.py" list-captures   --capture-manifest "${record3d_manifest}"   >"${phase1_tmp_dir}"/record3d-list.txt
+  grep -q '"status": "pass"' "${phase1_tmp_dir}"/record3d-list.txt
+  python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest "${record3d_manifest}"   --capture-id record3d-contract-fixture   --jobs-dir "${record3d_jobs_dir}"   >"${phase1_tmp_dir}"/record3d-init.txt
+  record3d_job_manifest="$(sed -n 's/^job_manifest=//p' "${phase1_tmp_dir}"/record3d-init.txt)"
+  python3 - <<'PYCODE' "${record3d_job_manifest}"
+from pathlib import Path
+import json
+import sys
+
+job_path = Path(sys.argv[1])
+job = json.loads(job_path.read_text(encoding="utf-8"))
+for stage in job["stages"]:
+    if stage["id"] == "environment":
+        stage["status"] = "pass"
+        stage["reportPath"] = "reports/environment.json"
+job_path.write_text(json.dumps(job, indent=2) + "\n", encoding="utf-8")
+PYCODE
+  python3 "${repo_root}/scripts/lab-pipeline.py" run-stage intake   --job "${record3d_job_manifest}"   >"${phase1_tmp_dir}"/record3d-intake.txt
+  grep -q "intake_status=pass" "${phase1_tmp_dir}"/record3d-intake.txt
+  python3 "${repo_root}/scripts/lab-pipeline.py" run-stage frame_sampling   --job "${record3d_job_manifest}"   >"${phase1_tmp_dir}"/record3d-frame-sampling.txt
+  grep -q "frame_sampling_status=pass" "${phase1_tmp_dir}"/record3d-frame-sampling.txt
+  python3 "${repo_root}/scripts/lab-pipeline.py" run-stage sfm   --job "${record3d_job_manifest}"   >"${phase1_tmp_dir}"/record3d-sfm.txt
+  grep -q "sfm_status=pass" "${phase1_tmp_dir}"/record3d-sfm.txt
+fi
 
 python3 "${repo_root}/scripts/lab-pipeline.py" init-job   --capture-manifest data/manifests/captures.example.json   --capture-id static-room-orbit-001   --jobs-dir "${splatfacto_contract_jobs_dir}"   >"${phase1_tmp_dir}"/splatfacto-contracts.txt
 splatfacto_job_manifest="$(sed -n 's/^job_manifest=//p' "${phase1_tmp_dir}"/splatfacto-contracts.txt)"

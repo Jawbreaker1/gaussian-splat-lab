@@ -2,7 +2,7 @@
 
 Verified: 2026-06-07
 
-Goal: once the video-to-splat golden path is robust, measure how much input video quality can degrade before the pipeline fails or produces unusable Gaussian Splats.
+Goal: once the video-to-splat reference flow is robust, measure how much input video quality can degrade before the pipeline fails or produces unusable Gaussian Splats.
 
 This work must not start as a quality claim until at least one known-good baseline capture runs from video to browser-visible splat.
 

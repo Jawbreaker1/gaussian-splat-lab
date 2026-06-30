@@ -18,8 +18,8 @@ Reference datasets let us test the trainer and viewer when camera data is alread
 | --- | --- | --- | --- | --- | --- |
 | Plain video | `mp4` / `mov` | Run FFmpeg keyframe selection | Run COLMAP | COLMAP images + sparse model | Default user path and regression baseline |
 | COLMAP dataset | `images/` + `sparse/0` | Skip | Skip | Existing COLMAP model | Use externally solved cameras directly |
-| Nerfstudio dataset | `transforms.json` + images, optional depth | Skip | Usually skip | Nerfstudio dataparser data | Golden reference datasets and camera-known captures |
-| RGB-D capture bundle | images + depth + confidence + poses/intrinsics | Skip or validate | Optional fallback/refinement | Poses/depth-aware training path | LiDAR/Record3D/ARKit-style capture experiments |
+| Nerfstudio dataset | `transforms.json` + images, optional depth | Skip | Usually skip | Nerfstudio dataparser data | Reference datasets and camera-known captures |
+| RGB-D capture bundle | images + depth + confidence + poses/intrinsics | Convert or validate | Skip when poses exist | Pose-aware Nerfstudio dataparser data first; depth-aware training later | LiDAR/Record3D/ARKit-style capture experiments |
 
 All lanes must converge to the same downstream artifact contract:
 
@@ -86,11 +86,13 @@ Implemented now:
 - `plain_video`: unchanged default path through FFmpeg, COLMAP, Splatfacto/gsplat, packaging and viewer.
 - `nerfstudio_dataset`: local `transforms.json` datasets now pass intake, frame-manifest creation, SfM skip, Splatfacto training through Nerfstudio's `nerfstudio-data` dataparser, PLY export, viewer packaging and reference camera export.
 - `colmap_dataset`: local `images/` plus `sparse/0` datasets now pass intake, frame-manifest creation, SfM skip, Splatfacto training through Nerfstudio's `colmap` dataparser, PLY export, viewer packaging and reference camera export.
+- `rgbd_capture_bundle` with `format: record3d`: raw Record3D `rgb/` + `metadata.json` exports now pass intake, are converted with `ns-process-data record3d`, skip COLMAP via Record3D poses/intrinsics, and train through Splatfacto's `nerfstudio-data` parser. Depth files are counted and reported but are not yet consumed by training.
 - The web UI can queue selected manifest sources from the Advanced panel, so local reference datasets and ordinary uploaded videos now use the same render queue.
 
 Not implemented yet:
 
-- `rgbd_capture_bundle`: planned for Record3D/ARKit/LiDAR-style experiments.
+- Direct ARKit/Polycam bundle handling beyond Record3D.
+- Depth-aware training, depth-guided cleanup and confidence-map use.
 
 Smoke evidence from 2026-06-29:
 
