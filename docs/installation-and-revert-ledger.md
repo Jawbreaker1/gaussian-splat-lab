@@ -554,3 +554,36 @@ Validation: TUM full gallery run `outputs/jobs/tumrgbd-freiburg1-xyz-reference-2
 Revert plan: local artifacts `data/datasets/tumrgbd/`, `data/datasets/arkitscenes/`, generated jobs matching `outputs/jobs/tumrgbd-freiburg1-xyz-reference-*`, and generated jobs matching `outputs/jobs/arkitscenes-42444511-reference-*` have already been deleted after visual review; revert tracked manifest/docs/script changes if abandoning these lanes entirely.
 Result: pass for the lane, reject for both samples. TUM produced `62249` packaged splats from `300` frames in `splatfacto_preview`, but the resulting scene was not useful. ARKitScenes VGA produced `790806` packaged splats from `600` frames in `splatfacto_reference`, but the source capture was too static and close to flat geometry to be useful.
 Notes: The generated TUM Freiburg1 and ARKitScenes `42444511` jobs were deleted on 2026-07-01 after visual review. Keep the converters for future known-pose tests, but do not use either sample as a reference.
+
+## Entry: 2026-07-01 Download Graphdeco/Inria T&T+DB COLMAP benchmark inputs
+
+Date: 2026-07-01
+Operator: Codex
+Machine: Windows RTX 5090 workstation / WSL2
+Purpose: Add benchmark input data that is specifically used around the original 3D Gaussian Splatting work, after generic RGB-D samples proved visually useless.
+Dependency: local dataset artifacts only; no system package was installed. Python's standard `zipfile` module was used because `unzip` is not installed in WSL.
+Commercial decision: Graphdeco/Inria's code license is not used by this pipeline path. The downloaded media/COLMAP data is still a separate input dataset; treat generated splats as internal technical benchmark artifacts until Tanks and Temples, Deep Blending and Graphdeco redistribution terms are reviewed for public/commercial use.
+Commands:
+
+```bash
+mkdir -p data/datasets/graphdeco
+curl -L -C - --fail \
+  https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip \
+  -o data/datasets/graphdeco/tandt_db.zip
+python3 - <<'PY'
+from zipfile import ZipFile
+from pathlib import Path
+zip_path = Path("data/datasets/graphdeco/tandt_db.zip")
+out = Path("data/datasets/graphdeco/tandt_db")
+out.mkdir(parents=True, exist_ok=True)
+with ZipFile(zip_path) as z:
+    z.extractall(out)
+PY
+sha256sum data/datasets/graphdeco/tandt_db.zip
+```
+
+Working directory: `/home/engwall/projects/gaussian-splat-lab`
+Expected changes: write ignored dataset artifacts under `data/datasets/graphdeco/`; update tracked manifest/docs separately.
+Validation: archive SHA-256 `816e62f22a161abbfe841d2a6b10cdf036e297c9fa289b3bfeee9c6ec526d7e1`; extracted size about `738 MB`; manifest readiness sees four COLMAP-ready scenes: `tandt/truck` with `251` images, `tandt/train` with `301`, `db/playroom` with `225`, and `db/drjohnson` with `263`.
+Revert plan: delete ignored local artifacts `data/datasets/graphdeco/tandt_db.zip` and `data/datasets/graphdeco/tandt_db/`; delete generated jobs matching `outputs/jobs/graphdeco-*-colmap-reference-*`; revert tracked manifest/docs changes if abandoning this benchmark set.
+Result: setup pass. Heavy training results should be recorded separately after each scene is run through `splat_training`, packaging, viewer validation and visual review.

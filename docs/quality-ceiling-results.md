@@ -73,6 +73,18 @@ This uses the local Mip-NeRF 360 `flowers` scene as a direct COLMAP dataset: ori
 
 Practical conclusion: direct COLMAP datasets are now the best reference lane for measuring trainer quality without conflating it with video sampling or camera-solve failures. `splatfacto_big_quality` gives a real quality gain on Flowers, but the full export is very large. Keep `splatfacto_reference` as the lighter comparison baseline, and use `splatfacto_big_quality` when the goal is to find the current quality ceiling. The eval metrics above come from the full trained model; the web viewer should default to the interactive artifact until we add a real compressed/LOD format, and that interactive artifact should be judged visually in the browser.
 
+## 2026-07-01 Graphdeco/Inria T&T+DB Truck Benchmark
+
+Reference input: `graphdeco-tandt-truck-colmap-reference`
+
+This uses the official Graphdeco/Inria `T&T+DB COLMAP` archive linked from the 3D Gaussian Splatting project page. It is the cleanest technical benchmark lane added so far: images and COLMAP cameras are already present, so the pipeline skips both video frame extraction and SfM. Treat the generated splats as internal benchmark artifacts until the dataset/media terms are reviewed for public or commercial use.
+
+| Job | Profile | Method | Images | Viewer splats | Viewer PLY | Splat stage time | Eval result | Notes |
+| --- | --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `graphdeco-tandt-truck-colmap-reference-20260701T115428Z` | `splatfacto_reference` | Splatfacto | 251 | 516331 | 128 MB | 367.6 s total stage, 305.4 s train | PSNR `25.5914`, SSIM `0.8805`, LPIPS `0.1060` | First run passed training, packaging, viewer validation and visual review. Render-review sheet shows close target/render agreement across held-out views. |
+
+Practical conclusion: this is a much better “known good” reference than the rejected RGB-D samples. It shows that our direct `colmap_dataset` lane can produce a recognizable, navigable 3DGS scene from benchmark-grade inputs quickly. The next useful ceiling test is `splatfacto_big_quality` on the same `truck` scene, then one Deep Blending indoor scene such as `playroom`.
+
 ## 2026-06-20 Local 4K Video Samples
 
 These runs used the current default high-quality path, `splatfacto_big_quality`: Splatfacto-big, 30k iterations, downscale factor `2`, 3 fps frame sampling, COLMAP sequential matching and viewer packaging.

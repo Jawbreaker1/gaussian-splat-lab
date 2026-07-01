@@ -6752,7 +6752,17 @@ def build_quality_report(job_path: Path) -> dict[str, Any]:
         classification = "incomplete"
     elif any(status == "warning" for status in statuses):
         status = "warning"
-        classification = "weak"
+        core_stage_ids = {"frame_sampling", "sfm", "splat_training", "packaging", "viewer"}
+        core_statuses = {
+            item["id"]: item["status"]
+            for item in stage_summaries
+            if item.get("id") in core_stage_ids
+        }
+        classification = (
+            "usable_with_warnings"
+            if core_statuses and all(stage_status == "pass" for stage_status in core_statuses.values())
+            else "weak"
+        )
     else:
         status = "pass"
         classification = "usable"

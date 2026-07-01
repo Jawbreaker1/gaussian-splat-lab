@@ -160,6 +160,43 @@ Mip-NeRF 360 is highly relevant because it targets 360-degree view synthesis aro
 - The run passed frame sampling, SfM, `rtx_reference` training, packaging and Spark viewer validation.
 - The resulting splat is recognizable but soft; use it as a baseline for trainer/viewer improvement, not as commercial showcase material.
 
+## 3DGS Benchmark Inputs: Graphdeco/Inria T&T+DB COLMAP
+
+- Source page: https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/
+- Source archive: https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip
+- Local archive: `data/datasets/graphdeco/tandt_db.zip`
+- Local extracted root: `data/datasets/graphdeco/tandt_db`
+- Archive SHA-256: `816e62f22a161abbfe841d2a6b10cdf036e297c9fa289b3bfeee9c6ec526d7e1`
+- Active first capture id: `graphdeco-tandt-truck-colmap-reference`
+- Other manifest ids: `graphdeco-tandt-train-colmap-reference`, `graphdeco-db-playroom-colmap-reference`, `graphdeco-db-drjohnson-colmap-reference`
+- Intended use: technical benchmark validation only until the original dataset terms are reviewed.
+
+This is the first reference set in the repo that is directly tied to the original 3D Gaussian Splatting benchmark material. It contains COLMAP-ready scene folders, so the pipeline can skip video frame extraction and camera solving and go straight from validated cameras/images to Splatfacto training.
+
+Scene inventory after download:
+
+| Scene | Images | Notes |
+| --- | ---: | --- |
+| `tandt/truck` | 251 | First test target; visually clear outdoor/object scene with strong structure. |
+| `tandt/train` | 301 | Larger outdoor/object scene for follow-up quality comparison. |
+| `db/playroom` | 225 | Indoor scene, useful for room-like behavior but includes some smooth/exposed surfaces. |
+| `db/drjohnson` | 263 | Indoor scene, useful as a second Deep Blending comparison. |
+
+License posture:
+
+- The Graphdeco/Inria code license is not used by this path; the project still trains through Nerfstudio Splatfacto and our local pipeline.
+- The dataset/media rights are separate from the code. Generated splats from these scenes should not be treated as commercially cleared or used as public product demo material until the Tanks and Temples, Deep Blending and Graphdeco redistribution terms are checked for that exact use.
+- For now, keep these outputs as internal benchmark artifacts.
+
+2026-07-01 setup notes:
+
+- Download completed from the official Graphdeco/Inria URL.
+- Extracted dataset size is about `738 MB`.
+- All four scenes contain `images/` and `sparse/0` with COLMAP binary model files.
+- Manifest readiness reports `pass` for source dataset layout and `warning` only for source-license review.
+- First run `graphdeco-tandt-truck-colmap-reference-20260701T115428Z` passed Splatfacto reference training, packaging, viewer validation and visual review.
+- Truck result: `251` images, `516331` viewer splats, `128 MB` viewer PLY, PSNR `25.5914`, SSIM `0.8805`, LPIPS `0.1060`.
+
 ## Stock Fallback: Pexels Empty Coffee Shop Interior
 
 - Capture id: `pexels-empty-coffee-shop-interior-14227022`

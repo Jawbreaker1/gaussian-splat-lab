@@ -363,6 +363,266 @@
         }
       },
       "status": "known-pose-reference-candidate"
+    },
+    {
+      "id": "graphdeco-tandt-truck-colmap-reference",
+      "displayName": "3DGS benchmark: Tanks and Temples truck",
+      "input": {
+        "kind": "colmap_dataset",
+        "path": "data/datasets/graphdeco/tandt_db/tandt/truck",
+        "imageDirectory": "data/datasets/graphdeco/tandt_db/tandt/truck/images",
+        "sparseModelPath": "data/datasets/graphdeco/tandt_db/tandt/truck/sparse/0"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/graphdeco/tandt_db/tandt/truck",
+        "sourceUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/",
+        "archiveUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip",
+        "license": "graphdeco-tandt-db-dataset-license-unverified",
+        "licenseNotes": "Official 3D Gaussian Splatting benchmark input linked by Graphdeco/Inria as T&T+DB COLMAP. Use as local technical validation only until the original Tanks and Temples dataset terms, Deep Blending terms, and any Graphdeco redistribution notes are reviewed for the intended commercial/public use.",
+        "licenseSourceUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "colmap_dataset",
+        "collection": "Graphdeco/Inria T&T+DB COLMAP",
+        "subset": "Tanks and Temples",
+        "sceneName": "truck",
+        "archivePath": "data/datasets/graphdeco/tandt_db.zip",
+        "archiveSha256": "816e62f22a161abbfe841d2a6b10cdf036e297c9fa289b3bfeee9c6ec526d7e1",
+        "scenePath": "data/datasets/graphdeco/tandt_db/tandt/truck",
+        "imageSequencePath": "data/datasets/graphdeco/tandt_db/tandt/truck/images",
+        "sparseModelPath": "data/datasets/graphdeco/tandt_db/tandt/truck/sparse/0",
+        "layout": "COLMAP sparse model plus images; no derived MP4 required"
+      },
+      "capture": {
+        "subject": "outdoor truck scene from a 3DGS benchmark COLMAP dataset",
+        "motion": "precomputed multi-view image sequence with COLMAP sparse cameras",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "dataset-provided images"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "precomputed_colmap_images"
+        },
+        "sfm": {
+          "backend": "precomputed_colmap",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_reference",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "ui": {
+        "sceneKind": "outdoor",
+        "qualityPreset": "splatfacto_reference"
+      },
+      "status": "active-3dgs-benchmark-reference"
+    },
+    {
+      "id": "graphdeco-tandt-train-colmap-reference",
+      "displayName": "3DGS benchmark: Tanks and Temples train",
+      "input": {
+        "kind": "colmap_dataset",
+        "path": "data/datasets/graphdeco/tandt_db/tandt/train",
+        "imageDirectory": "data/datasets/graphdeco/tandt_db/tandt/train/images",
+        "sparseModelPath": "data/datasets/graphdeco/tandt_db/tandt/train/sparse/0"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/graphdeco/tandt_db/tandt/train",
+        "sourceUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/",
+        "archiveUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip",
+        "license": "graphdeco-tandt-db-dataset-license-unverified",
+        "licenseNotes": "Official 3D Gaussian Splatting benchmark input linked by Graphdeco/Inria as T&T+DB COLMAP. Use as local technical validation only until the original Tanks and Temples dataset terms, Deep Blending terms, and any Graphdeco redistribution notes are reviewed for the intended commercial/public use.",
+        "licenseSourceUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "colmap_dataset",
+        "collection": "Graphdeco/Inria T&T+DB COLMAP",
+        "subset": "Tanks and Temples",
+        "sceneName": "train",
+        "archivePath": "data/datasets/graphdeco/tandt_db.zip",
+        "archiveSha256": "816e62f22a161abbfe841d2a6b10cdf036e297c9fa289b3bfeee9c6ec526d7e1",
+        "scenePath": "data/datasets/graphdeco/tandt_db/tandt/train",
+        "imageSequencePath": "data/datasets/graphdeco/tandt_db/tandt/train/images",
+        "sparseModelPath": "data/datasets/graphdeco/tandt_db/tandt/train/sparse/0",
+        "layout": "COLMAP sparse model plus images; no derived MP4 required"
+      },
+      "capture": {
+        "subject": "outdoor train scene from a 3DGS benchmark COLMAP dataset",
+        "motion": "precomputed multi-view image sequence with COLMAP sparse cameras",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "dataset-provided images"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "precomputed_colmap_images"
+        },
+        "sfm": {
+          "backend": "precomputed_colmap",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_reference",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "ui": {
+        "sceneKind": "outdoor",
+        "qualityPreset": "splatfacto_reference"
+      },
+      "status": "3dgs-benchmark-reference-candidate"
+    },
+    {
+      "id": "graphdeco-db-playroom-colmap-reference",
+      "displayName": "3DGS benchmark: Deep Blending playroom",
+      "input": {
+        "kind": "colmap_dataset",
+        "path": "data/datasets/graphdeco/tandt_db/db/playroom",
+        "imageDirectory": "data/datasets/graphdeco/tandt_db/db/playroom/images",
+        "sparseModelPath": "data/datasets/graphdeco/tandt_db/db/playroom/sparse/0"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/graphdeco/tandt_db/db/playroom",
+        "sourceUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/",
+        "archiveUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip",
+        "license": "graphdeco-tandt-db-dataset-license-unverified",
+        "licenseNotes": "Official 3D Gaussian Splatting benchmark input linked by Graphdeco/Inria as T&T+DB COLMAP. Use as local technical validation only until the original Tanks and Temples dataset terms, Deep Blending terms, and any Graphdeco redistribution notes are reviewed for the intended commercial/public use.",
+        "licenseSourceUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "colmap_dataset",
+        "collection": "Graphdeco/Inria T&T+DB COLMAP",
+        "subset": "Deep Blending",
+        "sceneName": "playroom",
+        "archivePath": "data/datasets/graphdeco/tandt_db.zip",
+        "archiveSha256": "816e62f22a161abbfe841d2a6b10cdf036e297c9fa289b3bfeee9c6ec526d7e1",
+        "scenePath": "data/datasets/graphdeco/tandt_db/db/playroom",
+        "imageSequencePath": "data/datasets/graphdeco/tandt_db/db/playroom/images",
+        "sparseModelPath": "data/datasets/graphdeco/tandt_db/db/playroom/sparse/0",
+        "layout": "COLMAP sparse model plus images; no derived MP4 required"
+      },
+      "capture": {
+        "subject": "indoor playroom scene from a 3DGS benchmark COLMAP dataset",
+        "motion": "precomputed multi-view image sequence with COLMAP sparse cameras",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "dataset-provided images"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "precomputed_colmap_images"
+        },
+        "sfm": {
+          "backend": "precomputed_colmap",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_reference",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "ui": {
+        "sceneKind": "room",
+        "qualityPreset": "splatfacto_reference"
+      },
+      "status": "3dgs-benchmark-reference-candidate"
+    },
+    {
+      "id": "graphdeco-db-drjohnson-colmap-reference",
+      "displayName": "3DGS benchmark: Deep Blending drjohnson",
+      "input": {
+        "kind": "colmap_dataset",
+        "path": "data/datasets/graphdeco/tandt_db/db/drjohnson",
+        "imageDirectory": "data/datasets/graphdeco/tandt_db/db/drjohnson/images",
+        "sparseModelPath": "data/datasets/graphdeco/tandt_db/db/drjohnson/sparse/0"
+      },
+      "source": {
+        "kind": "local_dataset",
+        "path": "data/datasets/graphdeco/tandt_db/db/drjohnson",
+        "sourceUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/",
+        "archiveUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip",
+        "license": "graphdeco-tandt-db-dataset-license-unverified",
+        "licenseNotes": "Official 3D Gaussian Splatting benchmark input linked by Graphdeco/Inria as T&T+DB COLMAP. Use as local technical validation only until the original Tanks and Temples dataset terms, Deep Blending terms, and any Graphdeco redistribution notes are reviewed for the intended commercial/public use.",
+        "licenseSourceUrl": "https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/",
+        "termsUrl": null,
+        "licenseVerifiedAt": null
+      },
+      "dataset": {
+        "kind": "colmap_dataset",
+        "collection": "Graphdeco/Inria T&T+DB COLMAP",
+        "subset": "Deep Blending",
+        "sceneName": "drjohnson",
+        "archivePath": "data/datasets/graphdeco/tandt_db.zip",
+        "archiveSha256": "816e62f22a161abbfe841d2a6b10cdf036e297c9fa289b3bfeee9c6ec526d7e1",
+        "scenePath": "data/datasets/graphdeco/tandt_db/db/drjohnson",
+        "imageSequencePath": "data/datasets/graphdeco/tandt_db/db/drjohnson/images",
+        "sparseModelPath": "data/datasets/graphdeco/tandt_db/db/drjohnson/sparse/0",
+        "layout": "COLMAP sparse model plus images; no derived MP4 required"
+      },
+      "capture": {
+        "subject": "indoor drjohnson scene from a 3DGS benchmark COLMAP dataset",
+        "motion": "precomputed multi-view image sequence with COLMAP sparse cameras",
+        "expectedDurationSeconds": null,
+        "expectedResolution": "dataset-provided images"
+      },
+      "pipeline": {
+        "frameSampling": {
+          "backend": "precomputed_colmap_images"
+        },
+        "sfm": {
+          "backend": "precomputed_colmap",
+          "requiresExplicitHeavyApproval": false
+        },
+        "training": {
+          "backend": "nerfstudio_splatfacto",
+          "profile": "splatfacto_reference",
+          "targetWorker": "windows-rtx-5090",
+          "requiresExplicitHeavyApproval": true
+        },
+        "packaging": {
+          "preferredFormats": [
+            "ply",
+            "viewer-manifest"
+          ]
+        }
+      },
+      "ui": {
+        "sceneKind": "room",
+        "qualityPreset": "splatfacto_reference"
+      },
+      "status": "3dgs-benchmark-reference-candidate"
     }
   ]
 }
