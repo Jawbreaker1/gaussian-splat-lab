@@ -11,10 +11,12 @@ Apple ARKitScenes raw video `42444511` was downloaded and converted locally.
 ```text
 Raw sequence: data/datasets/arkitscenes/raw/Training/42444511
 Lowres converted dataset: data/datasets/arkitscenes/42444511_nerfstudio
-Active VGA converted dataset: data/datasets/arkitscenes/42444511_vga_nerfstudio
+VGA converted dataset: data/datasets/arkitscenes/42444511_vga_nerfstudio
 ```
 
-The Apple license text was stored locally during validation and is linked from the manifest. Treat this as technical validation only until the commercial terms are reviewed for the intended product use.
+The Apple license text was stored locally during validation. Treat this as technical validation only until the commercial terms are reviewed for the intended product use.
+
+Final status after visual review: rejected as a reference sample. The sequence is almost static and close to a flat floor/poster target, so it does not provide enough useful camera movement or parallax for a good 3DGS scene. The generated gallery jobs were deleted on 2026-07-01.
 
 ## Commands
 
@@ -79,4 +81,13 @@ SSIM: 0.6355
 LPIPS: 0.6044
 ```
 
-Visual assessment: usable as a proof that ARKit known-pose input reaches gallery and produces an aligned scene. It is not a showcase-quality scene. The source is a close floor/poster capture with limited geometry, so it validates the lane more than the final visual ceiling.
+Visual assessment: the pipeline proof is valid, but the sample itself is unusable for quality work. The source is a near-static close floor/poster capture with too little geometry and parallax. Do not use ARKitScenes `42444511` as a future reference capture.
+
+Deleted generated jobs:
+
+```text
+outputs/jobs/arkitscenes-42444511-reference-20260630T213825Z
+outputs/jobs/arkitscenes-42444511-reference-20260630T214519Z
+outputs/jobs/arkitscenes-42444511-reference-20260630T215000Z
+outputs/jobs/arkitscenes-42444511-reference-20260630T215434Z
+```

@@ -100,7 +100,7 @@ Smoke evidence from 2026-06-29:
 - A local three-frame `nerfstudio_dataset` fixture passed the full light pipeline through Splatfacto, export, packaging and viewer validation.
 - The local Mip-NeRF 360 `flowers` COLMAP dataset passed the full light pipeline through Splatfacto preview, export, packaging and viewer validation as `mipnerf360-flowers-colmap-reference-20260629T181131Z`.
 - The same `flowers` COLMAP dataset passed full `splatfacto_reference` and `splatfacto_big_quality` runs. The best-quality run improved eval metrics to PSNR `20.4715`, SSIM `0.5701`, LPIPS `0.2974`; packaging keeps the `4784784`-splat full export and defaults the browser to a `2000000`-splat interactive PLY.
-- TUM RGB-D `freiburg1_xyz` and ARKitScenes `42444511` both passed the known-pose RGB-D lane into gallery on 2026-06-30. TUM is a stable smoke sample; ARKitScenes VGA is the better iPhone/LiDAR-style proof, with `790806` packaged splats in the `splatfacto_reference` run.
+- TUM RGB-D `freiburg1_xyz` passed the known-pose RGB-D lane into gallery on 2026-06-30 and remains a stable smoke sample. ARKitScenes `42444511` also passed mechanically, but was rejected after visual review because the source capture was nearly static and produced unusable splats; its generated gallery jobs were deleted on 2026-07-01.
 - The quality report stayed at `warning` because the fixture is `local-test-only` and framework/license review has warnings, which is expected for a smoke fixture.
 
 ## Later Product Direction
