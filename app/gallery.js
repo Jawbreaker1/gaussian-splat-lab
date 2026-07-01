@@ -81,6 +81,18 @@ function formatDate(value) {
   return date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+function formatDuration(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return '-';
+  if (value < 60) return `${Math.round(value)}s`;
+  const totalSeconds = Math.round(value);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const rest = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return rest > 0 ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
 function pillClass(status) {
   if (status === 'pass' || status === 'complete') return 'pill pass';
   if (status === 'warning') return 'pill warning';
@@ -262,6 +274,8 @@ function renderSceneMeta(item, manifest = {}, variant = null) {
   }
   const artifact = variant ?? item.artifact ?? {};
   const technical = item.technical ?? {};
+  const rendering = item.rendering ?? {};
+  const stageSeconds = rendering.stageSeconds ?? {};
   const rows = [
     metaRow('Capture', item.captureId),
     metaRow('Variant', variant?.label ?? 'Viewer default'),
@@ -274,7 +288,11 @@ function renderSceneMeta(item, manifest = {}, variant = null) {
     metaRow('Reference views', formatCount(technical.cameraViews ?? manifest.cameraViews?.length)),
     metaRow('Quality', compactQualityLabel(technical)),
     metaRow('Device', technical.device),
-    metaRow('Updated', formatDate(item.updatedAt ?? item.createdAt)),
+    metaRow('Generated', formatDate(rendering.generatedAt ?? item.generatedAt ?? item.updatedAt ?? item.createdAt)),
+    metaRow('Total time', formatDuration(rendering.wallClockSeconds)),
+    metaRow('Measured stages', formatDuration(rendering.measuredStageSeconds)),
+    metaRow('Training time', formatDuration(stageSeconds.splat_training)),
+    metaRow('SfM time', formatDuration(stageSeconds.sfm)),
   ];
   els.sceneMeta.append(...rows);
   renderReviewPanel(item, manifest);
@@ -353,6 +371,8 @@ function renderCard(item) {
     metaRow('Splats', formatCount(item.artifact?.splatCount)),
     metaRow('Images', formatCount(item.technical?.imagesUsed)),
     metaRow('Quality', compactQualityLabel(item.technical)),
+    metaRow('Generated', formatDate(item.rendering?.generatedAt ?? item.generatedAt ?? item.updatedAt)),
+    metaRow('Time', formatDuration(item.rendering?.wallClockSeconds ?? item.rendering?.measuredStageSeconds)),
   );
   const footer = document.createElement('div');
   footer.className = 'gallery-card-footer';

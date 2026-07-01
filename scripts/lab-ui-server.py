@@ -1311,6 +1311,137 @@ def read_optional_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def seconds_between(start: Any, end: Any) -> float | None:
+    started_at = parse_iso_datetime(start)
+    ended_at = parse_iso_datetime(end)
+    if started_at is None or ended_at is None:
+        return None
+    elapsed = (ended_at - started_at).total_seconds()
+    return round(elapsed, 3) if elapsed >= 0 else None
+
+
+def numeric_seconds(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not (number >= 0):
+        return None
+    return round(number, 3)
+
+
+def command_wall_time_seconds(report: dict[str, Any]) -> float | None:
+    commands = report.get("commands")
+    if not isinstance(commands, dict):
+        return None
+    total = 0.0
+    found = False
+    for command in commands.values():
+        if not isinstance(command, dict):
+            continue
+        seconds = numeric_seconds(command.get("wallTimeSeconds"))
+        if seconds is None:
+            continue
+        total += seconds
+        found = True
+    return round(total, 3) if found else None
+
+
+def stage_duration_seconds(report: dict[str, Any]) -> float | None:
+    stage = report.get("stage") if isinstance(report.get("stage"), dict) else {}
+    seconds = numeric_seconds(stage.get("wallTimeSeconds"))
+    if seconds is not None:
+        return seconds
+    seconds = command_wall_time_seconds(report)
+    if seconds is not None:
+        return seconds
+    return seconds_between(stage.get("startedAt"), stage.get("completedAt"))
+
+
+def stage_timestamp(report: dict[str, Any]) -> str | None:
+    stage = report.get("stage") if isinstance(report.get("stage"), dict) else {}
+    for key in ("completedAt", "generatedAt", "startedAt"):
+        value = stage.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def latest_timestamp(*values: Any) -> str | None:
+    latest_raw: str | None = None
+    latest_dt: datetime | None = None
+    for value in values:
+        if isinstance(value, dict):
+            candidates = [stage_timestamp(value)]
+        elif isinstance(value, list):
+            candidates = value
+        else:
+            candidates = [value]
+        for candidate in candidates:
+            parsed = parse_iso_datetime(candidate)
+            if parsed is None:
+                continue
+            if latest_dt is None or parsed > latest_dt:
+                latest_dt = parsed
+                latest_raw = str(candidate)
+    return latest_raw
+
+
+def rendering_metadata(
+    *,
+    job_meta: dict[str, Any],
+    manifest: dict[str, Any],
+    reports: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    stage_seconds: dict[str, float] = {}
+    stage_completed_at: dict[str, str] = {}
+    for stage_id, report in reports.items():
+        if not isinstance(report, dict):
+            continue
+        duration = stage_duration_seconds(report)
+        if duration is not None:
+            stage_seconds[stage_id] = duration
+        timestamp = stage_timestamp(report)
+        if timestamp:
+            stage_completed_at[stage_id] = timestamp
+
+    created_at = job_meta.get("createdAt")
+    generated_at = manifest.get("generatedAt") or stage_completed_at.get("packaging")
+    completed_at = latest_timestamp(
+        generated_at,
+        job_meta.get("updatedAt"),
+        list(stage_completed_at.values()),
+    )
+    measured_stage_seconds = round(sum(stage_seconds.values()), 3) if stage_seconds else None
+    wall_clock_seconds = seconds_between(created_at, completed_at)
+    heavy_stage_seconds = {
+        key: stage_seconds[key]
+        for key in ("sfm", "splat_training", "viewer")
+        if key in stage_seconds
+    }
+    return {
+        "startedAt": created_at,
+        "generatedAt": generated_at,
+        "completedAt": completed_at,
+        "wallClockSeconds": wall_clock_seconds,
+        "measuredStageSeconds": measured_stage_seconds,
+        "stageSeconds": stage_seconds,
+        "heavyStageSeconds": heavy_stage_seconds,
+    }
+
+
 def gallery_job_summary(job_path: Path, capture_names: dict[str, str] | None = None) -> dict[str, Any] | None:
     job_dir = job_path.parent
     manifest_path = job_dir / "viewer" / "viewer-manifest.json"
@@ -1331,10 +1462,15 @@ def gallery_job_summary(job_path: Path, capture_names: dict[str, str] | None = N
     job_id = str(job_meta.get("id") or job_dir.name)
     names = capture_names or {}
     training_report = read_optional_json(job_dir / "reports" / "splat_training.json")
+    reports = {
+        stage_id: read_optional_json(job_dir / "reports" / f"{stage_id}.json")
+        for stage_id in RUNNABLE_STAGES
+    }
     training_result = training_report.get("trainingResult") if isinstance(training_report.get("trainingResult"), dict) else {}
     render_review = training.get("renderReview") if isinstance(training.get("renderReview"), dict) else {}
     if not render_review and isinstance(training_result.get("renderReview"), dict):
         render_review = training_result["renderReview"]
+    render_meta = rendering_metadata(job_meta=job_meta, manifest=manifest, reports=reports)
 
     try:
         manifest_repo_relative = manifest_path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
@@ -1346,12 +1482,14 @@ def gallery_job_summary(job_path: Path, capture_names: dict[str, str] | None = N
         or preview.get("renderReviewUrl")
         or preview.get("sampleTargetUrl")
     )
-    updated_at = manifest.get("generatedAt") or job_meta.get("updatedAt") or job_meta.get("createdAt")
+    updated_at = render_meta.get("completedAt") or render_meta.get("generatedAt") or job_meta.get("updatedAt") or job_meta.get("createdAt")
     return {
         "id": job_id,
         "name": names.get(capture_id, capture_id or job_id),
         "captureId": capture_id,
         "createdAt": job_meta.get("createdAt"),
+        "generatedAt": render_meta.get("generatedAt"),
+        "completedAt": render_meta.get("completedAt"),
         "updatedAt": updated_at,
         "status": job_meta.get("status") or "unknown",
         "sceneUrl": f"/gallery?scene={quote(job_id)}",
@@ -1385,6 +1523,7 @@ def gallery_job_summary(job_path: Path, capture_names: dict[str, str] | None = N
             "evalImageCount": render_review.get("evalImageCount"),
             "renderReviewStatus": render_review.get("status"),
         },
+        "rendering": render_meta,
         "preview": {
             "sampleRenderUrl": preview.get("sampleRenderUrl"),
             "sampleTargetUrl": preview.get("sampleTargetUrl"),

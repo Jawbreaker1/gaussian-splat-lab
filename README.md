@@ -246,6 +246,7 @@ The UI is a local lab console with:
 - an editable render queue for overnight batches: queued items can be reordered, edited, cancelled or removed before they start
 - a rendering modal for active jobs, with current step, elapsed time, estimated remaining time and immediate or after-current-step stop controls
 - progress text, elapsed time and ETA for the full generation run
+- gallery metadata for completed renders with generated timestamp, wall-clock duration, measured stage time and heavy-step timing such as SfM/training
 - per-step cards that explain what is happening, what the step produces and which internal checks are running
 - live training progress from Nerfstudio logs when available, including iteration count and remaining time
 - keyframe diagnostics during frame sampling: blur, contrast, exposure, large frame-to-frame motion and bright low-texture surface risk

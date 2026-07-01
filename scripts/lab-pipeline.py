@@ -542,6 +542,7 @@ def run_command(command: list[str], timeout_seconds: int = 20, env: dict[str, st
             "stderr": f"{command[0]} not found on PATH",
         }
 
+    started = time.monotonic()
     try:
         result = subprocess.run(
             command,
@@ -561,6 +562,7 @@ def run_command(command: list[str], timeout_seconds: int = 20, env: dict[str, st
             "exitCode": None,
             "stdout": exc.stdout or "",
             "stderr": f"command timed out after {timeout_seconds}s",
+            "wallTimeSeconds": round(max(time.monotonic() - started, 0.0), 3),
         }
 
     return {
@@ -571,6 +573,7 @@ def run_command(command: list[str], timeout_seconds: int = 20, env: dict[str, st
         "exitCode": result.returncode,
         "stdout": result.stdout.strip(),
         "stderr": result.stderr.strip(),
+        "wallTimeSeconds": round(max(time.monotonic() - started, 0.0), 3),
     }
 
 
@@ -2353,6 +2356,7 @@ def update_job_stage(job_path: Path, stage_id: str, status: str, report_path: Pa
             }
         )
     job["job"]["status"] = derive_job_status(job.get("stages", []))
+    job["job"]["updatedAt"] = utc_now()
     write_json(job_path, job)
 
 
@@ -7058,6 +7062,8 @@ def command_run_stage(args: argparse.Namespace) -> int:
     if not job_path.exists():
         raise FileNotFoundError(f"job manifest not found: {job_path}")
 
+    stage_started_at = utc_now()
+    stage_timer = time.monotonic()
     if args.stage == "framework_license":
         report = build_framework_license_report(job_path)
     elif args.stage == "environment":
@@ -7083,6 +7089,14 @@ def command_run_stage(args: argparse.Namespace) -> int:
         report = build_quality_report(job_path)
     else:
         raise ValueError(f"unsupported stage {args.stage!r}")
+
+    stage_completed_at = utc_now()
+    stage = report.setdefault("stage", {})
+    if isinstance(stage, dict):
+        stage["startedAt"] = stage_started_at
+        stage["completedAt"] = stage_completed_at
+        stage["generatedAt"] = stage_completed_at
+        stage["wallTimeSeconds"] = round(max(time.monotonic() - stage_timer, 0.0), 3)
 
     report_path = stage_report_path(job_path, args.stage)
     write_json(report_path, report)
