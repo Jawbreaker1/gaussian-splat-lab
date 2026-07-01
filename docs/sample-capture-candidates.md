@@ -195,7 +195,9 @@ License posture:
 - All four scenes contain `images/` and `sparse/0` with COLMAP binary model files.
 - Manifest readiness reports `pass` for source dataset layout and `warning` only for source-license review.
 - First run `graphdeco-tandt-truck-colmap-reference-20260701T115428Z` passed Splatfacto reference training, packaging, viewer validation and visual review.
-- Truck result: `251` images, `516331` viewer splats, `128 MB` viewer PLY, PSNR `25.5914`, SSIM `0.8805`, LPIPS `0.1060`.
+- Truck result: `251` images, `516331` viewer splats, `122 MB` viewer PLY, PSNR `25.5914`, SSIM `0.8805`, LPIPS `0.1060`.
+- Follow-up max-quality tests found `splatfacto_big_quality` better than `splatfacto_ceiling` on this scene: `1067465` viewer splats, `253 MB` viewer PLY, PSNR `25.7159`, SSIM `0.8865`, LPIPS `0.0908`.
+- The heavier `splatfacto_ceiling` run produced `1370076` splats but was worse on LPIPS (`0.1410`), likely because this archive's images are lower resolution than the COLMAP camera model and the ceiling path partly trains on normalized/upscaled inputs.
 
 ## Stock Fallback: Pexels Empty Coffee Shop Interior
 

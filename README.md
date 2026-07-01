@@ -42,16 +42,16 @@ Current known-camera reference job:
 
 Current 3DGS benchmark job:
 
-`outputs/jobs/graphdeco-tandt-truck-colmap-reference-20260701T115428Z`
+`outputs/jobs/graphdeco-tandt-truck-colmap-reference-20260701T130322Z`
 
 - input lane: `colmap_dataset`
 - source: Graphdeco/Inria `T&T+DB COLMAP` benchmark archive, scene `tandt/truck`
-- profile: `splatfacto_reference`
-- trainer: Nerfstudio Splatfacto
-- viewer splats: `516331`
-- viewer PLY size: `128 MB`
-- eval: PSNR `25.5914`, SSIM `0.8805`, LPIPS `0.1060`
-- note: technical benchmark only until dataset/media terms are reviewed for public or commercial use.
+- profile: `splatfacto_big_quality`
+- trainer: Nerfstudio Splatfacto-big
+- viewer splats: `1067465`
+- viewer PLY size: `253 MB`
+- eval: PSNR `25.7159`, SSIM `0.8865`, LPIPS `0.0908`
+- note: best measured Truck result so far; technical benchmark only until dataset/media terms are reviewed for public or commercial use.
 
 The quality report may still be `warning` because the current public reference capture and some commercial-use evidence are not product-ready. That is useful signal rather than a broken run; training, packaging and viewer validation pass for the active technical reference.
 
