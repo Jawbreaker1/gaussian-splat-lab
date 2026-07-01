@@ -14,7 +14,9 @@ Raw sequence: data/datasets/tumrgbd/rgbd_dataset_freiburg1_xyz
 Converted dataset: data/datasets/tumrgbd/freiburg1_xyz_nerfstudio
 ```
 
-The TUM RGB-D page states that unless otherwise noted, benchmark data is CC BY 4.0. This is usable as a technical validation sample with attribution; keep product/showcase usage under review.
+The TUM RGB-D page states that unless otherwise noted, benchmark data is CC BY 4.0. The license posture is fine for technical work with attribution, but this exact scene is rejected as a 3DGS reference after visual review.
+
+Final status after visual review: rejected. The sequence reached gallery, but the scene quality is not useful for product, capture-quality or trainer-ceiling work. The generated gallery job and local dataset copy were deleted on 2026-07-01.
 
 ## Commands
 
@@ -69,4 +71,11 @@ SSIM: 0.5785
 LPIPS: 0.3571
 ```
 
-Visual assessment: useful as a stable RGB-D/kända-poser smoke test, not as a visual showcase. The scene is low-resolution, close-range and has limited camera movement, so it proves the lane more than the quality ceiling.
+Visual assessment: rejected. It proves that the known-pose dataset lane can run, but the resulting splat is not useful enough to keep in gallery or use as a reference.
+
+Deleted generated/local artifacts:
+
+```text
+outputs/jobs/tumrgbd-freiburg1-xyz-reference-20260630T211829Z
+data/datasets/tumrgbd
+```
